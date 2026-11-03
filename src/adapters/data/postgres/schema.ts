@@ -417,6 +417,8 @@ export const usageEvents = pgTable(
     // The outbox for metered prices: true until the event has reached the billing provider's meter.
     reportPending: boolean("report_pending").notNull().default(false),
     reportedAt: ts("reported_at"),
+    /** Settled without sending, and why: no_customer (nobody to bill) or expired (past the provider's window). */
+    reportSkipped: text("report_skipped").$type<"no_customer" | "expired">(),
     createdAt: createdAt(),
   },
   (t) => [

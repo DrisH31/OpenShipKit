@@ -175,9 +175,9 @@ export function changesBilling(current: Pick<Plan, "prices" | "trialDays"> & { l
  * a new active priceless plan, or deleting a priceless plan counts.
  */
 export async function changesFreePlan(key: string, next: Partial<Plan> | null): Promise<boolean> {
-  const { getPlan } = await import("@/server/services/plans");
+  const [{ getPlan }, { isFreePlanCandidate }] = await Promise.all([import("@/server/services/plans"), import("@/server/services/usage")]);
   const current = await getPlan(key);
-  const priceless = (p: Partial<Plan> | null | undefined) => !!p && !p.contactSales && !(p.prices ?? []).some((x) => x.amountCents > 0);
+  const priceless = (p: Partial<Plan> | null | undefined) => !!p && isFreePlanCandidate(p);
   if (next === null) return priceless(current);
   const after = { ...(current ?? {}), ...next } as Partial<Plan>;
   if (!current) return priceless(after) && after.active !== false;

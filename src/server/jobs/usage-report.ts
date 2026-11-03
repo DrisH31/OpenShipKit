@@ -14,12 +14,13 @@ import "server-only";
 // (Polar external_id; Stripe identifier, within its 24 hours, well inside this
 // job's retries).
 //
-// An event ends in one of two states, never confused: sent (reportedAt, when
-// the provider accepted it), or settled with nothing to send, because nobody
-// is billed for it (a free account, a team with no paid plan). Billing that is
-// off or can't meter in this process (a missing key, a provider with no meters)
-// is neither: the attempt fails, the event stays pending, and the job's error
-// in /admin/jobs says why. A worker with a bad env file never drops usage.
+// An event ends in one final state, never confused: sent (reportedAt, when the
+// provider accepted it); settled without sending because nobody is billed for
+// it (no_customer: a free account, a team with no paid plan); or expired, past
+// the provider's window (the sweep, after 35 days). Billing that is off or can't
+// meter in this process (a missing key, a provider with no meters) is none of
+// them: the attempt fails, the event stays pending, and the job's error in
+// /admin/jobs says why. A worker with a bad env file never drops usage.
 //
 // Whose customer: a person's own; for an organisation, the customer of the
 // subscription that gives it access (paid up, even if set to cancel).
@@ -54,11 +55,12 @@ export const usageReportJob = defineJob({
       customerId = paying ? (paying.providerCustomerId ?? (await data.billing.getCustomerId(paying.userId, provider.id))) : null;
     }
     if (!customerId) {
-      log.info("usage", `${event.metric} event ${event.id}: no ${provider.label} customer to bill; settled without sending`);
-      await data.usage.settleReport(event.id, null);
+      // Every free account's metered call lands here: debug, not info, or the log is mostly this line.
+      log.debug("usage", `${event.metric} event ${event.id}: no ${provider.label} customer to bill; settled without sending`);
+      await data.usage.settleReport(event.id, { skipped: "no_customer" });
       return;
     }
     await provider.reportUsage({ id: event.id, customerId, metric: event.metric, quantity: event.quantity, occurredAt: event.occurredAt });
-    await data.usage.settleReport(event.id, new Date().toISOString());
+    await data.usage.settleReport(event.id, { sentAt: new Date().toISOString() });
   },
 });

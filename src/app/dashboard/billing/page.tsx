@@ -48,7 +48,7 @@ import { formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS } from "@/lib/status";
 import { requireSaasProfile } from "@/server/profile";
 import { requireUser } from "@/server/session";
-import { billingHasPortal, getCheckoutGuard, getOrgBillingView, isBillingEnabled, listCancellable, paysForAnything, type CheckoutRefusal } from "@/server/services/billing";
+import { billingHasPortal, getCheckoutGuard, getEntitlement, getOrgBillingView, isBillingEnabled, listCancellable, paysForAnything, type CheckoutRefusal } from "@/server/services/billing";
 import { ActionForm, FormMessage, SubmitButton } from "@/components/product/action-form";
 import { cancelSubscriptionAction } from "./actions";
 import { teamsEnabled } from "@/server/services/orgs";
@@ -276,6 +276,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   };
   // In a team, but the person's own plan applies (the team has none): say so, or the card reads as the team's.
   const usageIsOwn = orgView !== null && rawUsage.subject.type === "user";
+  const ownKey = usageIsOwn ? (await getEntitlement(user.id)).planKey : null;
+  const ownPlanName = ownKey ? (plans.find((p) => p.key === ownKey)?.name ?? null) : null;
   const entitlement = orgView ? orgView.entitlement : detail!.entitlement;
   const subscriptions = orgView ? orgView.subscriptions : detail!.subscriptions;
   const purchases = orgView ? [] : detail!.purchases;
@@ -380,7 +382,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
           </div>
           {usageIsOwn ? (
             <p className="-mt-1 text-caption text-ink-2">
-              Your own {planName(usage.plan) ?? "plan"} plan, which applies while {orgView?.org.name} has no plan of its own.
+              {ownPlanName ? `Your own ${ownPlanName} plan` : "Your own plan"}, which applies while {orgView?.org.name} has no plan of its own.
             </p>
           ) : null}
           <ul className="flex flex-col gap-4">

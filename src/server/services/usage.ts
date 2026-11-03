@@ -39,6 +39,7 @@ import "server-only";
 
 import { METRIC_RE } from "@/core/schemas";
 import type { Entitlement, Plan, UsageEvent, UsageSubject, User } from "@/core/types";
+import { getBilling } from "../billing";
 import { getData } from "../data";
 import { billingProvider, meteredMetrics } from "../env";
 import { enqueueJob } from "../jobs";
@@ -107,9 +108,14 @@ export function periodAt(now: Date, renewsAt: string | null, startsAt: string | 
   return { from: addMonths(anchor, -k).toISOString(), to: addMonths(anchor, -(k - 1)).toISOString() };
 }
 
-/** Pure: the free plan, whose limits apply to anyone without a paid one: active, no paid price, not "contact sales", first by sortOrder. */
+/** Pure: whether a plan could be the free plan (ignoring whether it's active): no paid price, not "contact sales". The one rule, also used by the MCP gate. */
+export function isFreePlanCandidate(p: Pick<Plan, "contactSales" | "prices"> | Partial<Plan>): boolean {
+  return !p.contactSales && !(p.prices ?? []).some((x) => x.amountCents > 0);
+}
+
+/** Pure: the free plan, whose limits apply to anyone without a paid one: an active candidate, first by sortOrder. */
 export function freePlan(plans: readonly Plan[]): Plan | null {
-  return [...plans].filter((p) => p.active && !p.contactSales && !p.prices.some((x) => x.amountCents > 0)).sort((a, b) => a.sortOrder - b.sortOrder || a.key.localeCompare(b.key))[0] ?? null;
+  return [...plans].filter((p) => p.active && isFreePlanCandidate(p)).sort((a, b) => a.sortOrder - b.sortOrder || a.key.localeCompare(b.key))[0] ?? null;
 }
 
 /** Pure: the plan whose limits apply, given the entitlement and every plan. */
@@ -231,31 +237,60 @@ export async function consumeUsage(subject: UsageSubject, metric: string, quanti
   return { created, used: created ? used + quantity : used, limit };
 }
 
-/** Pending reports older than this are re-queued by the sweep: the normal path queues them at once. */
+/** Pending reports younger than this are left to the normal path, which queues them at once. */
 const SWEEP_AFTER_MS = 5 * 60_000;
+/** Pending longer than this is worth an alarm. */
+const STALE_AFTER_MS = 24 * 60 * 60_000;
 /**
- * And younger than this. An event the provider keeps refusing (no meter by that name) would otherwise
- * be re-queued forever; after a day it stays pending, its failed job in /admin/jobs says why, and
- * retrying that job sends it.
+ * And older than this, an event can't be sent any more: Stripe refuses meter events more than 35 days
+ * old. The sweep settles them as expired (said once, with the count) instead of retrying for ever.
  */
-const SWEEP_WITHIN_MS = 24 * 60 * 60_000;
+export const REPORT_WINDOW_MS = 35 * 24 * 60 * 60_000;
+/** An event whose job failed for good is re-queued no sooner than this after, so a refusal can't loop. */
+const RETRY_FAILED_AFTER_MS = 6 * 60 * 60_000;
+/** The alarm for stale events: at most once an hour per process. */
+const ALARM_EVERY_MS = 60 * 60_000;
+let lastAlarm = 0;
 
 /**
- * Re-queue usage reports still pending a while after they were recorded (within a day): an insert
- * whose queueing failed (a crash, a database blip), or a report job that failed for good. The job
- * runner calls this every few minutes. Returns how many it queued.
+ * The outbox's sweep, run by the job runner every few minutes. Every pending event reaches a final
+ * state: sent, settled with nobody to bill (the job), or expired past the provider's window (here).
+ *   - Re-queues events still pending a few minutes after they were recorded (a crash between insert
+ *     and queue; a job that failed for good, after a pause), but only where this process can meter:
+ *     with billing off here, it queues nothing and just counts.
+ *   - Settles as expired what is past the provider's window, and says how many.
+ *   - Raises one alarm an hour, with the count, while any event waits for more than a day.
+ * Returns how many it queued.
  */
 export async function sweepUsageReports(now = Date.now()): Promise<number> {
-  const pending = await (await getData()).usage.listPendingReports(new Date(now - SWEEP_WITHIN_MS).toISOString(), new Date(now - SWEEP_AFTER_MS).toISOString(), 200);
+  const data = await getData();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const expired = await data.usage.expirePendingReports(iso(now - REPORT_WINDOW_MS));
+  if (expired) log.warn("usage", `${expired} metered usage event(s) expired unsent: older than the billing provider accepts (35 days)`);
+
+  const canMeter = Boolean((await getBilling())?.reportUsage);
   let queued = 0;
-  for (const event of pending) {
-    const { created } = await enqueueJob(usageReportJob, { eventId: event.id }, { key: `usage:${event.id}` });
-    if (created) queued++;
+  if (canMeter) {
+    const pending = await data.usage.listPendingReports(iso(now - REPORT_WINDOW_MS), iso(now - SWEEP_AFTER_MS), 200, { failedSince: iso(now - RETRY_FAILED_AFTER_MS) });
+    for (const event of pending) {
+      const { created } = await enqueueJob(usageReportJob, { eventId: event.id }, { key: `usage:${event.id}` });
+      if (created) queued++;
+    }
+    if (queued) log.info("usage", `re-queued ${queued} usage report(s) still pending`);
   }
-  if (queued) log.info("usage", `re-queued ${queued} usage report(s) still pending`);
-  // Older than the window: not re-queued any more, so say so loudly (their failed jobs say why).
-  const stale = await (await getData()).usage.listPendingReports("1970-01-01T00:00:00.000Z", new Date(now - SWEEP_WITHIN_MS).toISOString(), 1);
-  if (stale.length) log.error("usage", "metered usage still unreported after a day: see the failed usage.report jobs in /admin/jobs, fix the cause, then retry them");
+
+  if (now - lastAlarm >= ALARM_EVERY_MS) {
+    const stale = await data.usage.countPendingReports(iso(now - STALE_AFTER_MS));
+    if (stale) {
+      lastAlarm = now;
+      log.error(
+        "usage",
+        canMeter
+          ? `${stale} metered usage event(s) unsent for over a day. The failed usage.report jobs in /admin/jobs say why; they are retried every few hours until 35 days old, then expire.`
+          : `${stale} metered usage event(s) unsent for over a day: billing can't meter in this process (off, or a provider without meters). They are sent once it can, until 35 days old.`,
+      );
+    }
+  }
   return queued;
 }
 

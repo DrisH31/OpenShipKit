@@ -629,6 +629,14 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
   // normalised the same way (trimmed names, blank names dropped), or a value with " api_calls" or ""
   // as a key would never match its own rows and re-render forever.
   if (JSON.stringify(rowsToValue(rows)) !== JSON.stringify(rowsToValue(fromValue()))) setRows(fromValue());
+  // And a value that isn't in that normal form (from the JSON tab: " api_calls", an unnamed "") is
+  // replaced by it once, so what is shown is what is saved, and the schema's issues land on the rows.
+  const raw = JSON.stringify(rec);
+  useEffect(() => {
+    const normal = rowsToValue(Object.entries(JSON.parse(raw) as Record<string, unknown>).map(([k, v]) => ({ id: "", name: k, value: v })));
+    if (JSON.stringify(normal) !== raw) onChange(path, normal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the value itself changes
+  }, [raw]);
   const name = f.labelFor(label);
   const hint = f.hint ?? node.description;
   const headingId = useId();

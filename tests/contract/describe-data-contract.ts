@@ -932,13 +932,27 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         await store.jobs.enqueue({ kind: "usage.report", payload: { eventId: queued.event.id }, sensitive: false, maxAttempts: 3, key: `usage:${queued.event.id}` });
         expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).not.toContain(queued.event.id);
 
-        await store.usage.settleReport(pending.event.id, new Date().toISOString());
-        expect(await store.usage.get(pending.event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String) });
+        await store.usage.settleReport(pending.event.id, { sentAt: new Date().toISOString() });
+        expect(await store.usage.get(pending.event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String), reportSkipped: null });
         expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).not.toContain(pending.event.id);
         // Settled with nothing to send: not pending, and never "reported".
         const free = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, report: true });
-        await store.usage.settleReport(free.event.id, null);
-        expect(await store.usage.get(free.event.id)).toMatchObject({ reportPending: false, reportedAt: null });
+        await store.usage.settleReport(free.event.id, { skipped: "no_customer" });
+        expect(await store.usage.get(free.event.id)).toMatchObject({ reportPending: false, reportedAt: null, reportSkipped: "no_customer" });
+
+        // An event whose job failed for good is listed again, unless it failed since failedSince.
+        const failedOne = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, report: true });
+        const { job } = await store.jobs.enqueue({ kind: "usage.report", payload: { eventId: failedOne.event.id }, sensitive: false, maxAttempts: 1, key: `usage:${failedOne.event.id}` });
+        const [claimed] = (await store.jobs.claim({ limit: 50, leaseMs: 60_000 })).filter((j) => j.id === job.id);
+        await store.jobs.fail(claimed.id, claimed.attempts, { error: "refused", retryAt: null });
+        expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).toContain(failedOne.event.id);
+        expect((await store.usage.listPendingReports(before, after, 500, { failedSince: before })).map((e) => e.id)).not.toContain(failedOne.event.id);
+
+        // Counted while pending; expired when older than the window, and never "reported".
+        expect(await store.usage.countPendingReports(after)).toBeGreaterThanOrEqual(1);
+        expect(await store.usage.expirePendingReports(after)).toBeGreaterThanOrEqual(1);
+        expect(await store.usage.get(failedOne.event.id)).toMatchObject({ reportPending: false, reportedAt: null, reportSkipped: "expired" });
+        expect(await store.usage.countPendingReports(after)).toBe(0);
         expect(await store.usage.get("00000000-0000-4000-8000-000000000000")).toBeNull();
       });
 

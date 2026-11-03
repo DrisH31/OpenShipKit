@@ -440,6 +440,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
     occurredAt: iso(r.occurredAt),
     reportPending: r.reportPending,
     reportedAt: r.reportedAt ? iso(r.reportedAt) : null,
+    reportSkipped: r.reportSkipped ?? null,
   });
   const keyedUsage = async (q: Exec, { subject, metric, key }: UsageInput): Promise<UsageEvent | null> => {
     if (!key) return null;
@@ -1142,7 +1143,11 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         const [row] = await db().select().from(usageEvents).where(eq(usageEvents.id, id)).limit(1);
         return row ? toUsageEvent(row) : null;
       },
-      async listPendingReports(after, before, limit) {
+      async listPendingReports(after, before, limit, opts = {}) {
+        const failedSince = opts.failedSince ? toDate(opts.failedSince, "failedSince") : null;
+        const busy = failedSince
+          ? sql`(${jobs.status} in ('queued', 'running') or (${jobs.status} = 'failed' and coalesce(${jobs.finishedAt}, ${jobs.updatedAt}) >= ${failedSince}))`
+          : sql`${jobs.status} in ('queued', 'running')`;
         const rows = await db()
           .select()
           .from(usageEvents)
@@ -1151,19 +1156,34 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
               eq(usageEvents.reportPending, true),
               sql`${usageEvents.createdAt} >= ${toDate(after, "after")}`,
               sql`${usageEvents.createdAt} < ${toDate(before, "before")}`,
-              sql`not exists (select 1 from ${jobs} where ${jobs.key} = 'usage:' || ${usageEvents.id}::text and ${jobs.status} in ('queued', 'running'))`,
+              sql`not exists (select 1 from ${jobs} where ${jobs.key} = 'usage:' || ${usageEvents.id}::text and ${busy})`,
             ),
           )
           .orderBy(asc(usageEvents.createdAt))
           .limit(clampLimit(limit));
         return rows.map(toUsageEvent);
       },
-      async settleReport(id, reportedAt) {
+      async countPendingReports(before) {
+        const [row] = await db()
+          .select({ n: sql<string | number>`count(*)` })
+          .from(usageEvents)
+          .where(and(eq(usageEvents.reportPending, true), sql`${usageEvents.createdAt} < ${toDate(before, "before")}`));
+        return Number(row?.n ?? 0);
+      },
+      async settleReport(id, outcome) {
         if (!isUuid(id)) return;
         await db()
           .update(usageEvents)
-          .set({ reportPending: false, reportedAt: reportedAt ? toDate(reportedAt, "reportedAt")! : null })
+          .set({ reportPending: false, reportedAt: "sentAt" in outcome ? toDate(outcome.sentAt, "sentAt")! : null, reportSkipped: "skipped" in outcome ? outcome.skipped : null })
           .where(eq(usageEvents.id, id));
+      },
+      async expirePendingReports(before) {
+        const rows = await db()
+          .update(usageEvents)
+          .set({ reportPending: false, reportedAt: null, reportSkipped: "expired" })
+          .where(and(eq(usageEvents.reportPending, true), sql`${usageEvents.createdAt} < ${toDate(before, "before")}`))
+          .returning({ id: usageEvents.id });
+        return rows.length;
       },
       async sum(subject, metric, from, to) {
         if (!isUuid(subject.id)) return 0;

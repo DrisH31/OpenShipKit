@@ -221,12 +221,15 @@ export interface UsageEvent {
   key: string | null;
   occurredAt: string;
   /**
-   * The outbox for metered prices, one of three states: pending (reportPending), sent (reportedAt set),
-   * or settled without sending because there was nobody to bill (neither: a free account).
+   * The outbox for metered prices. Every event reaches one final state: sent (reportedAt), or settled
+   * without sending (reportSkipped: no_customer, a free account; expired, past the provider's window).
+   * Until then it is pending (reportPending).
    */
   reportPending: boolean;
   /** When the billing provider accepted it. Never set for an event that wasn't sent. */
   reportedAt: string | null;
+  /** Settled without sending, and why: nobody to bill, or older than the provider accepts. */
+  reportSkipped?: "no_customer" | "expired" | null;
 }
 
 // ---------------------------------------------------------------- billing

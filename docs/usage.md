@@ -93,11 +93,15 @@ simultaneous requests through at 9,999. For most quotas that's fine; where one
 unit over costs money, consume everywhere.
 
 Each consume sums the period's events for that customer and metric while it
-holds the lock. That's quick for thousands of events a period and fine into
-the hundreds of thousands; around a million events per customer per month it
-costs tens of milliseconds a call, serialised per customer. Past that, keep a
+holds the lock and a database connection. Measured on one laptop (Postgres 17,
+default settings, warm cache): about 30–60 ms a call at 100,000 events in the
+customer's period, about 0.5 s at a million. Calls for one customer's metric
+run one at a time, and each waiting call holds a connection from the shared
+pool (`DATABASE_POOL_MAX`, 10 by default), so a burst from one heavy customer can
+make every other request wait too. Below tens of thousands of events per
+customer per period it's not worth thinking about. Well past that, keep a
 running counter instead (one row per customer, metric and period, updated in
-the same transaction).
+the same transaction as the event).
 
 ## The period
 
@@ -136,13 +140,19 @@ an outbox:
 
 - An event already reported is never sent again: not when the caller repeats
   `recordUsage` with the same key, not when a job is retried by hand.
-- Every five minutes the job runner re-queues events still pending from the last
-  day (leaving out those already queued), so a crash between recording and
-  queueing loses nothing. Events still unsent after a day are logged as an
-  error; their failed jobs in `/admin/jobs` say why.
+- Every five minutes the job runner re-queues events still pending (leaving out
+  those already queued, and those whose job failed for good in the last six
+  hours, so a refusal can't loop), so a crash between recording and queueing
+  loses nothing. A failed job in `/admin/jobs` says why it failed.
 - Billing off, or unable to meter, where the job runs (a worker started without
-  the provider's key) is an error, not a skip: the event stays pending and is
-  sent once billing is back.
+  the provider's key) is an error, not a skip: the event stays pending, the
+  sweep queues nothing while it can't meter, and the event is sent once billing
+  is back.
+- Every event reaches a final state: **sent**, **settled** with nobody to bill
+  (a free account), or **expired**: still unsent 35 days after it was recorded,
+  which is as old as Stripe accepts a meter event. Expiries are logged with
+  their count. While any event waits more than a day, an error is logged, at
+  most once an hour per process, with the count and the cause.
 - The one window left, a crash after the provider accepted the event and before
   it was marked, resends the same event id, which the provider drops as a
   duplicate (Polar `external_id`; Stripe `identifier`, within its 24 hours,

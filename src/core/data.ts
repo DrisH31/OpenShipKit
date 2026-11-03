@@ -283,11 +283,16 @@ export interface UsageRepo {
   get(id: string): Promise<UsageEvent | null>;
   /**
    * Events waiting for the billing provider, created in [after, before), oldest first, leaving out any
-   * with an unfinished job keyed `usage:<id>` (already on its way), so a backlog can't hide the rest.
+   * with an unfinished job keyed `usage:<id>` (already on its way, so a backlog can't hide the rest)
+   * and, with `failedSince`, any whose job failed for good since then (not re-queued in a loop).
    */
-  listPendingReports(after: string, before: string, limit: number): Promise<UsageEvent[]>;
-  /** No longer pending: sent (reportedAt, when the provider accepted it), or settled with nothing to send (null). */
-  settleReport(id: string, reportedAt: string | null): Promise<void>;
+  listPendingReports(after: string, before: string, limit: number, opts?: { failedSince?: string }): Promise<UsageEvent[]>;
+  /** How many events, created before `before`, still wait for the billing provider. */
+  countPendingReports(before: string): Promise<number>;
+  /** Final: sent (when the provider accepted it), or settled without sending, with the reason. */
+  settleReport(id: string, outcome: { sentAt: string } | { skipped: "no_customer" | "expired" }): Promise<void>;
+  /** Settle as expired every event still pending that was created before `before`. Returns how many. */
+  expirePendingReports(before: string): Promise<number>;
   /** The total quantity for one metric in [from, to). */
   sum(subject: UsageSubject, metric: string, from: string, to: string): Promise<number>;
   /** Every metric's total in [from, to). */

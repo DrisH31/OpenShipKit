@@ -159,7 +159,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
     if (seen) return { event: clone(seen), created: false };
     validUsage(input);
     const { subject, metric, quantity, key = null, occurredAt, report = false } = input;
-    const event: UsageEvent = { id: randomUUID(), subject: { ...subject }, metric, quantity, key, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : now(), reportPending: report, reportedAt: null };
+    const event: UsageEvent = { id: randomUUID(), subject: { ...subject }, metric, quantity, key, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : now(), reportPending: report, reportedAt: null, reportSkipped: null };
     t.usage.push(event);
     createdAtOf.set(event.id, now());
     return { event: clone(event), created: true };
@@ -591,24 +591,45 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const e = t.usage.find((x) => x.id === id);
         return e ? clone(e) : null;
       },
-      async listPendingReports(after, before, limit) {
+      async listPendingReports(after, before, limit, opts = {}) {
         const lo = new Date(after).toISOString();
         const hi = new Date(before).toISOString();
+        const failedSince = opts.failedSince ? new Date(opts.failedSince).toISOString() : null;
+        const busy = (id: string) =>
+          [...t.jobs.values()].some(
+            (j) => j.key === `usage:${id}` && (j.status === "queued" || j.status === "running" || (failedSince !== null && j.status === "failed" && (j.finishedAt ?? j.updatedAt) >= failedSince)),
+          );
         return t.usage
           .filter((e) => {
             const at = createdAtOf.get(e.id) ?? e.occurredAt;
-            const queued = [...t.jobs.values()].some((j) => j.key === `usage:${e.id}` && (j.status === "queued" || j.status === "running"));
-            return e.reportPending && at >= lo && at < hi && !queued;
+            return e.reportPending && at >= lo && at < hi && !busy(e.id);
           })
           .slice(0, limit)
           .map(clone);
       },
-      async settleReport(id, reportedAt) {
+      async countPendingReports(before) {
+        const hi = new Date(before).toISOString();
+        return t.usage.filter((e) => e.reportPending && (createdAtOf.get(e.id) ?? e.occurredAt) < hi).length;
+      },
+      async settleReport(id, outcome) {
         const e = t.usage.find((x) => x.id === id);
-        if (e) {
-          e.reportPending = false;
-          e.reportedAt = reportedAt ? new Date(reportedAt).toISOString() : null;
+        if (!e) return;
+        e.reportPending = false;
+        e.reportedAt = "sentAt" in outcome ? new Date(outcome.sentAt).toISOString() : null;
+        e.reportSkipped = "skipped" in outcome ? outcome.skipped : null;
+      },
+      async expirePendingReports(before) {
+        const hi = new Date(before).toISOString();
+        let n = 0;
+        for (const e of t.usage) {
+          if (e.reportPending && (createdAtOf.get(e.id) ?? e.occurredAt) < hi) {
+            e.reportPending = false;
+            e.reportedAt = null;
+            e.reportSkipped = "expired";
+            n++;
+          }
         }
+        return n;
       },
       async sum(subject, metric, from, to) {
         return sumOf(subject, metric, from, to);

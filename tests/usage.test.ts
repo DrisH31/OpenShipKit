@@ -257,6 +257,17 @@ describe("one stored event, one charge", () => {
     expect(meter.reports).toEqual([]);
   });
 
+  it("every event reaches a final state: with billing off the sweep queues nothing, and past 35 days it expires", async () => {
+    const { event } = await store.usage.record({ subject: me(), metric: "api_calls", quantity: 2, report: true });
+    meter.off = true;
+    expect(await usage.sweepUsageReports(Date.now() + 10 * 60_000)).toBe(0); // no job churn while it can't meter
+    expect((await store.jobs.list({})).items).toEqual([]);
+    meter.off = false;
+    expect(await usage.sweepUsageReports(Date.now() + usage.REPORT_WINDOW_MS + 60_000)).toBe(0);
+    expect(await store.usage.get(event.id)).toMatchObject({ reportPending: false, reportedAt: null, reportSkipped: "expired" });
+    expect(await store.usage.countPendingReports("2100-01-01T00:00:00Z")).toBe(0);
+  });
+
   it("the sweep re-queues an event whose queueing was lost", async () => {
     await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
     // Recorded as pending straight in the store: the insert happened, the queueing didn't.
