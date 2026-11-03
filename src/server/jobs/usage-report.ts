@@ -33,16 +33,30 @@ import { getData } from "../data";
 import { log } from "../log";
 import { defineJob } from "./define";
 
+/**
+ * How old an event (by its own occurredAt, the time the provider checks) can be and still be sent:
+ * Stripe refuses meter events more than 35 days old. Older is settled as expired, never sent. The one
+ * place it's written: the usage sweep uses it as its backstop too.
+ */
+export const REPORT_WINDOW_MS = 35 * 24 * 60 * 60_000;
+
 export const usageReportJob = defineJob({
   kind: "usage.report",
   schema: z.strictObject({ eventId: z.string().min(1).max(100) }),
   // 30 s doubling to an hour: about three hours of retries in all, which outlasts a provider outage.
-  // The sweep re-queues an event still pending after that, for a day.
+  // After that the sweep re-queues it every six hours or so, until it's too old to send.
   maxAttempts: 10,
   run: async ({ eventId }) => {
     const data = await getData();
     const event = await data.usage.get(eventId);
     if (!event || !event.reportPending) return; // gone, or already sent or settled
+    // Too old for the provider (its own clock: the event's time, not when the row was written): it
+    // would refuse every attempt, so it's settled now instead of looping until the sweep's backstop.
+    if (Date.parse(event.occurredAt) < Date.now() - REPORT_WINDOW_MS) {
+      await data.usage.settleReport(event.id, { skipped: "expired" });
+      log.warn("usage", `${event.metric} event ${event.id}: happened more than 35 days ago, older than the billing provider accepts; expired unsent`);
+      return;
+    }
     const provider = await getBilling();
     if (!provider) throw new Error("Billing is off in this process, so metered usage can't be reported. It stays pending until billing is back.");
     if (!provider.reportUsage) throw new Error(`${provider.label} has no meters, so metered usage can't be reported to it. It stays pending.`);

@@ -57,8 +57,8 @@ to the Polar or Stripe meter
 sent again; one whose job finds billing off stays pending. Retries run for about
 three hours (30 seconds doubling to an hour), and every five minutes the runner
 re-queues events still pending (a failed one after six hours), so a crash
-between recording and queueing loses nothing. An event still unsent after 35
-days expires: that's as old as Stripe accepts. A report that failed for good is in `/admin/jobs` to
+between recording and queueing loses nothing. An event that happened more
+than 35 days ago expires unsent: that's as old as Stripe accepts. A report that failed for good is in `/admin/jobs` to
 retry.
 
 ## Adding a job

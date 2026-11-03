@@ -57,7 +57,7 @@ import { PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing"
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
-import { usageSubject, usageSummary, type UsageLine } from "@/server/services/usage";
+import { isFreePlanCandidate, usageSubject, usageSummary, type UsageLine } from "@/server/services/usage";
 import { humanize } from "@/lib/schema-form";
 
 export const metadata: Metadata = { title: "Billing" };
@@ -76,7 +76,7 @@ function Notice({ tone, title, children }: { tone: "positive" | "warning" | "inf
 }
 
 /** Something to buy or ask about: a paid price, or "contact sales". */
-const forSale = (plan: Plan) => plan.contactSales || plan.prices.some((p) => p.amountCents > 0);
+const forSale = (plan: Plan) => !isFreePlanCandidate(plan);
 
 /** The price as a figure: "$19 / month", "$299 one-time". */
 function PriceFigure({ price }: { price: PlanPrice }) {

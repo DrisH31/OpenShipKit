@@ -142,15 +142,18 @@ an outbox:
   `recordUsage` with the same key, not when a job is retried by hand.
 - Every five minutes the job runner re-queues events still pending (leaving out
   those already queued, and those whose job failed for good in the last six
-  hours, so a refusal can't loop), so a crash between recording and queueing
-  loses nothing. A failed job in `/admin/jobs` says why it failed.
+  hours, so a refusal is retried a few times a day rather than in a tight loop),
+  so a crash between recording and queueing loses nothing. A failed job in `/admin/jobs` says why it failed.
 - Billing off, or unable to meter, where the job runs (a worker started without
   the provider's key) is an error, not a skip: the event stays pending, the
-  sweep queues nothing while it can't meter, and the event is sent once billing
-  is back.
+  sweep queues nothing while billing is off or its provider has no meters, and
+  the event is sent once billing is back. (A provider that is on but missing its
+  key fails each attempt instead, and the job's error says so.)
 - Every event reaches a final state: **sent**, **settled** with nobody to bill
-  (a free account), or **expired**: still unsent 35 days after it was recorded,
-  which is as old as Stripe accepts a meter event. Expiries are logged with
+  (a free account), or **expired**: it happened more than 35 days ago (by its
+  own time, the one Stripe checks), older than Stripe accepts a meter event, so
+  it is never sent. The job expires it on sight; the sweep expires anything
+  still pending 35 days after it was written, as a backstop. Expiries are logged with
   their count. While any event waits more than a day, an error is logged, at
   most once an hour per process, with the count and the cause.
 - The one window left, a crash after the provider accepted the event and before

@@ -597,7 +597,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const failedSince = opts.failedSince ? new Date(opts.failedSince).toISOString() : null;
         const busy = (id: string) =>
           [...t.jobs.values()].some(
-            (j) => j.key === `usage:${id}` && (j.status === "queued" || j.status === "running" || (failedSince !== null && j.status === "failed" && (j.finishedAt ?? j.updatedAt) >= failedSince)),
+            (j) => j.key === `usage:${id}` && (j.status === "queued" || j.status === "running" || (failedSince !== null && j.status === "failed" && j.finishedAt !== null && j.finishedAt >= failedSince)),
           );
         return t.usage
           .filter((e) => {

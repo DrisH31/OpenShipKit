@@ -43,7 +43,7 @@ import { getBilling } from "../billing";
 import { getData } from "../data";
 import { billingProvider, meteredMetrics } from "../env";
 import { enqueueJob } from "../jobs";
-import { usageReportJob } from "../jobs/usage-report";
+import { REPORT_WINDOW_MS, usageReportJob } from "../jobs/usage-report";
 import { log } from "../log";
 import { currentOrg } from "../orgs";
 import { getEntitlement, getOrgEntitlement } from "./billing";
@@ -242,10 +242,10 @@ const SWEEP_AFTER_MS = 5 * 60_000;
 /** Pending longer than this is worth an alarm. */
 const STALE_AFTER_MS = 24 * 60 * 60_000;
 /**
- * And older than this, an event can't be sent any more: Stripe refuses meter events more than 35 days
- * old. The sweep settles them as expired (said once, with the count) instead of retrying for ever.
+ * The provider's window (REPORT_WINDOW_MS, in the job): the job expires an event older than it by the
+ * event's own time; the sweep expires rows older than it by when they were written, as a backstop.
  */
-export const REPORT_WINDOW_MS = 35 * 24 * 60 * 60_000;
+export { REPORT_WINDOW_MS };
 /** An event whose job failed for good is re-queued no sooner than this after, so a refusal can't loop. */
 const RETRY_FAILED_AFTER_MS = 6 * 60 * 60_000;
 /** The alarm for stale events: at most once an hour per process. */

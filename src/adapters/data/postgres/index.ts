@@ -1152,9 +1152,12 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
       },
       async listPendingReports(after, before, limit, opts = {}) {
         const failedSince = opts.failedSince ? toDate(opts.failedSince, "failedSince") : null;
-        const busy = failedSince
-          ? sql`(${jobs.status} in ('queued', 'running') or (${jobs.status} = 'failed' and coalesce(${jobs.finishedAt}, ${jobs.updatedAt}) >= ${failedSince}))`
-          : sql`${jobs.status} in ('queued', 'running')`;
+        // Two lookups, each served by an index on jobs.key: the unfinished job (the partial unique key
+        // index), and, with failedSince, a recent failure. One OR-ed clause scanned the whole table.
+        const key = sql`'usage:' || ${usageEvents.id}::text`;
+        const recentFailure = failedSince
+          ? sql`and not exists (select 1 from ${jobs} where ${jobs.key} = ${key} and ${jobs.status} = 'failed' and ${jobs.finishedAt} >= ${failedSince})`
+          : sql``;
         const rows = await db()
           .select()
           .from(usageEvents)
@@ -1163,7 +1166,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
               eq(usageEvents.reportPending, true),
               sql`${usageEvents.createdAt} >= ${toDate(after, "after")}`,
               sql`${usageEvents.createdAt} < ${toDate(before, "before")}`,
-              sql`not exists (select 1 from ${jobs} where ${jobs.key} = 'usage:' || ${usageEvents.id}::text and ${busy})`,
+              sql`not exists (select 1 from ${jobs} where ${jobs.key} = ${key} and ${jobs.status} in ('queued', 'running')) ${recentFailure}`,
             ),
           )
           .orderBy(asc(usageEvents.createdAt))

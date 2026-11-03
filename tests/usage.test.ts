@@ -257,6 +257,15 @@ describe("one stored event, one charge", () => {
     expect(meter.reports).toEqual([]);
   });
 
+  it("an event older than the provider accepts (by its own time) expires at once, never sent", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    await usage.recordUsage(me(), "api_calls", 5, { key: "backfill_1", occurredAt: new Date(Date.now() - 40 * 86_400_000) });
+    expect(await runDueJobs()).toMatchObject({ succeeded: 1 });
+    expect(meter.reports).toEqual([]);
+    const [job] = (await store.jobs.list({})).items;
+    expect(await store.usage.get((job.payload as { eventId: string }).eventId)).toMatchObject({ reportPending: false, reportedAt: null, reportSkipped: "expired" });
+  });
+
   it("every event reaches a final state: with billing off the sweep queues nothing, and past 35 days it expires", async () => {
     const { event } = await store.usage.record({ subject: me(), metric: "api_calls", quantity: 2, report: true });
     meter.off = true;
