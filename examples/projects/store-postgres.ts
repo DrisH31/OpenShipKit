@@ -17,9 +17,17 @@ const toProject = (r: Row): Project => ({ id: r.id, orgId: r.org_id, name: r.nam
 export function createPostgresProjectStore(opts: { db?: Db } = {}): ProjectStore {
   const db = () => opts.db ?? getDrizzle();
   return {
-    async create({ orgId, name, createdBy }) {
-      const r = await db().execute<Row>(sql`insert into example_projects (org_id, name, created_by) values (${orgId}, ${name}, ${createdBy}) returning *`);
-      return toProject(r.rows[0]);
+    async create({ orgId, name, createdBy, limit = null }) {
+      return db().transaction(async (tx) => {
+        // One organisation at a time: concurrent creates queue here, so two can't both pass a count at
+        // limit - 1. Released at commit or rollback.
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`example_projects:${orgId}`}, 0))`);
+        const counted = await tx.execute<{ n: number | string }>(sql`select count(*)::int as n from example_projects where org_id = ${orgId}`);
+        const count = Number(counted.rows[0]?.n ?? 0);
+        if (limit !== null && count >= limit) return { project: null, count };
+        const r = await tx.execute<Row>(sql`insert into example_projects (org_id, name, created_by) values (${orgId}, ${name}, ${createdBy}) returning *`);
+        return { project: toProject(r.rows[0]), count: count + 1 };
+      });
     },
     async list(orgId) {
       if (!isUuid(orgId)) return [];

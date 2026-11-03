@@ -51,8 +51,9 @@ function fail(message: string): never {
 function parseArgs(args: string[]): Options {
   const o: Options = { remote: "openshipkit", merge: false, fetch: true };
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
+    const [a, inline] = args[i].startsWith("--") && args[i].includes("=") ? [args[i].slice(0, args[i].indexOf("=")), args[i].slice(args[i].indexOf("=") + 1)] : [args[i], undefined];
     const value = () => {
+      if (inline !== undefined) return inline;
       const v = args[++i];
       if (!v || v.startsWith("--")) fail(`${a} needs a value`);
       return v;
@@ -123,33 +124,48 @@ function main(): void {
       `no git remote "${o.remote}". Add the template once:\n  git remote add ${o.remote} https://github.com/DrisH31/openshipkit.git\n(or pass --remote <name> if you called it something else)`,
     );
   }
+  // The template's tags go into their own namespace (refs/<remote>/tags/…), never yours: a tag of your
+  // own (your site's v2.0.0) can't shadow a release or clash with one, and `git push --tags` won't
+  // publish the template's.
+  const TAGS = `refs/${o.remote}/tags`;
   if (o.fetch) {
     console.log(`Fetching ${o.remote} …`);
-    git(["fetch", "--quiet", "--tags", o.remote]);
+    git(["fetch", "--no-tags", o.remote, `+refs/tags/v*:${TAGS}/v*`, `+refs/heads/*:refs/remotes/${o.remote}/*`]);
   }
 
-  // The target: --to, else the newest release tag the remote has, else its main branch.
-  const tags = (git(["tag", "--list", "v*.*.*"]) ?? "").split("\n").filter((t) => semver(t)[0] >= 0).sort(compare);
+  // The target: --to (a release name or any ref), else the template's newest release, else its main.
+  const tags = (git(["for-each-ref", "--format=%(refname:strip=3)", TAGS]) ?? "").split("\n").filter((t) => semver(t)[0] >= 0).sort(compare);
   const target = o.to ?? tags.at(-1) ?? `${o.remote}/main`;
-  const ref = git(["rev-parse", "--verify", "--quiet", `${target}^{commit}`], true);
-  if (!ref) fail(`"${target}" isn't a tag or branch here. Releases: ${tags.length ? tags.join(", ") : "none fetched"}`);
+  const isRelease = tags.includes(target);
+  const ref = git(["rev-parse", "--verify", "--quiet", `${isRelease ? `${TAGS}/${target}` : target}^{commit}`], true);
+  if (!ref) fail(`"${target}" isn't one of ${o.remote}'s releases or a ref here. Releases: ${tags.length ? tags.join(", ") : "none fetched"}`);
 
-  const mine = existsSync("package.json") ? ((JSON.parse(readFileSync("package.json", "utf8")) as { version?: string }).version ?? "?") : "?";
-  const theirsPkg = git(["show", `${ref}:package.json`], true);
-  const theirs = theirsPkg ? ((JSON.parse(theirsPkg) as { version?: string }).version ?? "?") : "?";
-  console.log("");
-  console.log(`Your site: ${mine}. Target: ${target} (${theirs}).`);
-
+  const versionAt = (rev: string | null) => {
+    const pkg = rev ? git(["show", `${rev}:package.json`], true) : null;
+    try {
+      return pkg ? ((JSON.parse(pkg) as { version?: string }).version ?? "?") : "?";
+    } catch {
+      return "?";
+    }
+  };
   const base = git(["merge-base", "HEAD", ref], true);
+  // "Your version" is the template's, where your history last met it, never your own package.json
+  // (yours is your product's version, and says nothing about which template release you have).
+  const mine = versionAt(base);
+  const theirs = versionAt(ref);
+  console.log("");
+  console.log(`You have the template at ${mine}${base ? "" : " (no shared history)"}. Target: ${target} (${theirs}).`);
   if (base === ref) {
     console.log("You already have everything in it. Nothing to upgrade.");
     return;
   }
 
   // What changed, per version, from the target's own changelog.
+  // Upgrading to a branch (main) crosses its unreleased work too.
   const sections = changelogSections(git(["show", `${ref}:CHANGELOG.md`], true) ?? "").filter((s) => {
-    if (s.version === "Unreleased") return false;
-    return semver(s.version)[0] < 0 || (compare(s.version, mine) > 0 && compare(s.version, theirs) <= 0);
+    if (s.version === "Unreleased") return !isRelease && s.body.length > 0;
+    if (semver(s.version)[0] < 0) return false;
+    return (mine === "?" || compare(s.version, mine) > 0) && compare(s.version, theirs) <= 0;
   });
   console.log("");
   if (!sections.length) console.log("CHANGELOG: no release sections between your version and the target (read the diff).");
@@ -157,7 +173,9 @@ function main(): void {
     console.log(`── ${s.version} ${"─".repeat(Math.max(0, 60 - s.version.length))}`);
     const notes = upgradeNotes(s.body);
     if (notes) console.log(`Upgrade notes:\n${notes}\n`);
-    console.log(s.body.split("\n").slice(0, 25).join("\n") + (s.body.split("\n").length > 25 ? "\n  … (the rest in CHANGELOG.md)" : ""));
+    // The rest of the section, without the notes just shown.
+    const rest = (notes ? s.body.replace(/^### Upgrade notes\s*\n[\s\S]*?(?=^### |(?![\s\S]))/m, "") : s.body).trim().split("\n");
+    console.log(rest.slice(0, 25).join("\n") + (rest.length > 25 ? "\n  … (the rest in CHANGELOG.md)" : ""));
     console.log("");
   }
 
@@ -185,8 +203,9 @@ function main(): void {
   }
 
   // The merge: a clean tree, a new branch, no commit.
+  // In this order, so the message is the true one (a merge in progress also leaves the tree dirty).
+  if (git(["rev-parse", "-q", "--verify", "MERGE_HEAD"], true)) fail("a merge is already in progress: finish it, or git merge --abort to start over");
   if (git(["status", "--porcelain"])) fail("commit or stash your changes first: the merge needs a clean working tree");
-  if (existsSync(".git/MERGE_HEAD")) fail("a merge is already in progress (git merge --abort to start over)");
   const branch = `upgrade/${target.replace(/^.*\//, "").replace(/[^A-Za-z0-9._-]+/g, "-")}`;
   if (git(["rev-parse", "--verify", "--quiet", branch], true)) fail(`branch ${branch} already exists: delete it or finish it first`);
   git(["switch", "--quiet", "-c", branch]);

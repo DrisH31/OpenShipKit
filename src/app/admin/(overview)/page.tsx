@@ -40,6 +40,7 @@ import { PROVIDER_LABEL } from "@/core/billing";
 import { requireAdmin } from "@/server/session";
 import { GROWTH_DAYS, getOverview } from "@/server/services/overview";
 import { strandedSubscriptions } from "@/server/services/billing";
+import { featureOn } from "@/server/profile";
 import { ConfirmAction } from "@/components/admin/confirm-action";
 import { endStrandedAction } from "./actions";
 import { getSetupSteps } from "@/server/setup-steps";
@@ -176,9 +177,11 @@ export default async function AdminOverview() {
           </span>
         }
         action={
-          <Link href="/admin/posts/new?kind=post" className={buttonVariants({ size: "sm" })}>
-            New post
-          </Link>
+          featureOn("blog") ? (
+            <Link href="/admin/posts/new?kind=post" className={buttonVariants({ size: "sm" })}>
+              New post
+            </Link>
+          ) : undefined
         }
       />
 

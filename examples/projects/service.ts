@@ -10,7 +10,8 @@ import "server-only";
 //     each member may do: any member lists and creates; deleting needs an
 //     admin, the same rank as inviting people (can(role, "members.invite")).
 //   - Plan limits: a plan's `limits.projects` caps how many an organisation
-//     may have (requireWithinLimit with the current count; docs/usage.md).
+//     may have, held exactly: the store counts and inserts atomically (a
+//     count-then-insert in the service lets concurrent creates overshoot).
 //     Whose plan: usageSubject, the same rule as everywhere else.
 //   - The write path: assertNotDemo first, zod (parseInput), the store, then
 //     recordAudit with before and after.
@@ -24,7 +25,7 @@ import { dataProvider } from "@/server/env";
 import { recordAudit } from "@/server/services/audit";
 import { ServiceError, parseInput } from "@/server/services/errors";
 import { orgAccess } from "@/server/services/orgs";
-import { requireWithinLimit, usageSubject } from "@/server/services/usage";
+import { limitContext, limitOf, usageSubject } from "@/server/services/usage";
 import { createMemoryProjectStore, type Project, type ProjectStore } from "./store";
 
 export const projectInputSchema = z.strictObject({ name: z.string().trim().min(1, "Give the project a name.").max(80) });
@@ -52,8 +53,13 @@ export async function createProject(user: User, orgId: string, input: unknown): 
   const { name } = parseInput(projectInputSchema, input);
   await orgAccess(user, orgId);
   const store = await getProjectStore();
-  await requireWithinLimit(await usageSubject(user, { orgId }), "projects", { current: await store.count(orgId) });
-  const project = await store.create({ orgId, name, createdBy: user.id });
+  // The plan's limit, then the count and the insert in one atomic step (the store), so concurrent
+  // creates can't overshoot it.
+  const limit = limitOf(await limitContext(await usageSubject(user, { orgId })), "projects");
+  const { project, count } = await store.create({ orgId, name, createdBy: user.id, limit });
+  if (!project) {
+    throw new ServiceError("conflict", `Your plan allows ${limit} projects, and that's used up. Upgrade for more.`, { reason: "limit_reached", metric: "projects", limit, used: count });
+  }
   await recordAudit(actor(user), "example_project.create", "example_project", project.id, null, project);
   return project;
 }

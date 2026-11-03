@@ -42,6 +42,25 @@ function describeContract(name: string, make: () => Promise<{ store: ApiKeyStore
       expect((await s.list(a))[0].revokedAt).not.toBeNull();
       expect(await s.findActiveByHash(hash)).toMatchObject({ userId: b });
     });
+
+    it("claims an Idempotency-Key once per window, keeps its answer, and gives back an unanswered claim", async () => {
+      const { store: s, users: [a] } = await make();
+      const k = await s.create({ userId: a, name: "CI", prefix: "uk_abcde", hash: `h-${crypto.randomUUID()}` });
+      const since = new Date(Date.now() - 60_000).toISOString();
+      const first = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b1", since });
+      expect(first.claimed).toBe(true);
+      const second = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b2", since });
+      expect(second).toMatchObject({ claimed: false, request: { id: first.request.id, bodyHash: "b1", response: null } });
+      await s.saveResponse(first.request.id, { result: "A" });
+      expect((await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b1", since })).request.response).toEqual({ result: "A" });
+      // Past the window, the key is a new request.
+      const later = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b9", since: new Date(Date.now() + 60_000).toISOString() });
+      expect(later).toMatchObject({ claimed: true, request: { bodyHash: "b9", response: null } });
+      expect(later.request.id).not.toBe(first.request.id);
+      // An unanswered claim given back can be claimed again; an answered one isn't removed.
+      await s.releaseRequest(later.request.id);
+      expect((await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b3", since })).claimed).toBe(true);
+    });
   });
 }
 
@@ -118,11 +137,32 @@ describe("the usage-billed API", () => {
     expect(bare.status).toBe(401);
   });
 
-  it("holds the plan's limit exactly under concurrency, and a retry with the same Idempotency-Key counts once", async () => {
+  it("an Idempotency-Key replays the first answer, refuses another body, and is never free work", async () => {
+    const { mintApiKey } = await svc();
+    const { key } = await mintApiKey(user, { name: "CI" });
+    const first = await call(key, { text: "a" }, "req-1");
+    expect(await first.json()).toEqual({ result: "A", usage: { used: 1, limit: 3 } });
+    const again = await call(key, { text: "a" }, "req-1");
+    expect(again.headers.get("idempotent-replayed")).toBe("true");
+    expect(await again.json()).toEqual({ result: "A", usage: { used: 1, limit: 3 } }); // replayed, not re-run
+    // The review's exploit: reuse the key with new bodies once the limit is reached.
+    await call(key, { text: "b" }, "req-2");
+    await call(key, { text: "c" }, "req-3");
+    expect((await call(key, { text: "d" }, "req-4")).status).toBe(429);
+    for (let i = 0; i < 5; i++) {
+      const r = await call(key, { text: `free-${i}` }, "req-1");
+      expect(r.status).toBe(422);
+    }
+    expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(3);
+    // A refused call gives its key back: after an upgrade the same key works.
+    await store.plans.upsert(plan("free", { sortOrder: 0, limits: { api_calls: 10 } }));
+    expect((await call(key, { text: "d" }, "req-4")).status).toBe(200);
+  });
+
+  it("holds the plan's limit exactly under concurrency", async () => {
     const { mintApiKey } = await svc();
     const { key } = await mintApiKey(user, { name: "CI" });
     expect((await call(key, { text: "a" }, "req-1")).status).toBe(200);
-    expect(await (await call(key, { text: "a" }, "req-1")).json()).toMatchObject({ usage: { used: 1 } }); // the same call again
     const statuses = await Promise.all(Array.from({ length: 6 }, (_, i) => call(key, { text: "b" }, `burst-${i}`).then((r) => r.status)));
     expect(statuses.filter((s) => s === 200)).toHaveLength(2); // 3 allowed, 1 already used
     expect(statuses.filter((s) => s === 429)).toHaveLength(4);

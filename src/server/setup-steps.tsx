@@ -25,6 +25,8 @@ import { getContentState } from "./services/content";
 import { listPlans } from "./services/plans";
 import { getPublishedPost } from "./services/posts";
 import { PRICE_ID_LABEL, PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing";
+import { isWithoutPath } from "@/core/profile";
+import { without } from "./env";
 
 /** The two variables that turn each provider on: its key and its webhook secret. */
 const PROVIDER_KEYS: Record<PaidProviderId, [string, string]> = {
@@ -47,6 +49,11 @@ async function liveStarterPosts(): Promise<number> {
 const SAAS_STEPS: ReadonlySet<string> = new Set(["plans", "billing", "polar"]);
 
 export async function getSetupSteps(saas: boolean): Promise<SetupStep[]> {
+  // A step whose action is a switched-off feature (OPENSHIPKIT_WITHOUT=mcp: "Mint a key") isn't a step.
+  return (await allSetupSteps(saas)).filter((s) => !s.action || !isWithoutPath(s.action.href, without()));
+}
+
+async function allSetupSteps(saas: boolean): Promise<SetupStep[]> {
   const [site, planEdits, plans, keys, starters] = await Promise.all([
     getContentState("site"),
     // The seed records a plan.create per starter plan; only a person's or an agent's edit counts.

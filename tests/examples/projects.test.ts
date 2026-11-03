@@ -29,11 +29,12 @@ function describeContract(name: string, make: () => Promise<{ store: ProjectStor
   describe(`projects store: ${name}`, () => {
     it("creates, lists newest first, counts and deletes, one organisation at a time", async () => {
       const { store: s, orgs: [a, b], userId } = await make();
-      const one = await s.create({ orgId: a, name: "One", createdBy: userId });
-      const two = await s.create({ orgId: a, name: "Two", createdBy: userId });
+      const { project: one } = await s.create({ orgId: a, name: "One", createdBy: userId });
+      const { project: two } = await s.create({ orgId: a, name: "Two", createdBy: userId });
       await s.create({ orgId: b, name: "Theirs", createdBy: userId });
       expect((await s.list(a)).map((p) => p.name)).toEqual(["Two", "One"]);
       expect(await s.count(a)).toBe(2);
+      if (!one || !two) throw new Error("created");
       expect(await s.get(a, one.id)).toMatchObject({ id: one.id, orgId: a, name: "One", createdBy: userId });
       // Another organisation's project is not found, and can't be deleted.
       expect(await s.get(b, one.id)).toBeNull();
@@ -42,6 +43,13 @@ function describeContract(name: string, make: () => Promise<{ store: ProjectStor
       expect(await s.delete(a, two.id)).toBe(false);
       expect(await s.get(a, "not-a-uuid")).toBeNull();
       expect(await s.count(a)).toBe(1);
+    });
+
+    it("holds a limit exactly under concurrency", async () => {
+      const { store: s, orgs: [, b], userId } = await make();
+      const results = await Promise.all(Array.from({ length: 8 }, (_, i) => s.create({ orgId: b, name: `P${i}`, createdBy: userId, limit: 2 })));
+      expect(results.filter((r) => r.project)).toHaveLength(2);
+      expect(await s.count(b)).toBe(2);
     });
   });
 }

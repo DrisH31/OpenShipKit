@@ -8,8 +8,9 @@ feature needs is here, and nothing else.
   Every call checks membership; any member lists and creates; deleting needs
   an admin or the owner. Someone outside the organisation gets 404, not 403.
 - **Plan limits.** The plan's `limits.projects` caps how many an organisation
-  may have (`/admin/plans/<key>` → Limits, e.g. `projects: 3` on the free plan).
-  The 409 says so: `details.reason === "limit_reached"`.
+  may have (`/admin/plans/<key>` → Limits, e.g. `projects: 3` on the free plan),
+  exactly: the store counts and inserts in one locked transaction, so
+  concurrent creates can't overshoot. The 409 says so: `details.reason === "limit_reached"`.
 - **The write path.** The demo guard, zod, the store, then the audit log with
   before and after (`example_project.create`, `example_project.delete`).
 - **Two stores, one contract.** Memory (tests, `DATA_PROVIDER=memory`) and

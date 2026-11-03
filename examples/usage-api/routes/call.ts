@@ -4,7 +4,8 @@ import "server-only";
 // POST /api/v1/shout — the example API. Authorization: Bearer <a key from /api/api-keys>.
 //   { text } → 200 { result, usage: { used, limit } }
 //   401 no or bad key · 400 bad input · 429 the plan's api_calls are used up this period ·
-//   Idempotency-Key: a retry with the same key is counted once.
+//   Idempotency-Key (24 h): the same key and body replay the first answer (Idempotent-Replayed:
+//   true), another body is 422, one still running is 409.
 //
 // Key-authenticated, not cookie-authenticated: there is no session to ride, so
 // no Origin check (that's for cookies). Servers call this, not browsers.
@@ -21,8 +22,8 @@ import { ServiceError, serializeError } from "@/server/services/errors";
 import { authenticateApiKey, callApi } from "../service";
 
 export async function POST(request: Request): Promise<Response> {
-  const user = await authenticateApiKey(request.headers.get("authorization"));
-  if (!user) return json(401, { error: "unauthorized", message: "Send Authorization: Bearer <your API key>." }, { "www-authenticate": "Bearer" });
+  const caller = await authenticateApiKey(request.headers.get("authorization"));
+  if (!caller) return json(401, { error: "unauthorized", message: "Send Authorization: Bearer <your API key>." }, { "www-authenticate": "Bearer" });
   const text = await readCappedText(request, 64 * 1024);
   if (text === null) return json(413, { error: "too_large", message: "That request was too large." });
   let body: unknown;
@@ -31,12 +32,14 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return json(400, { error: "invalid", message: "Send a JSON body." });
   }
-  const requestId = request.headers.get("idempotency-key")?.slice(0, 200) || crypto.randomUUID();
+  const idempotencyKey = request.headers.get("idempotency-key")?.trim().slice(0, 200) || null;
   try {
-    return json(200, await callApi(user, requestId, body));
+    const { replayed, ...answer } = await callApi(caller, idempotencyKey, body);
+    return json(200, answer, replayed ? { "idempotent-replayed": "true" } : {});
   } catch (error) {
     if (error instanceof ServiceError) {
-      const status = (error.details as { reason?: string } | undefined)?.reason === "limit_reached" ? 429 : error.status;
+      const reason = (error.details as { reason?: string } | undefined)?.reason;
+      const status = reason === "limit_reached" ? 429 : reason === "idempotency_mismatch" ? 422 : error.status;
       return json(status, serializeError(error));
     }
     throw error;

@@ -19,6 +19,7 @@ import { RESTORABLE_ENTITIES } from "@/server/services/audit";
 import { toJsonSchema } from "../json-schema";
 import { READ_ONLY, defineTool } from "../types";
 import { auditSummary } from "./shared";
+import { featureOn } from "@/server/profile";
 
 /** Per-section advice the schema can't express. Keys without an entry need none. */
 const CONTENT_TIPS: Partial<Record<ContentKey, string>> = {
@@ -74,7 +75,9 @@ function postsManual() {
   const { post, changelog, page } = POST_KIND;
   return {
     kinds: {
-      post: `A blog post, at ${post.publicPath}/<slug>; listed on ${post.publicPath}, in the RSS feed and the sitemap.`,
+      post: featureOn("blog")
+        ? `A blog post, at ${post.publicPath}/<slug>; listed on ${post.publicPath}, in the RSS feed and the sitemap.`
+        : "A blog post: the blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog), so these can't be written or published.",
       changelog: `A changelog entry, at ${changelog.publicPath}/<slug> and on ${changelog.publicPath}, newest first.`,
       page: `A static page such as privacy or terms, at ${page.publicPath}/<slug>.`,
     },

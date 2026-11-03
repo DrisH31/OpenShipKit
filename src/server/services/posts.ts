@@ -31,6 +31,7 @@ import { getData } from "../data";
 import { recordAudit } from "./audit";
 import { ServiceError, fromDataError, parseInput } from "./errors";
 import { announcePostChange } from "./indexnow";
+import { featureOn } from "../profile";
 
 export async function listPosts(query: PostQuery): Promise<Page<Post>> {
   return (await getData()).posts.list(query);
@@ -94,9 +95,17 @@ async function requirePost(id: string): Promise<Post> {
   return post;
 }
 
+/** With the blog switched off (OPENSHIPKIT_WITHOUT=blog), a blog post would publish to a 404: refused. */
+function assertKindOn(kind: Post["kind"]): void {
+  if (kind === "post" && !featureOn("blog")) {
+    throw new ServiceError("invalid", "The blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog), so blog posts can't be written or published. Changelog entries and pages still can.");
+  }
+}
+
 export async function createPost(input: unknown, actor: Actor): Promise<Post> {
   assertNotDemo(actor);
   const parsed = parseInput(postCreateSchema, input);
+  assertKindOn(parsed.kind);
   const slug = parsed.slug ?? slugify(parsed.title);
   if (!slug) throw new ServiceError("invalid", "Could not derive a slug from the title, so give the post an explicit slug");
   const data = await getData();
@@ -120,6 +129,7 @@ export async function updatePost(id: string, patch: unknown, actor: Actor): Prom
   assertNotDemo(actor);
   const parsed = parseInput(postUpdateSchema, patch);
   const before = await requirePost(id);
+  assertKindOn(before.kind);
   const data = await getData();
   if (parsed.slug && parsed.slug !== before.slug) {
     const clash = await data.posts.getBySlug(before.kind, parsed.slug);

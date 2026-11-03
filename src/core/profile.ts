@@ -34,7 +34,7 @@ export const SAAS_ONLY_PATHS: readonly string[] = ["/pricing", "/api/billing", "
 /** The features that can be switched off (OPENSHIPKIT_WITHOUT), and the paths each one owns. */
 export const FEATURE_PATHS = {
   /** The blog: /blog, its posts, tags and feed. The changelog and legal pages are posts too, and stay. */
-  blog: ["/blog"],
+  blog: ["/blog", "/admin/posts/new?kind=post"],
   /** The MCP server for AI agents, and the admin's agent keys. */
   mcp: ["/api/mcp", "/admin/agents"],
 } as const satisfies Record<string, readonly string[]>;
@@ -48,9 +48,14 @@ const under = (href: string, prefixes: readonly string[]): boolean => {
   return prefixes.some((p) => path === p || path.startsWith(`${p}/`));
 };
 
-/** Does this href lead to a feature that's switched off? Root-relative paths only, like isSaasOnlyPath. */
+/**
+ * Does this href lead to a feature that's switched off? Root-relative paths only, like isSaasOnlyPath.
+ * An entry with a query ("/admin/posts/new?kind=post": writing a blog post) matches that href exactly.
+ */
 export function isWithoutPath(href: string, without: readonly Feature[]): boolean {
-  return without.length > 0 && under(href, without.flatMap((f) => FEATURE_PATHS[f]));
+  if (!without.length) return false;
+  const entries: readonly string[] = without.flatMap((f) => FEATURE_PATHS[f]);
+  return under(href, entries.filter((e) => !e.includes("?"))) || entries.some((e) => e.includes("?") && href === e);
 }
 
 /**

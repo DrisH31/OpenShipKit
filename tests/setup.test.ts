@@ -5,7 +5,7 @@
 //
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,10 +15,11 @@ const ROOT = resolve(__dirname, "..");
 const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
 
-function run(args: string[], input?: string) {
+function run(args: string[], input?: string, existing?: string) {
   const dir = mkdtempSync(join(tmpdir(), "osk-setup-"));
   dirs.push(dir);
   const file = join(dir, ".env.test");
+  if (existing !== undefined) writeFileSync(file, existing);
   const r = spawnSync(process.execPath, ["scripts/setup.mts", "--file", file, ...args], { cwd: ROOT, input: input ?? "", encoding: "utf8" });
   const env = r.status === 0 ? readFileSync(file, "utf8") : "";
   const value = (key: string) => new RegExp(`^${key}=(.*)$`, "m").exec(env)?.[1] ?? null;
@@ -67,14 +68,46 @@ describe("npm run setup", () => {
     expect(r.value("OPENSHIPKIT_WITHOUT")).toBe("mcp,blog");
     expect(resolveWithout({ OPENSHIPKIT_WITHOUT: r.value("OPENSHIPKIT_WITHOUT")! })).toEqual(["mcp", "blog"]);
     expect(run(["--without", "admin"]).out).toMatch(/--without "admin" must be one of: blog, mcp/);
+    // No dev agent key, and no "connect an agent" step, for an MCP server that's off.
+    const off = run(["--without", "mcp"]);
+    expect(off.value("MCP_DEV_KEY")).toBe("");
+    expect(off.out).not.toMatch(/Connect an agent/);
     // The script's list is the app's.
     expect(/must be one of: ([a-z, ]+)/.exec(run(["--without", "x"]).out)?.[1].split(", ").sort()).toEqual([...FEATURE_NAMES].sort());
+  });
+
+  it("a choice that differs from a value already in the file is reported as kept, never dropped silently", () => {
+    const r = run(["--billing", "polar", "--email", "resend", "--without", "blog"], "", "BILLING_PROVIDER=stripe\nEMAIL_PROVIDER=smtp\nOPENSHIPKIT_WITHOUT=mcp\n");
+    expect(r.value("BILLING_PROVIDER")).toBe("stripe");
+    for (const key of ["BILLING_PROVIDER", "EMAIL_PROVIDER", "OPENSHIPKIT_WITHOUT"]) expect(r.out).toContain(`note: ${key} is already set; kept it`);
+  });
+
+  it("the wizard doesn't ask what the file already sets, and says so", () => {
+    const r = run(["-i"], "org\nconsole\n\n", "OPENSHIPKIT_PROFILE=saas\nBILLING_PROVIDER=stripe\n");
+    expect(r.out).toMatch(/Profile: saas \(already in/);
+    expect(r.out).toMatch(/Billing provider: stripe \(already in/);
+    expect(r.out).not.toMatch(/Billing provider \(none/);
+    expect([r.value("BILLING_PROVIDER"), r.value("OPENSHIPKIT_TENANCY"), r.value("EMAIL_PROVIDER")]).toEqual(["stripe", "org", "console"]);
   });
 
   it("offers exactly the values the app accepts", () => {
     for (const b of ["none", "polar", "stripe", "razorpay"]) expect(resolveBillingProvider({ BILLING_PROVIDER: b })).toBe(b);
     for (const e of ["console", "resend", "smtp"]) expect(resolveEmailProvider({ EMAIL_PROVIDER: e, RESEND_API_KEY: "x", SMTP_URL: "smtp://x" })).toBe(e);
     for (const t of ["personal", "org"]) expect(resolveTenancy({ OPENSHIPKIT_TENANCY: t })).toBe(t);
+  });
+
+  // A real terminal, through `script` (a pty): Ctrl-C mid-interview cancels and writes nothing.
+  const hasScript = spawnSync("sh", ["-c", "command -v script"]).status === 0;
+  it.skipIf(!hasScript)("Ctrl-C in a terminal cancels, and writes nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "osk-setup-"));
+    dirs.push(dir);
+    const file = join(dir, ".env.t");
+    const cmd = `${process.execPath} scripts/setup.mts -i --file ${file}`;
+    const args = process.platform === "darwin" ? ["-q", "/dev/null", "sh", "-c", cmd] : ["-qec", cmd, "/dev/null"];
+    const feed = `(sleep 2; printf 'saas\\r'; sleep 1; printf '\\003'; sleep 1) | script ${args.map((a) => `'${a}'`).join(" ")}`;
+    const r = spawnSync("sh", ["-c", feed], { cwd: ROOT, encoding: "utf8", timeout: 20_000 });
+    expect(r.stdout).toMatch(/cancelled; nothing written/);
+    expect(existsSync(file)).toBe(false);
   });
 
   it("never prompts without a terminal unless -i says so", () => {

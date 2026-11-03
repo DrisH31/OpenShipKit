@@ -5,9 +5,13 @@
 //
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createMemoryStore } from "@/adapters/data/memory";
+import type { DataStore } from "@/core/data";
 import { FEATURES, FEATURE_PATHS, forProfile, isHiddenPath, navigationForProfile } from "@/core/profile";
 import { FEATURE_NAMES, resolveWithout } from "@/server/env-rules";
 
+let store: DataStore = createMemoryStore({ fresh: true });
+vi.mock("@/server/data", () => ({ getData: async () => store }));
 afterEach(() => vi.unstubAllEnvs());
 
 describe("the feature switch", () => {
@@ -59,5 +63,40 @@ describe("switched-off routes answer 404", () => {
     const mcp = await import("@/app/api/mcp/route");
     const res = await mcp.POST(new Request("http://localhost/api/mcp", { method: "POST", body: "{}" }));
     expect(res.status).toBe(404);
+  });
+});
+
+describe("switched off beyond links", () => {
+  it("writing a blog post is a switched-off link; a changelog entry isn't", () => {
+    expect(isHiddenPath("/admin/posts/new?kind=post", "saas", ["blog"])).toBe(true);
+    expect(isHiddenPath("/admin/posts/new?kind=changelog", "saas", ["blog"])).toBe(false);
+    expect(isHiddenPath("/admin/posts/new?kind=post", "saas", [])).toBe(false);
+  });
+
+  it("the posts service refuses blog posts with the blog off (admin and MCP alike), not changelog entries", async () => {
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "blog");
+    store = createMemoryStore({ fresh: true });
+    const { createPost } = await import("@/server/services/posts");
+    const actor = { type: "system" as const, id: null, label: "test" };
+    await expect(createPost({ kind: "post", title: "Hello", body: "x" }, actor)).rejects.toMatchObject({ code: "invalid", message: expect.stringMatching(/blog is switched off/) });
+    await expect(createPost({ kind: "changelog", title: "1.1", body: "x" }, actor)).resolves.toMatchObject({ kind: "changelog" });
+  });
+
+  it("the setup checklist drops a step whose action is switched off", async () => {
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "mcp");
+    store = createMemoryStore({ fresh: true });
+    const { getSetupSteps } = await import("@/server/setup-steps");
+    const steps = await getSetupSteps(true);
+    expect(steps.map((s) => s.id)).not.toContain("mcp");
+    for (const s of steps) if (s.action) expect(isHiddenPath(s.action.href, "saas", ["mcp"]), s.id).toBe(false);
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "");
+    expect((await getSetupSteps(true)).map((s) => s.id)).toContain("mcp");
+  });
+
+  it("every method of the MCP endpoint answers 404 with mcp off", async () => {
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "mcp");
+    const mcp = await import("@/app/api/mcp/route");
+    expect((await mcp.GET()).status).toBe(404);
+    expect((await mcp.DELETE()).status).toBe(404);
   });
 });

@@ -21,7 +21,10 @@ history isn't the template's. `--merge` needs a clean working tree. It creates
 a branch, merges with `--no-commit` and lists the conflicts and next steps; you
 review, run the checks and commit. It never commits, pushes or migrates.
 `--to v1.2.0` picks a release; `--remote upstream` if you named the remote
-differently.
+differently. The template's release tags are fetched into their own namespace
+(`refs/openshipkit/tags/…`), so they never mix with your own tags, and "your
+version" is the template release your history last merged, not your
+`package.json`.
 
 The same by hand: keep the template as a second remote and merge its releases:
 

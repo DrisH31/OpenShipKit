@@ -175,7 +175,8 @@ Both read webhook-written rows only. Never trust `?success=1` or the client.
 ### Limit a feature by plan
 1. Declare the limit on the plan (`limits: { projects: 3 }`, in /admin/plans or `plan_update` with an admin key). A metric not listed is unlimited.
 2. Before the work: `await requireWithinLimit(await usageSubject(user), "projects", { current: <count now> })` from `src/server/services/usage.ts`; for metered usage, leave out `current` and after the work call `recordUsage(subject, "api_calls", 1, { key: requestId })`.
-3. The refusal is `ServiceError("conflict")` with `details.reason === "limit_reached"`; show its message. [docs/usage.md](docs/usage.md) covers periods, teams and metered prices (`BILLING_METERED_METRICS`).
+3. Concurrency: `requireWithinLimit` then a write lets two requests both pass at limit − 1. Where that matters, use `consumeUsage` for metered usage, and for a count, count and insert in one locked transaction in your store (`examples/projects/store-postgres.ts` shows it).
+4. The refusal is `ServiceError("conflict")` with `details.reason === "limit_reached"`; show its message. [docs/usage.md](docs/usage.md) covers periods, teams and metered prices (`BILLING_METERED_METRICS`).
 
 ## Environment
 

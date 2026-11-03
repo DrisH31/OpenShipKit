@@ -30,6 +30,26 @@ export interface ApiKeyStore {
   /** True when it was live and is now revoked. */
   revoke(userId: string, id: string): Promise<boolean>;
   touch(id: string, at: string): Promise<void>;
+  /**
+   * Claim an Idempotency-Key for this API key: a new row (claimed: true) unless one younger than
+   * `since` exists, which comes back as it is (claimed: false). An older one is replaced: keys last
+   * for the window, then mean a new request.
+   */
+  claimRequest(input: { apiKeyId: string; key: string; bodyHash: string; since: string }): Promise<{ claimed: boolean; request: ApiRequest }>;
+  /** The answer to replay for a claimed request. */
+  saveResponse(requestId: string, response: unknown): Promise<void>;
+  /** Give a claim back when the request failed before it was answered (it may be retried). */
+  releaseRequest(requestId: string): Promise<void>;
+}
+
+export interface ApiRequest {
+  id: string;
+  apiKeyId: string;
+  key: string;
+  bodyHash: string;
+  /** Null while the first request is still being answered. */
+  response: unknown;
+  createdAt: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,6 +57,7 @@ export const isUuid = (value: string): boolean => UUID.test(value);
 
 export function createMemoryApiKeyStore(): ApiKeyStore {
   const rows = new Map<string, ApiKey & { hash: string }>();
+  const requests = new Map<string, ApiRequest>();
   const pub = ({ hash: _h, ...k }: ApiKey & { hash: string }): ApiKey => ({ ...k }); // eslint-disable-line @typescript-eslint/no-unused-vars
   let seq = 0;
   return {
@@ -62,6 +83,20 @@ export function createMemoryApiKeyStore(): ApiKeyStore {
     async touch(id, at) {
       const r = rows.get(id);
       if (r) r.lastUsedAt = at;
+    },
+    async claimRequest({ apiKeyId, key, bodyHash, since }) {
+      const id = `${apiKeyId}:${key}`;
+      const seen = requests.get(id);
+      if (seen && seen.createdAt >= new Date(since).toISOString()) return { claimed: false, request: { ...seen } };
+      const request: ApiRequest = { id: crypto.randomUUID(), apiKeyId, key, bodyHash, response: null, createdAt: new Date().toISOString() };
+      requests.set(id, request);
+      return { claimed: true, request: { ...request } };
+    },
+    async saveResponse(requestId, response) {
+      for (const r of requests.values()) if (r.id === requestId) r.response = response;
+    },
+    async releaseRequest(requestId) {
+      for (const [k, r] of requests) if (r.id === requestId && r.response === null) requests.delete(k);
     },
   };
 }

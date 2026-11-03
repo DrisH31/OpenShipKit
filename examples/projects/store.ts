@@ -23,7 +23,12 @@ export interface Project {
 }
 
 export interface ProjectStore {
-  create(input: { orgId: string; name: string; createdBy: string }): Promise<Project>;
+  /**
+   * Create, only if the organisation has fewer than `limit` (null: no limit), counted and inserted
+   * atomically: concurrent creates for one organisation queue, so the limit holds exactly. Over the
+   * limit: `project` is null, and `count` says how many there are.
+   */
+  create(input: { orgId: string; name: string; createdBy: string; limit?: number | null }): Promise<{ project: Project | null; count: number }>;
   /** Newest first. */
   list(orgId: string): Promise<Project[]>;
   get(orgId: string, id: string): Promise<Project | null>;
@@ -39,11 +44,14 @@ export function createMemoryProjectStore(): ProjectStore {
   const rows = new Map<string, Project>();
   let seq = 0;
   return {
-    async create({ orgId, name, createdBy }) {
+    async create({ orgId, name, createdBy, limit = null }) {
+      // One synchronous stretch (count, then insert): atomic on one event loop.
+      const count = [...rows.values()].filter((p) => p.orgId === orgId).length;
+      if (limit !== null && count >= limit) return { project: null, count };
       // A strictly increasing time, so "newest first" holds within one millisecond too.
       const project: Project = { id: crypto.randomUUID(), orgId, name, createdBy, createdAt: new Date(Date.now() + seq++).toISOString() };
       rows.set(project.id, project);
-      return { ...project };
+      return { project: { ...project }, count: count + 1 };
     },
     async list(orgId) {
       return [...rows.values()]

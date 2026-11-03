@@ -246,7 +246,14 @@ const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
  * what the flags didn't answer, and only what applies (no billing question for a content site).
  * `ask` is injected so a test can answer from a script.
  */
-async function interview(options: Options, ask: (question: string) => Promise<string>): Promise<void> {
+async function interview(options: Options, ask: (question: string) => Promise<string>, existing: Map<string, string> = new Map()): Promise<void> {
+  // A value the file already has isn't asked again (setup never changes a set value): said, and kept.
+  const already = (key: string, label: string): boolean => {
+    const v = existing.get(key);
+    if (!v) return false;
+    console.log(`${label}: ${v} (already in ${options.envFile}; edit the file to change it)`);
+    return true;
+  };
   const pick = async <T extends string>(question: string, allowed: readonly T[], fallback: T, help: string): Promise<T> => {
     for (;;) {
       const raw = (await ask(`${question} (${allowed.join(" / ")}) [${fallback}]: `)).trim().toLowerCase();
@@ -256,13 +263,13 @@ async function interview(options: Options, ask: (question: string) => Promise<st
     }
   };
   console.log("A few questions; Enter takes the default in brackets. Nothing secret is asked: keys go into the file.");
-  options.profile ??= await pick("Profile: a SaaS, or a landing page + blog with no billing?", PROFILES, "saas", "site = no pricing, billing or plans.");
-  if (options.profile === "saas") {
-    options.billing ??= await pick("Billing provider", BILLINGS, "none", "none = plans show, nothing can be bought yet.");
-    options.tenancy ??= await pick("Accounts: one person each, or teams (organisations with members)?", TENANCIES, "personal", "org = teams.");
+  if (!already("OPENSHIPKIT_PROFILE", "Profile")) options.profile ??= await pick("Profile: a SaaS, or a landing page + blog with no billing?", PROFILES, "saas", "site = no pricing, billing or plans.");
+  if ((options.profile ?? existing.get("OPENSHIPKIT_PROFILE") ?? "saas") === "saas") {
+    if (!already("BILLING_PROVIDER", "Billing provider")) options.billing ??= await pick("Billing provider", BILLINGS, "none", "none = plans show, nothing can be bought yet.");
+    if (!already("OPENSHIPKIT_TENANCY", "Accounts")) options.tenancy ??= await pick("Accounts: one person each, or teams (organisations with members)?", TENANCIES, "personal", "org = teams.");
   }
-  options.email ??= await pick("Email: print to the terminal (development), Resend, or your own SMTP server?", EMAILS, options.compose ? "resend" : "console", "");
-  if (options.adminEmail === undefined) {
+  if (!already("EMAIL_PROVIDER", "Email")) options.email ??= await pick("Email: print to the terminal (development), Resend, or your own SMTP server?", EMAILS, options.compose ? "resend" : "console", "");
+  if (options.adminEmail === undefined && !already("ADMIN_EMAILS", "Admin")) {
     for (;;) {
       const raw = (await ask("Your email, to become the admin when you sign in [skip]: ")).trim();
       if (!raw) break;
@@ -273,7 +280,7 @@ async function interview(options: Options, ask: (question: string) => Promise<st
       console.log("  That isn't an email address.");
     }
   }
-  if (options.compose && options.domain === undefined) {
+  if (options.compose && options.domain === undefined && !already("DOMAIN", "Domain")) {
     const raw = (await ask("Your domain, like example.com [skip]: ")).trim().replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
     if (raw && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(raw)) options.domain = raw;
     else if (raw) console.log("  That isn't a host name; set DOMAIN in the file later.");
@@ -326,46 +333,71 @@ function projectNameFor(domain: string): string {
 }
 
 /** What setup fills when a key is empty or missing, for this mode. `creating`: the file doesn't exist yet. */
-function fills(options: Options, creating: boolean): Map<string, { value: string; note: string }> {
-  const out = new Map<string, { value: string; note: string }>();
+/** A value setup would fill; `chosen` when it came from you (a flag or an answer), not generated. */
+type Fill = { value: string; note: string; chosen?: boolean };
+
+function fills(options: Options, creating: boolean): Map<string, Fill> {
+  const out = new Map<string, Fill>();
+  const choose = (key: string, value: string, note: string) => out.set(key, { value, note, chosen: true });
   out.set("BETTER_AUTH_SECRET", { value: secret(32), note: "generated (32 random bytes)" });
   if (options.compose) {
     out.set("POSTGRES_PASSWORD", { value: randomBytes(32).toString("hex"), note: "generated (64 hex characters)" });
-    if (options.domain) out.set("DOMAIN", { value: options.domain, note: "from --domain" });
+    if (options.domain) choose("DOMAIN", options.domain, "from --domain");
     // Only in a new file: renaming the project of a running site would point it at an empty volume.
     if (options.domain && creating) {
       out.set("COMPOSE_PROJECT_NAME", { value: projectNameFor(options.domain), note: "from --domain (containers, images and the database volume are named after it)" });
     }
     const site = options.siteUrl ?? (options.domain ? `https://${options.domain}` : undefined);
-    if (site) out.set("NEXT_PUBLIC_SITE_URL", { value: site, note: options.siteUrl ? "from --site-url" : "from --domain" });
+    if (site) choose("NEXT_PUBLIC_SITE_URL", site, options.siteUrl ? "from --site-url" : "from --domain");
   } else {
-    out.set("NEXT_PUBLIC_SITE_URL", { value: options.siteUrl ?? "http://localhost:3000", note: options.siteUrl ? "from --site-url" : "development default" });
-    out.set("MCP_DEV_KEY", { value: `osk_${secret(32)}`, note: "generated (local-only agent key; ignored in production)" });
+    if (options.siteUrl) choose("NEXT_PUBLIC_SITE_URL", options.siteUrl, "from --site-url");
+    else out.set("NEXT_PUBLIC_SITE_URL", { value: "http://localhost:3000", note: "development default" });
+    // No agent key for an MCP server that's switched off.
+    if (!options.without?.includes("mcp")) out.set("MCP_DEV_KEY", { value: `osk_${secret(32)}`, note: "generated (local-only agent key; ignored in production)" });
   }
-  if (options.adminEmail) out.set("ADMIN_EMAILS", { value: options.adminEmail.toLowerCase(), note: "from --admin-email" });
-  if (options.profile) out.set("OPENSHIPKIT_PROFILE", { value: options.profile, note: "from --profile" });
+  if (options.adminEmail) choose("ADMIN_EMAILS", options.adminEmail.toLowerCase(), "from --admin-email");
+  if (options.profile) choose("OPENSHIPKIT_PROFILE", options.profile, "from --profile");
   // A content site sells nothing: billing stays off even if a Polar token is set later.
-  if (options.profile === "site") out.set("BILLING_PROVIDER", { value: "none", note: "from --profile site (no checkout, no webhooks)" });
-  else if (options.billing) out.set("BILLING_PROVIDER", { value: options.billing, note: "your choice of billing provider" });
-  if (options.email) out.set("EMAIL_PROVIDER", { value: options.email, note: "your choice of email" });
-  if (options.without?.length) out.set("OPENSHIPKIT_WITHOUT", { value: options.without.join(","), note: `switched off: ${options.without.join(", ")} (their pages answer 404)` });
-  if (options.tenancy && options.profile !== "site") out.set("OPENSHIPKIT_TENANCY", { value: options.tenancy, note: options.tenancy === "org" ? "teams on (docs/teams.md)" : "one person per account" });
+  if (options.profile === "site") choose("BILLING_PROVIDER", "none", "from --profile site (no checkout, no webhooks)");
+  else if (options.billing) choose("BILLING_PROVIDER", options.billing, "your choice of billing provider");
+  if (options.email) choose("EMAIL_PROVIDER", options.email, "your choice of email");
+  if (options.without?.length) choose("OPENSHIPKIT_WITHOUT", options.without.join(","), `switched off: ${options.without.join(", ")} (their pages answer 404)`);
+  if (options.tenancy && options.profile !== "site") choose("OPENSHIPKIT_TENANCY", options.tenancy, options.tenancy === "org" ? "teams on (docs/teams.md)" : "one person per account");
   return out;
 }
 
 async function main(): Promise<void> {
   const options = parseArgs(argv.slice(2));
   if (options.interactive) {
-    const rl = createInterface({ input: stdin, output: stdout, terminal: stdin.isTTY === true });
+    const tty = stdin.isTTY === true;
+    const rl = createInterface({ input: stdin, output: stdout, terminal: tty });
+    // Ctrl-C in a terminal is "stop", never "take the defaults": nothing is written.
+    rl.on("SIGINT", () => {
+      rl.close();
+      stdout.write("\n");
+      fail("cancelled; nothing written");
+    });
     // Answers piped in (a test, a script) arrive faster than the questions: read them as lines, in order.
     const lines = rl[Symbol.asyncIterator]();
     try {
-      await interview(options, async (question) => {
+      const existing = existsSync(resolve(options.envFile))
+        ? new Map([...parseValues(readFileSync(resolve(options.envFile), "utf8").split(/\r?\n/))].map(([k, v]) => [k, v.value]))
+        : new Map<string, string>();
+      await interview(
+        options,
+        async (question) => {
         stdout.write(question);
         const next = await lines.next();
-        if (!stdin.isTTY) stdout.write("\n");
+        if (!tty) stdout.write("\n");
+        // Input that ends early: in a terminal (Ctrl-D) it's a cancel; from a pipe, the rest take their defaults.
+        if (next.done && tty) {
+          stdout.write("\n");
+          fail("cancelled; nothing written");
+        }
         return next.done ? "" : String(next.value);
-      });
+        },
+        existing,
+      );
     } finally {
       rl.close();
     }
@@ -386,7 +418,7 @@ async function main(): Promise<void> {
   for (const [key, fill] of toFill) {
     const current = values.get(key);
     if (current && current.value !== "") {
-      if (fill.note.startsWith("from --") && current.value !== fill.value) kept.push(`${key} is already set; kept it (edit ${options.envFile} to change it)`);
+      if (fill.chosen && current.value !== fill.value) kept.push(`${key} is already set; kept it (edit ${options.envFile} to change it)`);
       continue;
     }
     if (current) {
@@ -497,7 +529,7 @@ function printNextSteps(options: Options, values: Map<string, { value: string; l
     const n = todo.length;
     console.log(`  ${n + 1}. npm run dev, then open ${get("NEXT_PUBLIC_SITE_URL") || "http://localhost:3000"}`);
     console.log("     No DATABASE_URL: the embedded Postgres in .data/pglite is used, migrated and seeded on first boot.");
-    if (get("MCP_DEV_KEY")) {
+    if (get("MCP_DEV_KEY") && !get("OPENSHIPKIT_WITHOUT").split(",").map((f) => f.trim()).includes("mcp")) {
       console.log(`  ${n + 2}. Connect an agent: /api/mcp with MCP_DEV_KEY as the bearer token. For this repo's .mcp.json:`);
       console.log(`       export OPENSHIPKIT_MCP_KEY=<MCP_DEV_KEY from ${options.envFile}>   (docs/mcp.md)`);
     }

@@ -70,8 +70,10 @@ describe("npm run upgrade", () => {
     const before = git(site, "rev-parse", "HEAD");
     const r = upgrade(site);
     expect(r.status).toBe(0);
-    expect(r.out).toMatch(/Your site: 1\.0\.0\. Target: v1\.1\.0 \(1\.1\.0\)/);
+    expect(r.out).toMatch(/You have the template at 1\.0\.0\. Target: v1\.1\.0 \(1\.1\.0\)/);
     expect(r.out).toMatch(/Upgrade notes:\nRun the new migration; set NEW_VAR\./);
+    expect(r.out.match(/Run the new migration/g)).toHaveLength(1); // the notes once, not again in the body
+    expect(r.out).toMatch(/- A thing\./);
     expect(r.out).toMatch(/New migrations from the template: 0001_usage/);
     expect(r.out).not.toMatch(/warning:/);
     expect(r.out).toMatch(/Nothing was changed/);
@@ -94,8 +96,33 @@ describe("npm run upgrade", () => {
     expect(r.status).toBe(0);
     expect(git(site, "branch", "--show-current")).toBe("upgrade/v1.1.0");
     expect(git(site, "rev-parse", "HEAD")).toBe(before); // not committed
-    expect(git(site, "rev-parse", "MERGE_HEAD")).toBe(git(site, "rev-parse", "v1.1.0"));
+    expect(git(site, "rev-parse", "MERGE_HEAD")).toBe(git(site, "rev-parse", "refs/openshipkit/tags/v1.1.0"));
+    // A merge in progress is said as such, not as "commit or stash".
+    expect(upgrade(site, "--merge").out).toMatch(/a merge is already in progress/);
     expect(r.out).toMatch(/1\. npm install[\s\S]*db:migrate[\s\S]*git commit/);
+  });
+
+  it("isn't fooled by the site's own tags or its own version number", () => {
+    const { site } = setup("owntags");
+    // The site versions its product on its own: v2.0.0 in package.json, a tag, and a clashing v1.1.0 tag.
+    write(site, "package.json", JSON.stringify({ name: "my-product", version: "2.0.0" }));
+    git(site, "commit", "-qam", "my 2.0.0");
+    git(site, "tag", "v2.0.0");
+    git(site, "tag", "v1.1.0");
+    const r = upgrade(site);
+    expect(r.status).toBe(0);
+    expect(r.out).toMatch(/You have the template at 1\.0\.0\. Target: v1\.1\.0 \(1\.1\.0\)/);
+    expect(r.out).toMatch(/Upgrade notes:/);
+    // The template's tags went into their own namespace; the site's are untouched.
+    expect(git(site, "rev-parse", "v1.1.0")).not.toBe(git(site, "rev-parse", "refs/openshipkit/tags/v1.1.0"));
+    expect(upgrade(site, "--to=v1.1.0").out).toMatch(/Target: v1\.1\.0/);
+  });
+
+  it("a branch target shows the template's Unreleased section too", () => {
+    const { template, site } = setup("branch");
+    write(template, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Upgrade notes\n\nNew thing coming.\n\n## [1.1.0]\n\n### Upgrade notes\n\nRun the new migration; set NEW_VAR.\n\n## [1.0.0]\n\nFirst.\n");
+    git(template, "commit", "-qam", "unreleased");
+    expect(upgrade(site, "--to", "openshipkit/main").out).toMatch(/── Unreleased[\s\S]*New thing coming\./);
   });
 
   it("names the remote to add when there is none, and says when there's nothing to do", () => {

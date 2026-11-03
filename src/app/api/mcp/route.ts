@@ -131,10 +131,10 @@ function methodNotAllowed(): Response {
 
 /** No server-to-client stream: this server is stateless. */
 export async function GET(): Promise<Response> {
-  return methodNotAllowed();
+  return featureResponse("mcp") ?? methodNotAllowed();
 }
 
 /** No sessions to end. */
 export async function DELETE(): Promise<Response> {
-  return methodNotAllowed();
+  return featureResponse("mcp") ?? methodNotAllowed();
 }
