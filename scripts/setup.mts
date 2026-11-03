@@ -341,7 +341,7 @@ function printNextSteps(options: Options, values: Map<string, { value: string; l
   if (options.compose) {
     if (!get("NEXT_PUBLIC_SITE_URL")) todo.push("Set NEXT_PUBLIC_SITE_URL to your public origin (https://example.com), or re-run with --domain — docker compose refuses to start without it.");
     if (!get("DOMAIN")) todo.push("Set DOMAIN (your bare host name) to use the bundled Caddy for HTTPS.");
-    if (!get("RESEND_API_KEY")) todo.push("Add RESEND_API_KEY and EMAIL_FROM before the first sign-up: production requires a verified email (yours too, to become the admin), and without Resend the log shows only To and Subject, not the link. No Resend yet? docs/email.md, \"verifying the first admin\".");
+    if (!get("RESEND_API_KEY") && !get("SMTP_URL")) todo.push("Add RESEND_API_KEY (or SMTP_URL for your own mail server) and EMAIL_FROM before the first sign-up: production requires a verified email (yours too, to become the admin), and without one the log shows only To and Subject, not the link. Neither yet? docs/email.md, \"verifying the first admin\".");
     if (basename(options.envFile) !== ".env") {
       todo.push(`Copy ${options.envFile} to the server as .env next to docker-compose.yml (or paste it into your PaaS), then delete this copy: scp ${options.envFile} server:/opt/openshipkit/.env`);
     }

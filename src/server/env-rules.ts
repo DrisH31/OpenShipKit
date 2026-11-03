@@ -55,9 +55,53 @@ export function resolveBillingProvider(env: EnvRecord): BillingProviderId {
   return resolveProfile(env) === "site" ? "none" : configured;
 }
 
-/** EMAIL_PROVIDER: resend | console — resend when RESEND_API_KEY is set, else console (the server log). */
+/**
+ * EMAIL_PROVIDER: resend | smtp | console. Unset: resend when RESEND_API_KEY is set, else smtp when
+ * SMTP_URL is, else console (the server log).
+ */
 export function resolveEmailProvider(env: EnvRecord): EmailProviderId {
-  return oneOf(env, "EMAIL_PROVIDER", ["resend", "console"] as const, readEnv(env, "RESEND_API_KEY") ? "resend" : "console");
+  const fallback = readEnv(env, "RESEND_API_KEY") ? "resend" : readEnv(env, "SMTP_URL") ? "smtp" : "console";
+  return oneOf(env, "EMAIL_PROVIDER", ["resend", "smtp", "console"] as const, fallback);
+}
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+export type SmtpSettings = {
+  host: string;
+  port: number;
+  secure: boolean;
+  requireTLS: boolean;
+  auth?: { user: string; pass: string };
+};
+
+/**
+ * SMTP_URL → transport settings (src/adapters/email/smtp). Throws a message that says what to fix,
+ * without echoing the URL (it holds the password). The boot check calls it too, so a malformed URL
+ * stops the server at start rather than at the first sign-up.
+ */
+export function parseSmtpUrl(value: string): SmtpSettings {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("SMTP_URL is not a URL. Use smtps://user:password@host:465 or smtp://user:password@host:587.");
+  }
+  if (url.protocol !== "smtp:" && url.protocol !== "smtps:") {
+    throw new Error(`SMTP_URL must start with smtps:// (port 465) or smtp:// (STARTTLS, port 587), not ${url.protocol}//.`);
+  }
+  if (!url.hostname) throw new Error("SMTP_URL has no host.");
+  const secure = url.protocol === "smtps:";
+  const port = url.port ? Number(url.port) : secure ? 465 : 587;
+  const user = decodeURIComponent(url.username);
+  const pass = decodeURIComponent(url.password);
+  return {
+    host: url.hostname,
+    port,
+    secure,
+    // smtps:// is TLS already; smtp:// must upgrade, except to a relay on this machine.
+    requireTLS: !secure && !LOOPBACK.has(url.hostname),
+    ...(user ? { auth: { user, pass } } : {}),
+  };
 }
 
 /** Where the data lives: the memory store, a Postgres server (DATABASE_URL), or the embedded PGlite database. */

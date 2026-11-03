@@ -2,6 +2,7 @@
 // The email contract:
 //
 //   src/adapters/email/resend   — Resend (RESEND_API_KEY), for production mail
+//   src/adapters/email/smtp     — any SMTP server or relay (SMTP_URL), yours included
 //   src/adapters/email/console  — prints to the server log (the default; development)
 //
 // Templates are plain functions in src/server/email-templates.ts that return

@@ -49,10 +49,11 @@ one for the database, one for email, one for analytics, one for payments.
 Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 
 - **Independent.** Your Postgres, your auth (Better Auth, in the app, tables in
-  your database), your server. Two outside services remain: **Resend** sends email
-  and **Polar** takes payments (optional). The app starts without Resend (emails go
-  to the server log), but in production nobody can verify an email or reset a
-  password until it is set, so treat it as needed for launch.
+  your database), your server. Email goes through **Resend** or any **SMTP**
+  server, your own included, and **Polar** takes payments (optional). The app
+  starts without email (it goes to the server log), but in production nobody can
+  verify an address or reset a password until one is set, so treat it as needed
+  for launch.
   An opt-in module can add an AI provider, and that can be your own server too.
 - **Self-hosted in one command.** `docker compose --profile https up -d` on any
   VPS gives you Postgres 18, migrations, the app and automatic HTTPS. Or Dokploy,
@@ -78,7 +79,7 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **Dashboard** | Home (with a setup checklist for admins), billing, profile, password, 2FA, sessions, delete account, feedback |
 | **Admin** | Overview, users (roles, bans), content editor, posts, media library (image uploads on your own disk), plans, feedback inbox, subscribers (CSV export), agent keys, audit log (one-click restore for content, posts and plans) |
 | **Billing (optional)** | Polar as merchant of record: checkout, customer portal, signature-verified idempotent webhooks; access granted only from webhooks |
-| **Email (optional)** | Resend in production; in development every email prints to the terminal |
+| **Email** | Resend or any SMTP server (your own included) in production; in development every email prints to the terminal |
 | **MCP server** | 30+ tools over Streamable HTTP, scoped agent keys (read / write / admin), every write audited (reads update the key’s last-used time) |
 | **SEO** | Server-rendered pages, canonical URLs, JSON-LD, sitemap, RSS, `robots.txt` open to search and AI crawlers, `llms.txt` + `llms-full.txt`, generated OG images, optional IndexNow pings |
 | **Design system** | Tailwind 4 tokens, shadcn/ui on Base UI, CSS motion that honours `prefers-reduced-motion`; light + dark; WCAG 2.2 AA; one brand colour to change |
@@ -388,7 +389,7 @@ src/
     services/         THE write path: validate → DataStore → audit log
     mcp/              the MCP server: protocol + tools over services
   adapters/           the only place a driver or SDK is imported
-    auth/better-auth/ · data/postgres/ · data/memory/ · billing/polar/ · email/{resend,console}/
+    auth/better-auth/ · data/postgres/ · data/memory/ · billing/polar/ · email/{resend,smtp,console}/
   components/         ui/ (shadcn on Base UI) · marketing/ · sections/ · product/ · blog/ · seo/ · …
   content/            default content and seed data
   styles/             design tokens (tokens.css), brand colour (brand.css), prose
@@ -508,7 +509,6 @@ Honest limits, so you know what you'd add:
 | More than one language | Every word is English; there's no locale switch |
 | Teams and organisations | Accounts are single people: no organisations, seats or SSO (roles are admin and user) |
 | Payment providers other than Polar | Stripe or Razorpay means a new billing adapter |
-| Email without Resend | The app starts without it, but production sign-up needs it for verification |
 | More than one app replica out of the box | Turn on the Redis module first ([modules/](modules/README.md)) |
 | Someone to look after the server | Updates, backups and restore rehearsals are yours ([deploy/](deploy/README.md)) |
 

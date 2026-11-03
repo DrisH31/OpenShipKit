@@ -23,6 +23,7 @@ import { Resend, type CreateEmailOptions, type CreateEmailRequestOptions, type C
 import type { EmailMessage, EmailProvider } from "@/core/email";
 import { emailFrom, isProduction, requireEnv } from "@/server/env";
 import { log } from "@/server/log";
+import { redact } from "../redact";
 
 /** The subset of the Resend client this adapter uses — what tests fake. */
 export interface ResendClient {
@@ -51,10 +52,7 @@ function isTransient(error: ErrorResponse): boolean {
   return TRANSIENT.has(error.name) || (error.statusCode !== null && error.statusCode >= 500);
 }
 
-/** Redact anything that looks like an email address or an API key from provider text. */
-export function redact(text: string): string {
-  return text.replace(/[^\s<>"'`(),;:]+@[^\s<>"'`(),;:]+/g, "[address]").replace(/\bre_[A-Za-z0-9_]{6,}/g, "re_[redacted]");
-}
+export { redact };
 
 /** What to do about the common setup mistakes, appended to the thrown message. */
 function hintFor(error: ErrorResponse): string {

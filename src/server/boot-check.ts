@@ -4,7 +4,8 @@
 // needs — DATABASE_URL (unless an embedded database is opted into with
 // OPENSHIPKIT_ALLOW_EMBEDDED_DB=true; DATA_PROVIDER=memory is refused: unit
 // tests only), a BETTER_AUTH_SECRET of 32+ random characters, and
-// RESEND_API_KEY when EMAIL_PROVIDER=resend, and the read-only demo admin's
+// RESEND_API_KEY when EMAIL_PROVIDER=resend, a well-formed SMTP_URL and an
+// EMAIL_FROM when it is smtp, and the read-only demo admin's
 // DEMO_ADMIN_EMAIL + DEMO_ADMIN_PASSWORD both or neither — and warns loudly about a missing
 // or local NEXT_PUBLIC_SITE_URL and about email going to the log. An unknown
 // OPENSHIPKIT_PROFILE is fatal (every request would throw on it); the site
@@ -19,7 +20,16 @@
 
 import "server-only";
 import { isLocalHost } from "@/lib/site-url";
-import { demoAdminProblems, readEnv, resolveBillingProvider, resolveDataMode, resolveEmailProvider, resolveProfile, weakAuthSecretReason } from "@/server/env-rules";
+import {
+  demoAdminProblems,
+  parseSmtpUrl,
+  readEnv,
+  resolveBillingProvider,
+  resolveDataMode,
+  resolveEmailProvider,
+  resolveProfile,
+  weakAuthSecretReason,
+} from "@/server/env-rules";
 import { log } from "@/server/log";
 
 /** Exits the process when production is missing something every request needs; warns about the rest. */
@@ -64,6 +74,13 @@ export function checkProductionEnv(): void {
   const email = rule(() => resolveEmailProvider(process.env));
   if (email === "resend" && !env("RESEND_API_KEY")) {
     fatal.push("EMAIL_PROVIDER=resend but RESEND_API_KEY is not set: the first sign-up's verification email would fail. Set the key, or unset EMAIL_PROVIDER.");
+  }
+  if (email === "smtp") {
+    const smtpUrl = env("SMTP_URL");
+    if (!smtpUrl) fatal.push("EMAIL_PROVIDER=smtp but SMTP_URL is not set: the first sign-up's verification email would fail. Set it, or unset EMAIL_PROVIDER.");
+    else rule(() => parseSmtpUrl(smtpUrl));
+    // The default sender is Resend's test address: over your own SMTP server it would be refused or land in spam.
+    if (!env("EMAIL_FROM")) fatal.push("SMTP needs EMAIL_FROM: a name and an address on a domain your SMTP server may send for (docs/email.md).");
   }
   const profile = rule(() => resolveProfile(process.env));
   // A malformed BILLING_PROVIDER throws on every billing read, in either profile: fatal here, like EMAIL_PROVIDER.
@@ -118,7 +135,9 @@ export function checkProductionEnv(): void {
       "openshipkit",
       env("RESEND_API_KEY")
         ? "EMAIL_PROVIDER=console although RESEND_API_KEY is set: messages go to the server log (To and Subject only) and are not sent. Unset EMAIL_PROVIDER to send with Resend."
-        : "No email provider: messages go to the server log (To and Subject only) and are not sent. Set RESEND_API_KEY so people can verify their email and reset passwords.",
+        : env("SMTP_URL")
+          ? "EMAIL_PROVIDER=console although SMTP_URL is set: messages go to the server log (To and Subject only) and are not sent. Unset EMAIL_PROVIDER to send over SMTP."
+          : "No email provider: messages go to the server log (To and Subject only) and are not sent. Set RESEND_API_KEY, or SMTP_URL for your own mail server, so people can verify their email and reset passwords.",
     );
   }
 }

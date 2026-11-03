@@ -40,7 +40,7 @@ need no database.
 | `src/server/` | `env.ts`, registries (`data`, `auth`, `billing`, `email`), `session.ts`, `rate-limit.ts` | `import "server-only"` |
 | `src/server/services/` | **The write path**: validate (zod) → DataStore → `recordAudit` | Admin, forms and MCP all call these |
 | `src/server/mcp/` | MCP protocol + tools (`tools/*.ts`) | Tools call services, never the DataStore |
-| `src/adapters/` | `auth/better-auth`, `data/postgres` (+ `memory` for tests), `billing/polar`, `email/{resend,console}` | The ONLY place a driver/SDK is imported |
+| `src/adapters/` | `auth/better-auth`, `data/postgres` (+ `memory` for tests), `billing/polar`, `email/{resend,smtp,console}` | The ONLY place a driver/SDK is imported |
 | `src/components/` | `ui/` (shadcn on Base UI), `marketing/`, `sections/`, `product/`, `blog/`, `seo/`, … | Client components never import `src/server` or `src/adapters` |
 | `src/content/` | `defaults.ts` (default copy), `seed.ts`, `seed-posts.ts` | |
 | `src/styles/` | `tokens.css` (palette), `brand.css` (accent), `theme.css`, `prose.css` | Use tokens, never raw colours |

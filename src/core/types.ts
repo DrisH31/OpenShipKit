@@ -14,8 +14,8 @@ export type AuthProviderId = "better-auth";
 export type DataProviderId = "postgres" | "memory";
 /** Polar (merchant of record), or none: billing is optional and off by default. */
 export type BillingProviderId = "polar" | "none";
-/** Resend, or console (prints to the server log) in development. */
-export type EmailProviderId = "resend" | "console";
+/** Resend, your own SMTP server or relay, or console (prints to the server log) in development. */
+export type EmailProviderId = "resend" | "smtp" | "console";
 
 /** A page of results. `nextCursor` is opaque; pass it back to get the next page. */
 export interface Page<T> {

@@ -114,11 +114,11 @@ export async function getSetupSteps(saas: boolean): Promise<SetupStep[]> {
       title: "Send real email",
       body: (
         <>
-          Set <code className="font-mono text-caption">RESEND_API_KEY</code> and <code className="font-mono text-caption">EMAIL_FROM</code> on a verified domain. Until then, emails print to the
-          server log.
+          Set <code className="font-mono text-caption">RESEND_API_KEY</code>, or <code className="font-mono text-caption">SMTP_URL</code> for your own mail server, and{" "}
+          <code className="font-mono text-caption">EMAIL_FROM</code> on a verified domain. Until then, emails print to the server log.
         </>
       ),
-      state: emailProvider() === "resend" ? "done" : "optional",
+      state: emailProvider() === "console" ? "optional" : "done",
       doc: { label: "Email guide", href: docUrl("email") },
     },
     {

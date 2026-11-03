@@ -81,7 +81,7 @@ src/adapters/     The ONLY place a driver or SDK is imported.
   data/memory/        the reference DataStore, for unit tests
   billing/            polar/ (createPolarProvider(): BillingProvider) · shared.ts (status mapping, the webhook sink port)
                       · webhook-sink.ts (the webhook write path)
-  email/{resend,console}/
+  email/{resend,smtp,console}/
 src/components/   ui/ (shadcn on Base UI) · marketing/ · product/ · site/ · sections/ · blog/ · seo/ · auth/ · billing/ · dashboard/ · admin/ · theme/ · layout/
 src/lib/          Client-safe helpers (cn, format, form state, site-url). cn-config.ts compiles to cn-tables.ts (generated: never edit).
 src/hooks/        Client hooks (use-mobile, use-mod-key).

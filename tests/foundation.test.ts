@@ -990,7 +990,8 @@ describe("environment rules", () => {
     expect(resolveDataMode({ DATA_PROVIDER: "memory", DATABASE_URL: "postgres://x" })).toBe("memory");
     expect(resolveEmailProvider({ RESEND_API_KEY: "re_x" })).toBe("resend");
     expect(resolveEmailProvider({ RESEND_API_KEY: "re_x", EMAIL_PROVIDER: "console" })).toBe("console");
-    expect(() => resolveEmailProvider({ EMAIL_PROVIDER: "smtp" })).toThrow(/EMAIL_PROVIDER/);
+    // "smtp" was the example of an unknown provider until ROADMAP 1.5 made it a real one.
+    expect(() => resolveEmailProvider({ EMAIL_PROVIDER: "sendgrid" })).toThrow(/EMAIL_PROVIDER/);
 
     expect(weakAuthSecretReason(undefined)).toMatch(/not set/);
     expect(weakAuthSecretReason("changeme")).toMatch(/placeholder/);
