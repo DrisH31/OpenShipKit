@@ -15,7 +15,7 @@ import { PermanentJobError, defineJob } from "@/server/jobs/define";
 let store: DataStore;
 vi.mock("@/server/data", () => ({ getData: async () => store }));
 
-const { backoffMs, enqueueJob, retryFailedJob, runDueJobs, startJobRunner, stopJobRunner } = await import("@/server/jobs");
+const { LEASE_MS, backoffMs, enqueueJob, retryFailedJob, runDueJobs, startJobRunner, stopJobRunner } = await import("@/server/jobs");
 
 const admin: Actor = { type: "user", id: "admin-1", label: "admin@example.com" };
 const ran: unknown[] = [];
@@ -120,6 +120,23 @@ describe("job runner", () => {
     await vi.waitFor(async () => expect((await store.jobs.counts()).succeeded).toBe(2), { timeout: 2_000 });
     await new Promise((resolve) => setTimeout(resolve, 10)); // the slots free after the outcome is recorded
     expect(await runDueJobs({ definitions: ALL, limit: 2 })).toMatchObject({ claimed: 1, succeeded: 1 });
+  });
+
+  it("frees a slow attempt's slot when its lease runs out, even if it never settles", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const forever = defineJob({ kind: "test.forever", schema: z.object({}), run: () => new Promise<void>(() => {}) });
+      await enqueueJob(forever, {}, { runAt: new Date(Date.now() - 1_000) });
+      await enqueueJob(echo, { n: 1 });
+      const first = runDueJobs({ definitions: [forever, echo], limit: 1, timeoutMs: 10 });
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await first).toMatchObject({ claimed: 1, slow: 1 });
+      expect(await runDueJobs({ definitions: [forever, echo], limit: 1 })).toMatchObject({ claimed: 0 }); // its slot is held
+      await vi.advanceTimersByTimeAsync(LEASE_MS);
+      expect(await runDueJobs({ definitions: [forever, echo], limit: 1 })).toMatchObject({ claimed: 1, succeeded: 1 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("fails a job whose last attempt died with its worker, and reports it", async () => {

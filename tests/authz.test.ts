@@ -205,7 +205,7 @@ function exportsOf(sf: ts.SourceFile, follow = true): Export[] {
   return out;
 }
 
-type Call = { name: string; node: ts.CallExpression };
+type Call = { name: string; node: ts.CallExpression | ts.NewExpression };
 
 /** The calls under `root`, in evaluation order (receiver and arguments before the call), not entering nested functions. */
 function callsInOrder(root: ts.Node): Call[] {
@@ -217,6 +217,12 @@ function callsInOrder(root: ts.Node): Call[] {
       if (ts.isPropertyAccessExpression(e)) visit(e.expression);
       for (const a of n.arguments) visit(a);
       calls.push({ name: ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : "(an expression)", node: n });
+      return;
+    }
+    if (ts.isNewExpression(n)) {
+      // `new Wiper()` runs a constructor: it is a call like any other.
+      for (const a of n.arguments ?? []) visit(a);
+      calls.push({ name: `new ${n.expression.getText()}`, node: n });
       return;
     }
     n.forEachChild(visit);
@@ -260,19 +266,44 @@ function exits(node: ts.Statement): boolean {
   return false;
 }
 
+/** The top-level `||` branches of a condition, parentheses stripped: `!u || u.role !== "admin"` → two. */
+function disjuncts(e: ts.Expression): string[] {
+  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.BarBarToken) return [...disjuncts(e.left), ...disjuncts(e.right)];
+  return [e.getText().replace(/\s+/g, " ").trim()];
+}
+
 /**
- * Whether a session read's result is checked by an `if` that leaves the function.
- * getCurrentUser(): `if (!u …) return|throw`, and for admin a role check that leaves
- * too (in the same if or its own); apiUser() (modules/shared/api.ts): `if (u instanceof
- * Response) return …`. `statements` are those the read sits in, so the check can't hide in a callback.
+ * After a session read, the statements up to its refusal: only pure checks
+ * (SAFE_BEFORE_GUARD, or local helpers that call nothing else) may run until
+ * an `if` that leaves the function has refused a missing user. For admin,
+ * also a role other than admin; for apiUser(), `instanceof Response`. A
+ * branch counts only as the whole condition or one of its `||` parts:
+ * `!u && f` refuses nothing when f is false. Null when it holds, else why not.
  */
-function checksSession(name: "getCurrentUser" | "apiUser", variable: string, statements: readonly ts.Statement[], guard: Exclude<Guard, "public">): boolean {
-  const exitingConditions = statements.filter((st): st is ts.IfStatement => ts.isIfStatement(st) && exits(st.thenStatement)).map((st) => st.expression.getText());
-  const v = variable;
-  if (name === "apiUser") return guard === "user" && exitingConditions.some((c) => new RegExp(`^${v}\\s+instanceof\\s+Response$`).test(c.trim()));
-  const nullCheck = exitingConditions.some((c) => new RegExp(`(^|\\|\\|)\\s*!\\s*${v}\\b`).test(c) || new RegExp(`^${v}\\s*[=!]==?\\s*null$`).test(c.trim()));
-  if (guard === "user") return nullCheck;
-  return nullCheck && exitingConditions.some((c) => new RegExp(`\\b${v}\\.role\\s*!==\\s*"admin"`).test(c));
+function sessionRefusalProblem(
+  name: "getCurrentUser" | "apiUser",
+  v: string,
+  after: readonly ts.Statement[],
+  guard: Exclude<Guard, "public">,
+  scope: Scope,
+): string | null {
+  if (name === "apiUser" && guard !== "user") return "reads the session with apiUser(), which checks sign-in but not the admin role";
+  const needs = new Set(name === "apiUser" ? ["response"] : guard === "admin" ? ["missing", "role"] : ["missing"]);
+  for (const st of after) {
+    if (ts.isIfStatement(st) && exits(st.thenStatement)) {
+      for (const d of disjuncts(st.expression)) {
+        if (name === "apiUser" && d === `${v} instanceof Response`) needs.delete("response");
+        if (name === "getCurrentUser" && (d === `!${v}` || d === `${v} == null` || d === `${v} === null`)) needs.delete("missing");
+        if (name === "getCurrentUser" && (d === `${v}.role !== "admin"` || d === `${v}?.role !== "admin"`)) needs.delete("role");
+      }
+      if (needs.size === 0) return null;
+    }
+    const unsafe = callsInOrder(st).find((c) => !isSafe(c.name, scope, new Set()));
+    if (unsafe) return `calls ${unsafe.name}() after reading the session with ${name}() but before refusing with an if that returns or throws`;
+  }
+  const missing = needs.has("role") && !needs.has("missing") ? " a role other than admin" : guard === "admin" && name === "getCurrentUser" ? " a missing user and a role other than admin" : "";
+  return `reads the session with ${name}() but doesn't refuse${missing} with an if that returns or throws`;
 }
 
 /** A call that can't write: on the safe list, or a local helper whose own calls are all safe. */
@@ -319,22 +350,24 @@ function guardProblem(fn: FnNode, guard: Exclude<Guard, "public">, fileScope: Sc
   for (const { node: statement, siblings, tryStatement } of entries) {
     const topLevel = !ts.isBlock(body) || ts.isVariableStatement(statement) || ts.isExpressionStatement(statement) || ts.isReturnStatement(statement);
     for (const { name, node } of callsInOrder(statement)) {
-      const bare = ts.isIdentifier(node.expression); // o.requireAdmin() or o?.requireAdmin() is someone else's method
+      const bare = ts.isCallExpression(node) && ts.isIdentifier(node.expression); // o.requireAdmin() or o?.requireAdmin() is someone else's method
       const helper = bare ? scope.get(name) : undefined;
       const isGuard = bare && (guards.has(name) || SESSION_READS.has(name) || (helper !== undefined && guardProblem(helper, guard, fileScope, seen) === null));
       if (isGuard) {
-        const placement = topLevel ? guardPlacement(node, statement, fn) : "conditional";
+        const placement = topLevel ? guardPlacement(node as ts.CallExpression, statement, fn) : "conditional";
         if (placement === "conditional") return `calls ${name}() only conditionally (inside an if, a loop or a short-circuit), so it may not run`;
         if (placement === "unawaited") return `calls ${name}() without awaiting it, so its refusal is never seen`;
         if (!SESSION_READS.has(name)) {
           return tryStatement?.catchClause ? `calls ${name}() inside a try, whose catch can swallow its refusal` : null;
         }
-        const decl = ts.isVariableStatement(statement) ? statement.declarationList.declarations.find((d) => d.initializer && d.getText().includes(`${name}(`)) : undefined;
+        // `const` only: a `let` could be reassigned (`u = u ?? someoneElse`) between the check and the work.
+        const isConst = ts.isVariableStatement(statement) && (statement.declarationList.flags & ts.NodeFlags.Const) !== 0;
+        const decl = isConst ? (statement as ts.VariableStatement).declarationList.declarations.find((d) => d.initializer && d.getText().includes(`${name}(`)) : undefined;
         const variable = decl && ts.isIdentifier(decl.name) ? decl.name.text : null;
+        if (!variable) return `reads the session with ${name}() without keeping it in a const, so its check can't be followed`;
         const after = siblings.slice(siblings.indexOf(statement as ts.Statement) + 1);
-        if (!variable || !checksSession(name as "getCurrentUser" | "apiUser", variable, after, guard)) {
-          return `reads the session with ${name}() but doesn't refuse with an if that returns or throws${guard === "admin" ? " (for a missing user and for a role other than admin)" : ""}`;
-        }
+        const refusal = sessionRefusalProblem(name as "getCurrentUser" | "apiUser", variable, after, guard, scope);
+        if (refusal) return refusal;
         if (tryStatement?.catchClause && !exits(tryStatement.catchClause.block)) {
           return `reads the session with ${name}() inside a try whose catch doesn't return or throw, so an error there falls through to the work`;
         }
@@ -543,6 +576,13 @@ describe("authorization", () => {
         apiUserForAdmin: ["src/app/api/admin/media/route.ts", `export async function POST(r: Request) { const u = await apiUser(r); if (u instanceof Response) return u; await wipe(); }`],
         catchSwallows: [D, `"use server"; export async function a() { try { const u = await getCurrentUser(); if (!u) throw new Error("no"); } catch {} await wipe(); }`],
         checkInACallback: [D, `"use server"; export async function a() { const u = await getCurrentUser(); const later = () => { if (!u) return; }; await wipe(u); }`],
+        workBeforeTheCheck: [D, `"use server"; export async function a() { const u = await getCurrentUser(); await wipe(); if (!u) return; }`],
+        workBeforeTheResponseCheck: ["src/app/api/billing/checkout/route.ts", `export async function POST(r: Request) { const u = await apiUser(r); await wipe(); if (u instanceof Response) return u; }`],
+        loadBeforeTheCheck: [D, `"use server"; export async function a() { const u = await getCurrentUser(); const data = await load(u?.id); if (!u) return; }`],
+        andInTheCheck: [D, `"use server"; export async function a(f: boolean) { const u = await getCurrentUser(); if (!u && f) return; await wipe(u); }`],
+        andInTheRoleCheck: ["src/app/api/admin/media/route.ts", `export async function POST() { const u = await getCurrentUser(); if (!u || (u.role !== "admin" && u.id === "x")) return 1; await wipe(); }`],
+        reassignable: [D, `"use server"; export async function a(fake: unknown) { let u = await getCurrentUser(); if (!u) return; u = u ?? fake; await wipe(u); }`],
+        constructorFirst: [A, `"use server"; export async function a() { new Wiper(); await requireAdmin(); }`],
       };
       for (const [label, [path, source]] of Object.entries(probes)) expect(check(path, source), label).toHaveLength(1);
       // The real shapes still pass.
@@ -560,7 +600,7 @@ describe("authorization", () => {
       ]);
       // apiUser() without its instanceof Response check isn't a guard.
       expect(check(at, `export async function POST(r: Request) { const u = await apiUser(r); await go(u); }`)).toEqual([
-        `${at}: POST reads the session with apiUser() but doesn't refuse with an if that returns or throws`,
+        `${at}: POST calls go() after reading the session with apiUser() but before refusing with an if that returns or throws`,
       ]);
     });
 

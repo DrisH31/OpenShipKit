@@ -161,7 +161,15 @@ export async function runDueJobs(
       const outcome = await within(work, options.timeoutMs ?? JOB_TIMEOUT_MS);
       if (outcome === null) {
         summary.slow += 1;
+        // Its slot is free once it settles, or once its lease runs out (another worker may take the job
+        // over then, and a late outcome is refused anyway): a job that never settles can't hold it forever.
         slowInFlight += 1;
+        let freed = false;
+        const free = () => {
+          if (!freed) slowInFlight -= 1;
+          freed = true;
+        };
+        setTimeout(free, LEASE_MS).unref?.();
         log.warn("jobs", `${job.kind} ${job.id} is still running after ${Math.round((options.timeoutMs ?? JOB_TIMEOUT_MS) / 1000)} s; it keeps its claim until it finishes or the lease ends`);
         void work
           .then(
@@ -169,9 +177,7 @@ export async function runDueJobs(
             (error: unknown) => record(job, error),
           )
           .catch((error: unknown) => log.warn("jobs", `couldn't record the outcome of ${job.kind} ${job.id}`, error instanceof Error ? error.message : error))
-          .finally(() => {
-            slowInFlight -= 1;
-          });
+          .finally(free);
         return;
       }
       summary[await record(job, outcome.error)] += 1;
