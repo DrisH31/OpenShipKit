@@ -63,7 +63,12 @@ actions, which comes with the first product feature that needs it.
 Status: done (November 2026). Polar, Stripe and Razorpay pass one adapter
 contract with real signatures; uploads go to the disk or any S3-compatible
 bucket. Neither was run against a live Stripe, Razorpay or cloud bucket here:
-the sandbox steps are in docs/billing.md and docs/content.md.
+the sandbox steps are in docs/billing.md and docs/content.md. Four rounds of
+independent review fixed, among others, Razorpay cancels that could leave a
+customer charged while shown "ends", trials that couldn't be cancelled, and
+chargebacks. Open, to confirm in a Razorpay sandbox: how a scheduled cancel
+shows in the API, and whether a delayed renewal webhook can drop a cancel that
+landed (the fix would store the period a cancel was made in).
 
 | # | Item |
 |---|---|
@@ -78,7 +83,12 @@ Status: done (November 2026). Limits are declared per plan and edited as rows
 in /admin/plans; usage is counted in `usage_events` per billing period and shown
 on the billing page and through MCP (`usage_get`). Metered metrics are reported
 to Polar or Stripe meters by a background job, idempotent by event id; neither
-was run against a live provider here (docs/usage.md has the setup).
+was run against a live provider here (docs/usage.md has the setup). Four rounds
+of review gave the outbox one final state per event (sent, nobody to bill, or
+expired past the provider's 35 days), an atomic `consumeUsage`, and periods
+from the provider's own billing period. Open: a per-adapter "can meter" check
+(a provider whose key is missing retries rather than pausing), and a running
+counter for customers with very high event volume (docs/usage.md has the cost).
 
 | # | Item |
 |---|---|
@@ -89,13 +99,18 @@ was run against a live provider here (docs/usage.md has the setup).
 
 ## Phase 5: Developer experience
 
+Status: done (November 2026). 5.2 is a switch, not a deletion, by decision:
+`--without blog,mcp` (`OPENSHIPKIT_WITHOUT`) turns a feature off everywhere
+(404s, and every link to it gone) while the code stays, so template updates keep
+merging and switching back restores everything, the same as the site profile.
+
 | # | Item |
 |---|---|
 | 5.1 | An interactive `npm run setup` wizard: profile, email, billing, tenancy |
-| 5.2 | Feature removal: `npm run setup -- --without blog,mcp` deletes what you don't use, cleanly |
-| 5.3 | An HTTP API reference generated from the route handlers' zod schemas |
-| 5.4 | Example apps on top of the kit (a small B2B tool, a usage-billed API) |
-| 5.5 | `npm run upgrade`: a guided merge of a new release, with migration notes per version |
+| 5.2 | Feature switches: `npm run setup -- --without blog,mcp` turns off what you don't use, everywhere it shows |
+| 5.3 | An API reference (HTTP endpoints and MCP tools) generated from the zod schemas: `npm run docs:api`, docs/api.md |
+| 5.4 | Example apps on top of the kit: examples/projects (a small B2B tool) and examples/usage-api (a usage-billed API) |
+| 5.5 | `npm run upgrade`: a guided merge of a new release, with each version's upgrade notes from the CHANGELOG |
 
 ## Outside this repository
 

@@ -6,7 +6,24 @@ upgrades you’ll do on any Next.js app, and Postgres major versions.
 
 ## Pulling template updates
 
-Keep the template as a second remote and merge its releases:
+The short way, once the template is a remote (below):
+
+```bash
+npm run upgrade             # what upgrading to the newest release involves: changes nothing
+npm run upgrade -- --merge  # merge it on a new branch upgrade/<version>, not committed
+```
+
+The report lists every release you're crossing from the template's
+CHANGELOG, each one's **Upgrade notes** first (what you must do: a variable to
+set, a migration to run), the template's new migrations, and a warning when
+your own migrations would make Drizzle skip the template's (below) or your
+history isn't the template's. `--merge` needs a clean working tree. It creates
+a branch, merges with `--no-commit` and lists the conflicts and next steps; you
+review, run the checks and commit. It never commits, pushes or migrates.
+`--to v1.2.0` picks a release; `--remote upstream` if you named the remote
+differently.
+
+The same by hand: keep the template as a second remote and merge its releases:
 
 ```bash
 git remote add openshipkit https://github.com/DrisH31/openshipkit.git   # once

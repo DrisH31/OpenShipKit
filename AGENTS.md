@@ -24,6 +24,7 @@ npm run setup -- --profile site   # a landing page + blog with no SaaS (OPENSHIP
 npm run setup -- --billing stripe --email smtp --tenancy org   # choices as flags; with no options in a terminal it asks
 npm run ds:sync -- --from <design-system>   # dry run; --apply to copy tokens + ui/ from the design system (below)
 npm run db:generate -- --name <change>   # after editing src/adapters/data/postgres/schema.ts
+npm run upgrade        # report on merging the newest template release; -- --merge does it on a new branch, uncommitted
 npm run docs:api       # regenerate docs/api.md (a new route handler goes in src/server/api-reference.ts first)
 npm run db:migrate     # apply migrations (stop `npm run dev` first if on the embedded database)
 ```

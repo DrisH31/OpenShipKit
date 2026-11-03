@@ -35,7 +35,8 @@ between releases: start from a tag.
    and today’s date. Say what a site owner must do, if anything — new
    variables, a migration (link
    [upgrading.md](upgrading.md#if-you-have-your-own-migrations)), a breaking
-   change.
+   change — under a `### Upgrade notes` heading in that version's section:
+   `npm run upgrade` shows it first to everyone crossing that version.
 3. Merge `dev` into `main` (a pull request, so CI runs on the result), then tag
    the merge commit and push the tag:
 

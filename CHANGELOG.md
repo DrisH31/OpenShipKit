@@ -7,6 +7,46 @@ separate: it shows the entries you publish in `/admin/posts`.
 
 ## [Unreleased]
 
+The roadmap's five phases (ROADMAP.md): production hardening, teams, more
+providers, usage and limits, and developer experience.
+
+### Upgrade notes
+
+- **Seven new migrations** (0005 jobs … 0011 usage report outcome): stop
+  `npm run dev`, then `npm run db:migrate`. If you have migrations of your own,
+  read [upgrading.md](docs/upgrading.md#if-you-have-your-own-migrations) first.
+- **Nothing to set to keep working as before.** Every new variable is optional
+  and off until set: `OPENSHIPKIT_TENANCY`, `MEDIA_STORAGE` / `S3_*`,
+  `ERROR_TRACKING_DSN`, `SMTP_URL`, `STRIPE_*`, `RAZORPAY_*`,
+  `BILLING_METERED_METRICS`, `OPENSHIPKIT_WITHOUT` (all in `.env.example`).
+- **`/api/health` can now answer 503** when the database's migrations are
+  behind the code (or unreadable): point your load balancer's readiness check
+  at it and liveness at `/api/health/live`.
+- **Stripe, Razorpay:** add the new webhook events listed in
+  [billing.md](docs/billing.md) (`refund.failed`, the dispute events), and turn
+  on plan switching in Stripe's customer portal.
+
+### Added
+
+- **Hardening:** CodeQL, dependency audit, secret scanning and dependency
+  review in CI; an authorization test that fails closed; structured logs with
+  scrubbing and optional error tracking (any Sentry-compatible DSN, no SDK); a
+  Postgres job queue (retries, leases, `/admin/jobs`); SMTP email; liveness and
+  a migrations check in health.
+- **Teams** (`OPENSHIPKIT_TENANCY=org`): organisations, roles, invitations,
+  per-seat billing by the organisation ([teams.md](docs/teams.md)).
+- **Stripe and Razorpay** billing adapters beside Polar, through one adapter
+  contract; chargebacks; a price check in `/admin/plans`; S3-compatible upload
+  storage ([billing.md](docs/billing.md), [content.md](docs/content.md)).
+- **Usage and limits:** plan limits, usage metering with an atomic consume,
+  metered prices on Polar and Stripe through an outbox, a Usage card on the
+  billing page and MCP `usage_get` ([usage.md](docs/usage.md)).
+- **Developer experience:** `npm run setup` asks (or takes `--billing`,
+  `--email`, `--tenancy`, `--without`); features switched off with
+  `OPENSHIPKIT_WITHOUT`; a generated API reference ([api.md](docs/api.md),
+  `npm run docs:api`); two example apps ([examples/](examples/README.md));
+  `npm run upgrade` for guided template merges.
+
 ## [1.0.0] — not yet released
 
 The first release of **OpenShipKit**: the self-hosted sibling of

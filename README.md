@@ -410,6 +410,7 @@ tests/                Vitest (contract tests run on memory and, with TEST_DATABA
 | `npm run dev` | Dev server on :3000 (embedded Postgres when `DATABASE_URL` is unset) |
 | `npm run build` | Production build (`.next/standalone`) — needs no environment |
 | `npm start` | Serve the production build: copies static assets into `.next/standalone` and runs its `server.js` with `.env`/`.env.local` loaded (what the Docker image runs) |
+| `npm run upgrade` | A guided merge of a new template release: the changelog and upgrade notes in between, new migrations, then `-- --merge` on a new branch, not committed ([docs/upgrading.md](docs/upgrading.md)) |
 | `npm run setup` | Write `.env.local` (or `.env` with `--compose`) with generated secrets; never overwrites a set value. In a terminal with no options it asks (profile, billing, teams, email, admin); `--billing`, `--email`, `--tenancy` and `--profile site` answer up front ([docs/getting-started.md](docs/getting-started.md)) |
 | `npm run check` | `typecheck` + `typecheck:modules` + `lint` + `test` — run before every commit |
 | `npm run typecheck` | `tsc --noEmit` |
