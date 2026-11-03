@@ -917,9 +917,18 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect(listed).toContain(pending.event.id);
         expect(listed).not.toContain(plain.event.id);
         expect(await store.usage.listPendingReports(after, new Date(Date.now() + 120_000).toISOString(), 500)).toEqual([]);
-        await store.usage.markReported(pending.event.id, new Date().toISOString());
+        // One already queued is left out: it's on its way.
+        const queued = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, report: true });
+        await store.jobs.enqueue({ kind: "usage.report", payload: { eventId: queued.event.id }, sensitive: false, maxAttempts: 3, key: `usage:${queued.event.id}` });
+        expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).not.toContain(queued.event.id);
+
+        await store.usage.settleReport(pending.event.id, new Date().toISOString());
         expect(await store.usage.get(pending.event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String) });
         expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).not.toContain(pending.event.id);
+        // Settled with nothing to send: not pending, and never "reported".
+        const free = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, report: true });
+        await store.usage.settleReport(free.event.id, null);
+        expect(await store.usage.get(free.event.id)).toMatchObject({ reportPending: false, reportedAt: null });
         expect(await store.usage.get("00000000-0000-4000-8000-000000000000")).toBeNull();
       });
 

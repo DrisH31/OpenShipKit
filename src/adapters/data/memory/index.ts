@@ -584,16 +584,17 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         return t.usage
           .filter((e) => {
             const at = createdAtOf.get(e.id) ?? e.occurredAt;
-            return e.reportPending && at >= lo && at < hi;
+            const queued = [...t.jobs.values()].some((j) => j.key === `usage:${e.id}` && (j.status === "queued" || j.status === "running"));
+            return e.reportPending && at >= lo && at < hi && !queued;
           })
           .slice(0, limit)
           .map(clone);
       },
-      async markReported(id, at) {
+      async settleReport(id, reportedAt) {
         const e = t.usage.find((x) => x.id === id);
         if (e) {
           e.reportPending = false;
-          e.reportedAt = new Date(at).toISOString();
+          e.reportedAt = reportedAt ? new Date(reportedAt).toISOString() : null;
         }
       },
       async sum(subject, metric, from, to) {

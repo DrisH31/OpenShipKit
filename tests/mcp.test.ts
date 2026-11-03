@@ -569,6 +569,10 @@ describe("admin tools", () => {
     // Hiding it, sorting another priceless plan first, or adding one before it: all lift the free limits.
     expect((await call(writer, "plan_update", { key: "free", active: false })).structuredContent).toMatchObject(forbidden);
     expect((await call(writer, "plan_upsert", { key: "starter", name: "Starter", sortOrder: 0 })).structuredContent).toMatchObject(forbidden);
+    // Two calls at once can't combine to move it: each is judged on its own.
+    await store.plans.upsert({ ...base, key: "zz", name: "ZZ", prices: [], sortOrder: 10, limits: {} });
+    const both = await Promise.all([call(writer, "plan_update", { key: "zz", sortOrder: 0 }), call(writer, "plan_update", { key: "free", sortOrder: 20 })]);
+    for (const r of both) expect(r.structuredContent).toMatchObject(forbidden);
     // Copy edits to the free plan, and anything on a paid plan, stay a write key's.
     await ok(writer, "plan_update", { key: "free", name: "Free forever" });
     await ok(writer, "plan_update", { key: "pro", active: false, sortOrder: 0 });

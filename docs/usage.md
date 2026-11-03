@@ -23,8 +23,10 @@ through MCP (`plan_update { key, limits }`, which needs an admin key):
 - **Whose limits:** the customer's plan (`usageSubject(user)`). That's the
   person's own, or, with teams on (`OPENSHIPKIT_TENANCY=org`), the plan of the
   organisation they're working in, unless the organisation has no plan and the
-  person has one of their own: then the person's, the same rule as
-  `requirePlan`. With no paid plan, the **free plan's** limits apply: the
+  person has one of their own: then the person's. (`requirePlan` lets either
+  plan through; for limits and metered billing one plan has to win, and the
+  team's does when it has one.) The billing page shows the same customer's
+  usage. With no paid plan, the **free plan's** limits apply: the
   active plan with no paid price that isn't "contact sales", first by sort
   order. With no free plan, nothing is limited.
 - **Outside the browser** (an API request authenticated by a key) there is no
@@ -82,10 +84,20 @@ await recordUsage(subject, "api_calls", 1, { key: requestId });     // after it
   again with a different quantity is refused (`reason: "key_reused"`): that's a
   bug in the caller, not a retry. Without a key, every call counts.
 
-`consumeUsage` holds the limit exactly: concurrent calls for one customer's
-metric queue on a database lock, so ten requests at 9,999 of 10,000 let one
-through. The two-step form can let both of two simultaneous requests through at
-9,999. For most quotas that's fine; where one unit over costs money, consume.
+`consumeUsage` holds the limit exactly **as long as every write of that metric
+goes through it**: concurrent consumes for one customer's metric queue on a
+database lock, so ten requests at 9,999 of 10,000 let one through. A
+`recordUsage` of the same metric doesn't take the lock and can land between a
+consume's check and its write. The two-step form can let both of two
+simultaneous requests through at 9,999. For most quotas that's fine; where one
+unit over costs money, consume everywhere.
+
+Each consume sums the period's events for that customer and metric while it
+holds the lock. That's quick for thousands of events a period and fine into
+the hundreds of thousands; around a million events per customer per month it
+costs tens of milliseconds a call, serialised per customer. Past that, keep a
+running counter instead (one row per customer, metric and period, updated in
+the same transaction).
 
 ## The period
 
@@ -125,7 +137,12 @@ an outbox:
 - An event already reported is never sent again: not when the caller repeats
   `recordUsage` with the same key, not when a job is retried by hand.
 - Every five minutes the job runner re-queues events still pending from the last
-  day, so a crash between recording and queueing loses nothing.
+  day (leaving out those already queued), so a crash between recording and
+  queueing loses nothing. Events still unsent after a day are logged as an
+  error; their failed jobs in `/admin/jobs` say why.
+- Billing off, or unable to meter, where the job runs (a worker started without
+  the provider's key) is an error, not a skip: the event stays pending and is
+  sent once billing is back.
 - The one window left, a crash after the provider accepted the event and before
   it was marked, resends the same event id, which the provider drops as a
   duplicate (Polar `external_id`; Stripe `identifier`, within its 24 hours,
@@ -151,6 +168,7 @@ usage is unlimited and billed.
 
 Usage events are rows in `usage_events`: who (a user or an organisation), the
 metric, the quantity, when, the optional idempotency key (unique per customer
-and metric), and whether it still waits to be reported. They're append-only. Nothing deletes them, so the table grows with
-your traffic. At very high volume (millions of events a day), record a
+and metric), and its report state (pending, sent, or settled with nobody to
+bill). They're append-only: nothing deletes them, so the table grows with your
+traffic. At very high volume (millions of events a day), record a
 pre-aggregated count every minute instead of one row per request.

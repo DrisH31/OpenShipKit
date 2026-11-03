@@ -80,7 +80,7 @@ export const planUpdate = defineTool({
   name: "plan_update",
   title: "Edit a plan",
   description:
-    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices, trialDays or limits needs an admin key, and so does any change to which plan is the free plan (the active, priceless plan first by sortOrder, whose limits everyone without a paid plan gets): hiding it, re-sorting it, or adding one before it. A write key edits the copy, features, highlighted, contactSales, ctaLabel, and active and sortOrder of paid plans. Returns the saved plan.",
+    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices, trialDays or limits needs an admin key, and so does anything that could change which plan is the free plan (the active, priceless plan first by sortOrder, whose limits everyone without a paid plan gets): a priceless plan's active, sortOrder or contactSales, or a new or deleted priceless plan. A write key edits the copy, features, highlighted and ctaLabel of any plan, and active, sortOrder and contactSales of paid plans. Returns the saved plan.",
   scope: "write",
   annotations: WRITE_IDEMPOTENT,
   input: z.strictObject({ key: planKey, ...patchShape(planFields) }),

@@ -1133,15 +1133,19 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
               eq(usageEvents.reportPending, true),
               sql`${usageEvents.createdAt} >= ${toDate(after, "after")}`,
               sql`${usageEvents.createdAt} < ${toDate(before, "before")}`,
+              sql`not exists (select 1 from ${jobs} where ${jobs.key} = 'usage:' || ${usageEvents.id}::text and ${jobs.status} in ('queued', 'running'))`,
             ),
           )
           .orderBy(asc(usageEvents.createdAt))
           .limit(clampLimit(limit));
         return rows.map(toUsageEvent);
       },
-      async markReported(id, at) {
+      async settleReport(id, reportedAt) {
         if (!isUuid(id)) return;
-        await db().update(usageEvents).set({ reportPending: false, reportedAt: toDate(at, "at")! }).where(eq(usageEvents.id, id));
+        await db()
+          .update(usageEvents)
+          .set({ reportPending: false, reportedAt: reportedAt ? toDate(reportedAt, "reportedAt")! : null })
+          .where(eq(usageEvents.id, id));
       },
       async sum(subject, metric, from, to) {
         if (!isUuid(subject.id)) return 0;

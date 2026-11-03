@@ -57,7 +57,7 @@ import { PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing"
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
-import { usageSummary, type UsageLine } from "@/server/services/usage";
+import { usageSubject, usageSummary, type UsageLine } from "@/server/services/usage";
 import { humanize } from "@/lib/schema-form";
 
 export const metadata: Metadata = { title: "Billing" };
@@ -256,7 +256,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const [hasPortal, cancellable, rawUsage] = await Promise.all([
     billingHasPortal(),
     listCancellable(user),
-    usageSummary(orgView ? { type: "org", id: orgView.org.id } : { type: "user", id: user.id }),
+    // The same subject limits and metered billing use (usageSubject): with teams, the organisation,
+    // unless it has no plan and the person has their own.
+    usageSubject(user, orgView ? { orgId: orgView.org.id } : {}).then(async (subject) => ({ subject, ...(await usageSummary(subject)) })),
   ]);
 
   // Every plan, retired ones included, for names; only active plans are offered.
@@ -270,8 +272,10 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   // the same figures as the notice above; for a person on their own they mean nothing.
   const usage = {
     ...rawUsage,
-    lines: rawUsage.lines.flatMap((l) => (l.metric !== "seats" ? [l] : orgView ? [{ metric: "seats", used: orgView.seats.used, limit: orgView.seats.limit, inUse: true }] : [])),
+    lines: rawUsage.lines.flatMap((l) => (l.metric !== "seats" ? [l] : orgView && rawUsage.subject.type === "org" ? [{ metric: "seats", used: orgView.seats.used, limit: orgView.seats.limit, inUse: true }] : [])),
   };
+  // In a team, but the person's own plan applies (the team has none): say so, or the card reads as the team's.
+  const usageIsOwn = orgView !== null && rawUsage.subject.type === "user";
   const entitlement = orgView ? orgView.entitlement : detail!.entitlement;
   const subscriptions = orgView ? orgView.subscriptions : detail!.subscriptions;
   const purchases = orgView ? [] : detail!.purchases;
@@ -374,6 +378,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
               Resets {formatDate(usage.period.to)}
             </p>
           </div>
+          {usageIsOwn ? (
+            <p className="-mt-1 text-caption text-ink-2">
+              Your own {planName(usage.plan) ?? "plan"} plan, which applies while {orgView?.org.name} has no plan of its own.
+            </p>
+          ) : null}
           <ul className="flex flex-col gap-4">
             {usage.lines.map((line) => (
               <UsageRow key={line.metric} line={line} />

@@ -625,8 +625,10 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
   const rec = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
   const fromValue = () => Object.entries(rec).map(([k, v]) => ({ id: newRowKey(), name: k, value: v }));
   const [rows, setRows] = useState<MapRow[]>(fromValue);
-  // Rebuild when the value isn't what these rows produce: it was changed from outside.
-  if (JSON.stringify(rowsToValue(rows)) !== JSON.stringify(rec)) setRows(fromValue());
+  // Rebuild when the value isn't what these rows produce: it was changed from outside. Both sides are
+  // normalised the same way (trimmed names, blank names dropped), or a value with " api_calls" or ""
+  // as a key would never match its own rows and re-render forever.
+  if (JSON.stringify(rowsToValue(rows)) !== JSON.stringify(rowsToValue(fromValue()))) setRows(fromValue());
   const name = f.labelFor(label);
   const hint = f.hint ?? node.description;
   const headingId = useId();

@@ -52,8 +52,9 @@ nobody.
 With `BILLING_METERED_METRICS` set, each recorded usage event of a listed metric
 is stored as pending and queues a `usage.report` job that sends the stored event
 to the Polar or Stripe meter
-([usage.md](usage.md#charging-for-usage-metered-prices)), then marks it
-reported. An event already reported is never sent again. Retries run for about
+([usage.md](usage.md#charging-for-usage-metered-prices)), then marks it sent
+(or settled, when there's nobody to bill). An event no longer pending is never
+sent again; one whose job finds billing off stays pending. Retries run for about
 three hours (30 seconds doubling to an hour), and every five minutes the runner
 re-queues events still pending from the last day, so a crash between recording
 and queueing loses nothing. A report that failed for good is in `/admin/jobs` to

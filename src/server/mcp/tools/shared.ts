@@ -164,19 +164,30 @@ export function changesBilling(current: Pick<Plan, "prices" | "trialDays"> & { l
 }
 
 /**
- * Whether saving `next` for plan `key` (null: deleting it) changes the free plan: the one whose limits
- * apply to everyone without a paid plan (freePlan in src/server/services/usage.ts). A write key could
- * otherwise lift every free limit without touching a limit: hide the free plan (active: false), or
- * add a priceless plan that sorts first.
+ * Whether saving `next` for plan `key` (null: deleting it) could change which plan is the free plan,
+ * whose limits everyone without a paid plan gets (freePlan in src/server/services/usage.ts). A write
+ * key could otherwise lift every free limit without touching one: hide the free plan, re-sort it, or
+ * add a priceless plan before it.
+ *
+ * Judged on this call alone, never by comparing against the other plans as they are now: two calls
+ * sent at once each see the plans before the other's write, so a check against the current free plan
+ * passes both. Any change to a priceless plan's candidacy (active, sortOrder, contactSales, prices),
+ * a new active priceless plan, or deleting a priceless plan counts.
  */
 export async function changesFreePlan(key: string, next: Partial<Plan> | null): Promise<boolean> {
-  const [{ listPlans }, { freePlan }] = await Promise.all([import("@/server/services/plans"), import("@/server/services/usage")]);
-  const plans = await listPlans();
-  const current = plans.find((p) => p.key === key);
-  const others = plans.filter((p) => p.key !== key);
-  const after = next === null ? others : [...others, { ...(current ?? ({} as Plan)), ...next, key } as Plan];
-  const [a, b] = [freePlan(plans), freePlan(after)];
-  return a?.key !== b?.key || !sameLimits(a?.limits, b?.limits);
+  const { getPlan } = await import("@/server/services/plans");
+  const current = await getPlan(key);
+  const priceless = (p: Partial<Plan> | null | undefined) => !!p && !p.contactSales && !(p.prices ?? []).some((x) => x.amountCents > 0);
+  if (next === null) return priceless(current);
+  const after = { ...(current ?? {}), ...next } as Partial<Plan>;
+  if (!current) return priceless(after) && after.active !== false;
+  if (!priceless(current) && !priceless(after)) return false;
+  return (
+    current.active !== after.active ||
+    current.sortOrder !== after.sortOrder ||
+    current.contactSales !== after.contactSales ||
+    !samePrices(current.prices, after.prices ?? [])
+  );
 }
 
 /**

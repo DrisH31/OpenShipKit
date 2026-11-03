@@ -12,9 +12,9 @@ import type { Entitlement, Plan, PlanInput, User } from "@/core/types";
 let store: DataStore;
 vi.mock("@/server/data", () => ({ getData: async () => store }));
 vi.mock("@/server/email", () => ({ sendEmail: async () => ({ id: "em" }) }));
-const meter = vi.hoisted(() => ({ reports: [] as unknown[] }));
+const meter = vi.hoisted(() => ({ reports: [] as unknown[], off: false }));
 vi.mock("@/server/billing", () => ({
-  getBilling: async () => ({ id: "stripe", label: "Stripe", hasPortal: true, reportUsage: async (r: unknown) => void meter.reports.push(r) }),
+  getBilling: async () => (meter.off ? null : { id: "stripe", label: "Stripe", hasPortal: true, reportUsage: async (r: unknown) => void meter.reports.push(r) }),
 }));
 const cookie = vi.hoisted(() => ({ org: undefined as string | undefined }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (cookie.org ? { value: cookie.org } : undefined), set: () => {} }) }));
@@ -51,6 +51,7 @@ beforeEach(async () => {
   );
   cookie.org = undefined;
   meter.reports = [];
+  meter.off = false;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -230,6 +231,30 @@ describe("one stored event, one charge", () => {
     await enqueueJob(usageReportJob, { eventId: reported.eventId });
     await runDueJobs();
     expect(meter.reports).toHaveLength(1);
+  });
+
+  it("billing off where the job runs (a worker with a bad env) leaves the event pending, never 'reported'", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    await usage.recordUsage(me(), "api_calls", 4, { key: "req_off" });
+    meter.off = true;
+    expect(await runDueJobs()).toMatchObject({ retrying: 1, succeeded: 0 });
+    const [job] = (await store.jobs.list({})).items;
+    expect(job.lastError).toMatch(/Billing is off/);
+    const event = (await store.usage.get((job.payload as { eventId: string }).eventId))!;
+    expect(event).toMatchObject({ reportPending: true, reportedAt: null });
+    // Billing back: the next attempt sends it.
+    meter.off = false;
+    await usageReportJob.run({ eventId: event.id });
+    expect(meter.reports).toEqual([expect.objectContaining({ id: event.id, quantity: 4 })]);
+    expect(await store.usage.get(event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String) });
+  });
+
+  it("an account with nobody to bill is settled without a sent date", async () => {
+    await usage.recordUsage(me(), "api_calls", 1, { key: "req_free" });
+    await runDueJobs();
+    const all = await store.usage.listPendingReports("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z", 10);
+    expect(all).toEqual([]);
+    expect(meter.reports).toEqual([]);
   });
 
   it("the sweep re-queues an event whose queueing was lost", async () => {

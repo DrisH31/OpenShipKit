@@ -273,10 +273,13 @@ export interface UsageRepo {
    */
   consume(input: UsageInput & { limit: number; from: string; to: string }): Promise<{ event: UsageEvent | null; created: boolean; used: number }>;
   get(id: string): Promise<UsageEvent | null>;
-  /** Events waiting for the billing provider, created in [after, before), oldest first. */
+  /**
+   * Events waiting for the billing provider, created in [after, before), oldest first, leaving out any
+   * with an unfinished job keyed `usage:<id>` (already on its way), so a backlog can't hide the rest.
+   */
   listPendingReports(after: string, before: string, limit: number): Promise<UsageEvent[]>;
-  /** The event reached the provider: no longer pending. */
-  markReported(id: string, at: string): Promise<void>;
+  /** No longer pending: sent (reportedAt, when the provider accepted it), or settled with nothing to send (null). */
+  settleReport(id: string, reportedAt: string | null): Promise<void>;
   /** The total quantity for one metric in [from, to). */
   sum(subject: UsageSubject, metric: string, from: string, to: string): Promise<number>;
   /** Every metric's total in [from, to). */

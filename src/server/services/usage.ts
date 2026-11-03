@@ -19,7 +19,8 @@ import "server-only";
 //
 // Whose limits: the subject's plan (usageSubject). That's a person, or with
 // teams on, the organisation they're working in, unless the organisation has
-// no plan and the person has their own: then the person, as for requirePlan.
+// no plan and the person has their own: then the person. (requirePlan lets
+// either plan through; here one has to win, and the team's does when it has one.)
 // With no paid plan, the free plan's limits apply (the active plan with no paid
 // price that isn't "contact sales", first by sortOrder); with no free plan,
 // nothing is limited.
@@ -52,7 +53,7 @@ import { orgAccess, teamsEnabled } from "./orgs";
  * Whose usage and limits apply to what `user` is doing. With teams on: the organisation, `orgId` if
  * given (it must be one of theirs), else the current one. Give `orgId` outside a browser session, such
  * as an API request, where there is no "current organisation" cookie. But if that organisation has no
- * plan and the person has their own, the person: their plan is the one that applies, as for requirePlan.
+ * plan and the person has their own, the person. The billing page reads the same subject.
  */
 export async function usageSubject(user: User, opts: { orgId?: string } = {}): Promise<UsageSubject> {
   if (teamsEnabled()) {
@@ -207,7 +208,8 @@ export async function recordUsage(subject: UsageSubject, metric: string, quantit
 /**
  * Check and record in one atomic step: records `quantity` of `metric` only if it fits this period's
  * limit, else refuses like requireWithinLimit. Concurrent calls for one subject's metric queue, so the
- * limit holds exactly. A key already recorded comes back as a retry, without a second check.
+ * limit holds exactly, provided every write of this metric goes through consumeUsage (recordUsage takes
+ * no lock). A key already recorded comes back as a retry, without a second check.
  */
 export async function consumeUsage(subject: UsageSubject, metric: string, quantity = 1, opts: { key?: string; occurredAt?: Date } = {}): Promise<{ created: boolean; used: number; limit: number | null }> {
   assertMetric(metric);
@@ -251,6 +253,9 @@ export async function sweepUsageReports(now = Date.now()): Promise<number> {
     if (created) queued++;
   }
   if (queued) log.info("usage", `re-queued ${queued} usage report(s) still pending`);
+  // Older than the window: not re-queued any more, so say so loudly (their failed jobs say why).
+  const stale = await (await getData()).usage.listPendingReports("1970-01-01T00:00:00.000Z", new Date(now - SWEEP_WITHIN_MS).toISOString(), 1);
+  if (stale.length) log.error("usage", "metered usage still unreported after a day: see the failed usage.report jobs in /admin/jobs, fix the cause, then retry them");
   return queued;
 }
 

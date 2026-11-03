@@ -220,8 +220,12 @@ export interface UsageEvent {
   /** Dedupes: a second event with the same key for the same subject and metric is ignored. */
   key: string | null;
   occurredAt: string;
-  /** Waiting to be reported to the billing provider's meter (metered prices); false once it has been, or if it never will be. */
+  /**
+   * The outbox for metered prices, one of three states: pending (reportPending), sent (reportedAt set),
+   * or settled without sending because there was nobody to bill (neither: a free account).
+   */
   reportPending: boolean;
+  /** When the billing provider accepted it. Never set for an event that wasn't sent. */
   reportedAt: string | null;
 }
 
