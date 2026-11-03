@@ -24,7 +24,6 @@ import "server-only";
 //
 
 import { redirect } from "next/navigation";
-import { can } from "@/core/orgs";
 import { comparePlanRank, planCovers, type PlanRef } from "@/core/plans";
 import { grantsAccess, isRenewing, type Entitlement, type Plan, type PriceInterval, type Purchase, type Subscription, type User } from "@/core/types";
 import { getBilling } from "../billing";
@@ -294,13 +293,12 @@ export async function startCheckout(user: User, planKey: string, interval: Price
 export async function openPortal(user: User): Promise<string> {
   assertNotDemo(user);
   if (teamsEnabled()) {
-    // Manage billing is the payer's own portal: everything they pay for (personal, or any team's, even
-    // one they've left). An owner who doesn't pay is told who does on the billing page, not here.
-    const billingNow = await getBilling();
-    if (!billingNow) throw new ServiceError("unavailable", "Billing isn't configured");
-    const url = await payersPortal(user, billingNow);
-    if (!url) throw new ServiceError("not_found", "You don't pay for anything, so there's no billing to manage.");
-    return url;
+    // Manage billing is the payer's own portal: everything they pay for (ownBilling). An owner who
+    // doesn't pay is told who does on the billing page, not here.
+    if (!(await getBilling())) throw new ServiceError("unavailable", "Billing isn't configured");
+    const own = await ownBilling(user);
+    if (!own) throw new ServiceError("not_found", "You haven't bought anything here, so there's no billing to manage.");
+    return (await own.billing.createPortal({ user, customerId: own.customerId, returnUrl: `${siteUrl()}/dashboard/billing` })).url;
   }
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
@@ -367,40 +365,20 @@ export async function startOrgCheckout(user: User, orgId: string, planKey: strin
 }
 
 /**
- * The provider's portal for whatever `user` pays for. Polar keys a subscription to the customer who
- * paid, so the portal belongs to the payer, not to a team or a role: it opens for anyone with a
- * subscription row of their own (personal, or an organisation's they bought, whether or not they
- * are still in it). Null when they pay for nothing.
+ * What this person pays for, and the provider customer that holds it: the one question behind
+ * Manage billing, asked by both the page (paysForAnything) and the portal (openPortal), so they
+ * can't disagree. Subscriptions (personal, or a team's they bought, whether or not they're still in
+ * it) and one-time purchases alike: a buyer reaches their receipts and refunds too. Polar keys all of
+ * it to the customer who paid, so the portal belongs to the payer, not to a team or a role.
  */
-async function payersPortal(user: User, billing: NonNullable<Awaited<ReturnType<typeof getBilling>>>): Promise<string | null> {
-  const mine = (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 })).items;
-  const customerId = (await (await getData()).billing.getCustomerId(user.id, billing.id)) ?? mine.find((s) => s.providerCustomerId)?.providerCustomerId ?? null;
-  if (mine.length === 0 || !customerId) return null;
-  return (await billing.createPortal({ user, customerId, returnUrl: `${siteUrl()}/dashboard/billing` })).url;
-}
-
-/**
- * Manage billing from an organisation's billing page: the caller's own portal when they pay for one
- * of its subscriptions (whatever their role now). An owner who doesn't pay is told who does; anyone
- * else is refused by the permission map.
- */
-export async function openOrgPortal(user: User, orgId: string): Promise<string> {
-  assertNotDemo(user);
+async function ownBilling(user: User): Promise<{ customerId: string; billing: NonNullable<Awaited<ReturnType<typeof getBilling>>> } | null> {
   const billing = await getBilling();
-  if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
-  const { org, role } = await requireOrgPermission(user, orgId, "billing.view");
-  const subs = (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items;
-  if (subs.some((s) => s.userId === user.id)) {
-    const url = await payersPortal(user, billing);
-    if (url) return url;
-  }
-  if (!can(role, "billing.manage")) throw new ServiceError("forbidden", `Your role (${role}) can't manage billing here.`);
-  if (subs.length === 0) throw new ServiceError("not_found", `${org.name} has no subscription yet; choose a plan first.`);
-  const paying = subs.find(isRenewing) ?? subs[0];
-  const payer = await (await getData()).users.getById(paying.userId);
-  throw new ServiceError("conflict", `Payment for ${org.name} is managed by ${payer?.email ?? "the person who subscribed"}. They can change the card or plan, or cancel.`, {
-    reason: "managed_by_other",
-  });
+  if (!billing) return null;
+  const data = await getData();
+  const [subs, purchases] = await Promise.all([data.billing.listSubscriptions({ userId: user.id, limit: 50 }), data.billing.listPurchases({ userId: user.id, limit: 1 })]);
+  if (subs.items.length === 0 && purchases.items.length === 0) return null;
+  const customerId = (await data.billing.getCustomerId(user.id, billing.id)) ?? subs.items.find((s) => s.providerCustomerId)?.providerCustomerId ?? null;
+  return customerId ? { customerId, billing } : null;
 }
 
 export type OrgBillingView = {
@@ -449,7 +427,7 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
   };
 }
 
-/** Whether this person pays for anything (a personal plan, or an organisation's), for the billing page's Manage billing. */
+/** Whether Manage billing would open for this person (ownBilling, the same question openPortal asks). */
 export async function paysForAnything(user: User): Promise<boolean> {
-  return (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 1 })).items.length > 0;
+  return (await ownBilling(user)) !== null;
 }

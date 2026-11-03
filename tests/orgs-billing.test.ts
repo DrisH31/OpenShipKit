@@ -236,13 +236,14 @@ describe("seats", () => {
 });
 
 describe("the portal and deleting", () => {
-  it("opens for the owner who pays, and tells another owner who manages payment", async () => {
+  it("opens for the owner who pays; a new owner who doesn't pay gets none, and is told who does", async () => {
     const { owner, org, members } = await teamWith(1);
     await webhookFor(owner, org);
-    await expect(billing.openOrgPortal(owner, org.id)).resolves.toBe("https://polar.example.com/portal");
+    await expect(billing.openPortal(owner)).resolves.toBe("https://polar.example.com/portal");
     expect(h.portals).toEqual(["pcus_buyer"]);
     await orgs.transferOwnership(owner, org.id, members[0].id);
-    await expect(billing.openOrgPortal(members[0], org.id)).rejects.toMatchObject({ code: "conflict", details: { reason: "managed_by_other" }, message: expect.stringContaining(owner.email) });
+    await expect(billing.openPortal(members[0])).rejects.toMatchObject({ code: "not_found" });
+    expect((await billing.getOrgBillingView(members[0]))?.payerEmail).toBe(owner.email); // still in the team, so named
   });
 
   it("an organisation can't be deleted while its subscription renews", async () => {
@@ -266,11 +267,8 @@ describe("whoever pays (review: every way out says what happens to the money)", 
     const { owner, org, members } = await teamWith(1);
     await webhookFor(owner, org);
     await orgs.transferOwnership(owner, org.id, members[0].id); // owner is an admin now, and still pays
-    await expect(billing.openOrgPortal(owner, org.id)).resolves.toBe("https://polar.example.com/portal");
-    await expect(billing.openOrgPortal(members[0], org.id)).rejects.toMatchObject({ details: { reason: "managed_by_other" } });
-    const plain = await person("plain");
-    await store.orgs.addMember(org.id, plain.id, "member");
-    await expect(billing.openOrgPortal(plain, org.id)).rejects.toMatchObject({ code: "forbidden" });
+    await expect(billing.openPortal(owner)).resolves.toBe("https://polar.example.com/portal");
+    await expect(billing.openPortal(members[0])).rejects.toMatchObject({ code: "not_found" });
   });
 
   it("deleting an account never takes a renewing team with it, nor cuts a team's paid time short", async () => {
@@ -351,7 +349,9 @@ describe("the portal answers to whoever pays (review round 2)", () => {
     h.cookie = undefined;
     await expect(billing.openPortal(a)).resolves.toBe("https://polar.example.com/portal"); // A is in no team, and pays
     h.cookie = org.id;
-    await expect(billing.openOrgPortal(owner, org.id)).rejects.toMatchObject({ details: { reason: "managed_by_other" }, message: expect.stringContaining(a.email) });
+    const view = await billing.getOrgBillingView(owner);
+    expect(view?.payerEmail).toBe("a former member"); // the new owner learns who pays without A's address
+    expect(JSON.stringify(view)).not.toContain(a.email);
   });
 
   it("a team can't buy while a subscription is still running out its period, so a resume can't double-charge it", async () => {
@@ -410,5 +410,18 @@ describe("Manage billing is your own billing (review round 3)", () => {
     const view = await billing.getOrgBillingView(owner);
     expect(view?.payerEmail).toBe("a former member");
     expect(JSON.stringify(view)).not.toContain(members[0].email);
+  });
+});
+
+describe("one-time buyers (review round 4)", () => {
+  it("reach their own billing with teams on, as they did without", async () => {
+    const buyer = await person("once");
+    await billingWebhookSink.applyOrder({
+      provider: "polar", providerOrderId: "pord_1", providerCustomerId: "pcus_once", userIdHints: [buyer.id],
+      productId: "prod_team_month", planKeyHint: null, checkoutProductId: null, amountCents: 9900, currency: "usd", refunded: false,
+    });
+    expect(await billing.paysForAnything(buyer)).toBe(true);
+    await expect(billing.openPortal(buyer)).resolves.toBe("https://polar.example.com/portal");
+    expect(h.portals).toContain("pcus_once");
   });
 });

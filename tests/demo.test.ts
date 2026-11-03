@@ -225,7 +225,6 @@ async function refusals(actor: Actor): Promise<[string, () => Promise<unknown>][
     ["startCheckout", () => billing.startCheckout(demoUser, "pro", "month")],
     ["openPortal", () => billing.openPortal(demoUser)],
     ["startOrgCheckout", () => billing.startOrgCheckout(demoUser, "o1", "pro", "month")],
-    ["openOrgPortal", () => billing.openOrgPortal(demoUser, "o1")],
     ["createOrg", () => orgs.createOrg(demoUser, { name: "Demo Co" })],
     ["updateOrg", () => orgs.updateOrg(demoUser, "o1", { name: "x" })],
     ["deleteOrg", () => orgs.deleteOrg(demoUser, "o1")],
