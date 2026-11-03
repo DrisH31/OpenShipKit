@@ -20,17 +20,24 @@ through MCP (`plan_update { key, limits }`, which needs an admin key):
 - A metric's name is lower-case words joined by underscores: `api_calls`, not
   `API calls`.
 - A metric the plan doesn't list is **unlimited** on that plan.
-- **Whose limits:** the customer's plan. That's the person's own, or, with teams
-  on (`OPENSHIPKIT_TENANCY=org`), the plan of the organisation they're working
-  in. With no paid plan, the **free plan's** limits apply: the active plan with
-  no paid price, first by sort order. With no free plan, nothing is limited.
+- **Whose limits:** the customer's plan (`usageSubject(user)`). That's the
+  person's own, or, with teams on (`OPENSHIPKIT_TENANCY=org`), the plan of the
+  organisation they're working in, unless the organisation has no plan and the
+  person has one of their own: then the person's, the same rule as
+  `requirePlan`. With no paid plan, the **free plan's** limits apply: the
+  active plan with no paid price that isn't "contact sales", first by sort
+  order. With no free plan, nothing is limited.
+- **Outside the browser** (an API request authenticated by a key) there is no
+  "current organisation": pass it, `usageSubject(user, { orgId })`. It must be
+  one of the person's organisations.
 - **`seats`** is special: with teams on, it caps a team's members plus open
   invitations, unless the team pays per seat, in which case the seats bought are
   the cap ([teams.md](teams.md)).
 
 Changing a plan's limits changes what customers get, so like prices and trials
-it needs an admin MCP key, and an undo through `audit_restore` is held to the
-same rule.
+it needs an admin MCP key, and so does anything that changes **which** plan is
+the free plan (hiding it, re-sorting it, adding a priceless plan before it). An
+undo through `audit_restore` is held to the same rules.
 
 ## Two kinds of limit
 
@@ -45,7 +52,15 @@ await requireWithinLimit(subject, "projects", { current: await countProjects(sub
 await createProject(...);
 ```
 
-**Metered usage** is events you record, summed over the current period:
+**Metered usage** is events you record, summed over the current period. Check
+and record in one atomic step:
+
+```ts
+await consumeUsage(subject, "api_calls", 1, { key: requestId });   // refuses past the limit
+const result = await doTheWork();
+```
+
+or in two steps, recording after the work:
 
 ```ts
 await requireWithinLimit(subject, "api_calls");                    // before the work
@@ -60,22 +75,27 @@ await recordUsage(subject, "api_calls", 1, { key: requestId });     // after it
 - `checkLimit` answers the same question without throwing, for a page that
   shows a disabled button instead.
 - `adding` (default 1) checks a batch: `{ adding: 50 }` before importing 50 rows.
-- `recordUsage` never refuses on a limit. Check first.
-- **`key` makes recording idempotent.** Pass the request's or the job's id, and
-  a retry records nothing. Without a key, every call counts.
+- `recordUsage` never refuses on a limit. Check first, or use `consumeUsage`.
+- **`key` makes recording idempotent, per metric.** Pass the request's or the
+  job's id, and a retry records nothing. One request may use the same id for
+  two metrics (`api_calls` and `tokens`); each is its own event. The same key
+  again with a different quantity is refused (`reason: "key_reused"`): that's a
+  bug in the caller, not a retry. Without a key, every call counts.
 
-The check and the record are separate calls, so two requests at the same moment
-can both pass a check at 9,999 of 10,000. For quotas that's the usual trade-off.
-If one unit over would cost you real money, put the check and the work in a
-critical section of your own.
+`consumeUsage` holds the limit exactly: concurrent calls for one customer's
+metric queue on a database lock, so ten requests at 9,999 of 10,000 let one
+through. The two-step form can let both of two simultaneous requests through at
+9,999. For most quotas that's fine; where one unit over costs money, consume.
 
 ## The period
 
 Metered usage resets monthly:
 
-- **On a subscription:** on the renewal day. A plan renewing on the 20th counts
-  from the 20th to the 20th, and the 31st becomes the last day of a shorter
-  month. A yearly plan's quota resets monthly too, on the same day of the month.
+- **On a subscription:** the subscription's own billing period, as the
+  provider reports it (31 January to 28 February to 31 March, for one that
+  renews on the 31st). Where the provider hasn't given the period's start yet,
+  a month back from the renewal. A yearly plan's quota resets monthly too, on
+  the same day of the month.
 - **On the free plan or a lifetime purchase:** on the 1st of the month (UTC).
 
 A quota meant per year is a count the app keeps itself.
@@ -83,9 +103,9 @@ A quota meant per year is a count the app keeps itself.
 ## Where customers and you see it
 
 - **`/dashboard/billing`** has a Usage card: each limited or recorded metric
-  this period ("7 of 100", with a meter), and when it resets. For a count, it
-  shows the limit only ("Up to 3"), because the app keeps that count, not the
-  usage table.
+  this period ("7 of 100 this period", with a meter), and when it resets. For a
+  count the app keeps (projects), it shows the limit only ("Up to 3"). A team's
+  seats show the seats in use against what it bought or its plan allows.
 - **MCP:** `usage_get { user }` or `usage_get { orgId }` (admin key) returns the
   same summary for one customer.
 
@@ -97,10 +117,19 @@ To bill for usage, rather than only limit it, list the metrics to report:
 BILLING_METERED_METRICS=api_calls,tokens
 ```
 
-Each recorded event of those metrics queues a `usage.report` background job
-([jobs.md](jobs.md)), which sends it to the provider's meter for the customer.
-Every event carries our event id, so a retried job is a duplicate the provider
-drops, never a second charge.
+Each recorded event of those metrics is stored as **pending**, and a
+`usage.report` background job ([jobs.md](jobs.md)) sends the stored event (never
+the caller's arguments) to the provider's meter, then marks it reported. That's
+an outbox:
+
+- An event already reported is never sent again: not when the caller repeats
+  `recordUsage` with the same key, not when a job is retried by hand.
+- Every five minutes the job runner re-queues events still pending from the last
+  day, so a crash between recording and queueing loses nothing.
+- The one window left, a crash after the provider accepted the event and before
+  it was marked, resends the same event id, which the provider drops as a
+  duplicate (Polar `external_id`; Stripe `identifier`, within its 24 hours,
+  well inside the job's three hours of retries).
 
 | Provider | Set up on its side |
 |---|---|
@@ -109,9 +138,10 @@ drops, never a second charge.
 | **Razorpay** | No meters. Usage is counted and limited here only (the server warns at boot if `BILLING_METERED_METRICS` is set). |
 
 Whose customer is charged: the person's own billing customer, or for an
-organisation, the customer paying its renewing subscription. An account with no
-billing customer (free, never bought) has nothing to bill: the job ends without
-sending anything.
+organisation, the customer of the subscription that gives it access (one set to
+cancel still has its last period billed). An account with no billing customer
+(free, never bought) has nothing to bill: the event is settled without sending
+anything.
 
 A metered price and a limit go together fine. A limit on a metered metric is a
 safety cap ("bill per call, but never more than 100,000 a month"). With no limit,
@@ -120,7 +150,7 @@ usage is unlimited and billed.
 ## Storage
 
 Usage events are rows in `usage_events`: who (a user or an organisation), the
-metric, the quantity, when, and the optional idempotency key, unique per
-customer. They're append-only. Nothing deletes them, so the table grows with
+metric, the quantity, when, the optional idempotency key (unique per customer
+and metric), and whether it still waits to be reported. They're append-only. Nothing deletes them, so the table grows with
 your traffic. At very high volume (millions of events a day), record a
 pre-aggregated count every minute instead of one row per request.

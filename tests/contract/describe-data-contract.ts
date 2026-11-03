@@ -512,6 +512,9 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(created.updatedAt));
 
         expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.status).toBe("canceled");
+        const started = await store.billing.upsertSubscription({ ...input, currentPeriodStart: "2026-10-31T00:00:00.000Z" });
+        expect(started.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");
+        expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");
         expect(await store.billing.getSubscription("polar", uniq("sub_missing_"))).toBeNull();
       });
 
@@ -872,6 +875,49 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect(await store.usage.sum(me, "api_calls", new Date(now.getTime() - 60_000).toISOString(), new Date(now.getTime() + 60_000).toISOString())).toBe(1);
         await expectDataError(store.usage.record({ subject: me, metric: "api_calls", quantity: -1 }), "invalid");
         await expectDataError(store.usage.record({ subject: me, metric: "api_calls", quantity: 1.5 }), "invalid");
+      });
+
+      it("a key dedupes per metric: the same key on another metric is another event", async () => {
+        const me = { type: "user" as const, id: (await newUser()).id };
+        const a = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, key: "req_9" });
+        const b = await store.usage.record({ subject: me, metric: "tokens", quantity: 500, key: "req_9" });
+        expect(b.created).toBe(true);
+        expect(b.event.id).not.toBe(a.event.id);
+        expect(b.event).toMatchObject({ metric: "tokens", quantity: 500 });
+      });
+
+      it("consume records only within the limit, atomically under concurrency", async () => {
+        const me = { type: "user" as const, id: (await newUser()).id };
+        const [from, to] = [at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z")];
+        const occurredAt = at("2026-11-10T00:00:00Z");
+        const results = await Promise.all(
+          Array.from({ length: 8 }, (_, i) => store.usage.consume({ subject: me, metric: "api_calls", quantity: 1, key: `k${i}`, occurredAt, limit: 5, from, to })),
+        );
+        expect(results.filter((r) => r.event)).toHaveLength(5);
+        expect(results.filter((r) => !r.event).every((r) => r.used === 5)).toBe(true);
+        expect(await store.usage.sum(me, "api_calls", from, to)).toBe(5);
+        // A key already recorded comes back, over the limit or not.
+        const again = await store.usage.consume({ subject: me, metric: "api_calls", quantity: 1, key: "k0", occurredAt, limit: 5, from, to });
+        const k0 = results.find((r) => r.event?.key === "k0");
+        if (k0?.event) expect(again).toMatchObject({ created: false, event: { id: k0.event.id } });
+      });
+
+      it("keeps an outbox of events to report: pending until marked, listed by when they were recorded", async () => {
+        const me = { type: "user" as const, id: (await newUser()).id };
+        const before = new Date(Date.now() - 1000).toISOString();
+        const pending = await store.usage.record({ subject: me, metric: "api_calls", quantity: 2, report: true });
+        const plain = await store.usage.record({ subject: me, metric: "api_calls", quantity: 2 });
+        expect(pending.event).toMatchObject({ reportPending: true, reportedAt: null });
+        expect(plain.event.reportPending).toBe(false);
+        const after = new Date(Date.now() + 60_000).toISOString();
+        const listed = (await store.usage.listPendingReports(before, after, 500)).map((e) => e.id);
+        expect(listed).toContain(pending.event.id);
+        expect(listed).not.toContain(plain.event.id);
+        expect(await store.usage.listPendingReports(after, new Date(Date.now() + 120_000).toISOString(), 500)).toEqual([]);
+        await store.usage.markReported(pending.event.id, new Date().toISOString());
+        expect(await store.usage.get(pending.event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String) });
+        expect((await store.usage.listPendingReports(before, after, 500)).map((e) => e.id)).not.toContain(pending.event.id);
+        expect(await store.usage.get("00000000-0000-4000-8000-000000000000")).toBeNull();
       });
 
       it("stores a plan's limits", async () => {

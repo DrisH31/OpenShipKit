@@ -110,6 +110,7 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
       seats: typeof sub.seats === "number" ? sub.seats : null,
       interval: sub.recurring_interval === "year" ? "year" : sub.recurring_interval === "month" ? "month" : null,
       status: mapStatus(sub.status),
+      currentPeriodStart: sub.current_period_start ?? null,
       currentPeriodEnd: sub.ended_at ?? sub.current_period_end ?? null,
       cancelAtPeriodEnd: sub.cancel_at_period_end,
     });

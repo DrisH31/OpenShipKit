@@ -184,18 +184,23 @@ function PlanOption({ plan, plans, current, provider, refuse, hasPortal }: { pla
 }
 
 /** One metric this period: "7 of 100", with a meter when it's limited and metered. */
-function UsageRow({ line }: { line: UsageLine }) {
+function UsageRow({ line }: { line: UsageLine & { inUse?: boolean } }) {
   const metered = line.used > 0 || line.limit === null;
+  const period = line.inUse ? "in use" : "this period";
   const full = line.limit !== null && line.used >= line.limit;
   return (
     <li className="flex flex-col gap-1.5">
       <div className="flex flex-wrap items-baseline justify-between gap-2 text-small">
         <span className="text-ink">{humanize(line.metric)}</span>
         <span className="tabular text-ink-2">
-          {line.limit === null ? `${line.used.toLocaleString("en-US")} · no limit` : metered ? `${line.used.toLocaleString("en-US")} of ${line.limit.toLocaleString("en-US")}` : `Up to ${line.limit.toLocaleString("en-US")}`}
+          {line.limit === null
+            ? `${line.used.toLocaleString("en-US")} ${period} · no limit`
+            : metered || line.inUse
+              ? `${line.used.toLocaleString("en-US")} of ${line.limit.toLocaleString("en-US")} ${period}`
+              : `Up to ${line.limit.toLocaleString("en-US")}`}
         </span>
       </div>
-      {line.limit !== null && metered ? (
+      {line.limit !== null && (metered || line.inUse) ? (
         <meter
           min={0}
           max={line.limit}
@@ -248,7 +253,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const showPortal = orgView ? await paysForAnything(user) : null;
 
   // A provider with no portal (Razorpay): the page lists what can be cancelled instead of Manage billing.
-  const [hasPortal, cancellable, usage] = await Promise.all([
+  const [hasPortal, cancellable, rawUsage] = await Promise.all([
     billingHasPortal(),
     listCancellable(user),
     usageSummary(orgView ? { type: "org", id: orgView.org.id } : { type: "user", id: user.id }),
@@ -261,6 +266,12 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     isBillingEnabled(),
     orgView ? null : getCheckoutGuard(user.id),
   ]);
+  // Seats are the team's (members and open invitations against what it bought or its plan allows),
+  // the same figures as the notice above; for a person on their own they mean nothing.
+  const usage = {
+    ...rawUsage,
+    lines: rawUsage.lines.flatMap((l) => (l.metric !== "seats" ? [l] : orgView ? [{ metric: "seats", used: orgView.seats.used, limit: orgView.seats.limit, inUse: true }] : [])),
+  };
   const entitlement = orgView ? orgView.entitlement : detail!.entitlement;
   const subscriptions = orgView ? orgView.subscriptions : detail!.subscriptions;
   const purchases = orgView ? [] : detail!.purchases;

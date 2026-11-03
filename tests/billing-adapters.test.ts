@@ -44,6 +44,8 @@ const USER: User = {
 const ORG = "22222222-2222-4222-8222-222222222222";
 const PERIOD_END_UNIX = Math.floor(Date.UTC(2031, 0, 2, 3, 4, 5) / 1000);
 const PERIOD_END = new Date(PERIOD_END_UNIX * 1000).toISOString();
+const PERIOD_START_UNIX = Math.floor(Date.UTC(2030, 11, 2, 3, 4, 5) / 1000);
+const PERIOD_START = new Date(PERIOD_START_UNIX * 1000).toISOString();
 
 /** What a checkout sold, the way our checkout writes it into the provider's metadata. */
 type Sold = { userId: string; planKey: string; productId: string; orgId?: string; seats: number };
@@ -143,6 +145,7 @@ const polar: Harness = {
           product_id: "polar_team_month",
           customer_id: "pcus_1",
           recurring_interval: "month",
+          current_period_start: PERIOD_START,
           current_period_end: PERIOD_END,
           cancel_at_period_end: false,
           ended_at: null,
@@ -210,7 +213,7 @@ const stripe: Harness = {
           cancel_at: null,
           ended_at: null,
           metadata: { userId: USER.id, planKey: "team", productId: "price_team_month", orgId: ORG },
-          items: { data: [{ quantity: 4, current_period_end: PERIOD_END_UNIX, price: { id: "price_team_month", recurring: { interval: "month" } } }] },
+          items: { data: [{ quantity: 4, current_period_start: PERIOD_START_UNIX, current_period_end: PERIOD_END_UNIX, price: { id: "price_team_month", recurring: { interval: "month" } } }] },
         }),
       failFetches: () => {
         fail = true;
@@ -267,6 +270,7 @@ const razorpay: Harness = {
           quantity: 4,
           customer_id: "cust_1",
           notes: { userId: USER.id, planKey: "team", productId: "plan_team_month", orgId: ORG },
+          current_start: PERIOD_START_UNIX,
           current_end: PERIOD_END_UNIX,
           ended_at: null,
         }),
@@ -315,6 +319,7 @@ describe.each([polar, stripe, razorpay])("billing adapter contract: $name", (h) 
     });
     expect(state.userIdHints).toContain(EXPECTED.userId);
     expect(Date.parse(state.currentPeriodEnd!)).toBe(Date.parse(PERIOD_END));
+    expect(Date.parse(state.currentPeriodStart!)).toBe(Date.parse(PERIOD_START)); // the usage period's start
     expect(claimed).toEqual(["evt_1"]); // claimed, and only after the write
   });
 

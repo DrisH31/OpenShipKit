@@ -20,7 +20,7 @@ import "server-only";
 
 import { and, arrayContains, asc, desc, eq, getTableColumns, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
-import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
+import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider, type UsageInput } from "@/core/data";
 import {
   ENTITLED_STATUSES,
   PAST_DUE_GRACE_DAYS,
@@ -244,6 +244,7 @@ const toSubscription = (r: SubscriptionRow): Subscription => ({
   planKey: r.planKey,
   interval: r.interval,
   status: r.status,
+  currentPeriodStart: isoOrNull(r.currentPeriodStart),
   currentPeriodEnd: isoOrNull(r.currentPeriodEnd),
   cancelAtPeriodEnd: r.cancelAtPeriodEnd,
   orgId: r.orgId,
@@ -425,6 +426,45 @@ function postColumns(input: Partial<PostInput>): Partial<typeof posts.$inferInse
 export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
   // Resolved per call so creating the store never reads env or connects.
   const db = (): Db => opts.db ?? getDrizzle();
+
+  // ---- usage (shared by record and consume, which runs them inside its transaction)
+  type Exec = Pick<Db, "insert" | "select">;
+  const toUsageEvent = (r: typeof usageEvents.$inferSelect): UsageEvent => ({
+    id: r.id,
+    subject: { type: r.subjectType, id: r.subjectId },
+    metric: r.metric,
+    quantity: Number(r.quantity),
+    key: r.key,
+    occurredAt: iso(r.occurredAt),
+    reportPending: r.reportPending,
+    reportedAt: r.reportedAt ? iso(r.reportedAt) : null,
+  });
+  const keyedUsage = async (q: Exec, { subject, metric, key }: UsageInput): Promise<UsageEvent | null> => {
+    if (!key) return null;
+    const [row] = await q
+      .select()
+      .from(usageEvents)
+      .where(and(eq(usageEvents.subjectType, subject.type), eq(usageEvents.subjectId, subject.id), eq(usageEvents.metric, metric), eq(usageEvents.key, key)))
+      .limit(1);
+    return row ? toUsageEvent(row) : null;
+  };
+  const recordUsageIn = async (q: Exec, input: UsageInput): Promise<{ event: UsageEvent; created: boolean }> => {
+    const { subject, metric, quantity, key = null, occurredAt, report = false } = input;
+    if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
+    if (!isUuid(subject.id)) throw new DataError("invalid", `No ${subject.type} ${subject.id}`);
+    const values = { subjectType: subject.type, subjectId: subject.id, metric, quantity, key, reportPending: report, ...(occurredAt ? { occurredAt: toDate(occurredAt, "occurredAt")! } : {}) };
+    if (key === null) {
+      const [row] = await write("usage event", () => q.insert(usageEvents).values(values).returning());
+      return { event: toUsageEvent(row), created: true };
+    }
+    const [row] = await q
+      .insert(usageEvents)
+      .values(values)
+      .onConflictDoNothing({ target: [usageEvents.subjectType, usageEvents.subjectId, usageEvents.metric, usageEvents.key], where: sql`key is not null` })
+      .returning();
+    if (row) return { event: toUsageEvent(row), created: true };
+    return { event: (await keyedUsage(q, input))!, created: false };
+  };
 
   const store: DataStore = {
     id: "postgres",
@@ -750,6 +790,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           planKey: input.planKey,
           interval: input.interval,
           status: input.status,
+          currentPeriodStart: toDate(input.currentPeriodStart ?? null, "currentPeriodStart"),
           currentPeriodEnd: toDate(input.currentPeriodEnd, "currentPeriodEnd"),
           cancelAtPeriodEnd: input.cancelAtPeriodEnd,
           orgId: input.orgId ?? null,
@@ -1046,34 +1087,59 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
 
     // ------------------------------------------------------------ usage
     usage: {
-      async record({ subject, metric, quantity, key = null, occurredAt }) {
-        if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
-        if (!isUuid(subject.id)) throw new DataError("invalid", `No ${subject.type} ${subject.id}`);
-        const values = { subjectType: subject.type, subjectId: subject.id, metric, quantity, key, ...(occurredAt ? { occurredAt: toDate(occurredAt, "occurredAt")! } : {}) };
-        const toEvent = (r: typeof usageEvents.$inferSelect): UsageEvent => ({
-          id: r.id,
-          subject: { type: r.subjectType, id: r.subjectId },
-          metric: r.metric,
-          quantity: Number(r.quantity),
-          key: r.key,
-          occurredAt: iso(r.occurredAt),
-        });
-        if (key === null) {
-          const [row] = await write("usage event", () => db().insert(usageEvents).values(values).returning());
-          return { event: toEvent(row), created: true };
-        }
-        const [row] = await db()
-          .insert(usageEvents)
-          .values(values)
-          .onConflictDoNothing({ target: [usageEvents.subjectType, usageEvents.subjectId, usageEvents.key], where: sql`key is not null` })
-          .returning();
-        if (row) return { event: toEvent(row), created: true };
-        const [existing] = await db()
+      async record(input) {
+        return recordUsageIn(db(), input);
+      },
+      async consume({ limit, from, to, ...input }) {
+        if (!isUuid(input.subject.id)) throw new DataError("invalid", `No ${input.subject.type} ${input.subject.id}`);
+        return write("usage event", () =>
+          db().transaction(async (tx) => {
+            // One subject's metric at a time: concurrent consumes queue here, so two can't both pass a check
+            // at limit - 1. A transaction-scoped lock: released at commit or rollback.
+            await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`usage:${input.subject.type}:${input.subject.id}:${input.metric}`}, 0))`);
+            const [row] = await tx
+              .select({ n: sql<string | number | null>`coalesce(sum(${usageEvents.quantity}), 0)` })
+              .from(usageEvents)
+              .where(
+                and(
+                  eq(usageEvents.subjectType, input.subject.type),
+                  eq(usageEvents.subjectId, input.subject.id),
+                  eq(usageEvents.metric, input.metric),
+                  sql`${usageEvents.occurredAt} >= ${toDate(from, "from")}`,
+                  sql`${usageEvents.occurredAt} < ${toDate(to, "to")}`,
+                ),
+              );
+            const used = Number(row?.n ?? 0);
+            const existing = input.key ? await keyedUsage(tx, input) : null;
+            if (existing) return { event: existing, created: false, used };
+            if (used + input.quantity > limit) return { event: null, created: false, used };
+            return { ...(await recordUsageIn(tx, input)), used };
+          }),
+        );
+      },
+      async get(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db().select().from(usageEvents).where(eq(usageEvents.id, id)).limit(1);
+        return row ? toUsageEvent(row) : null;
+      },
+      async listPendingReports(after, before, limit) {
+        const rows = await db()
           .select()
           .from(usageEvents)
-          .where(and(eq(usageEvents.subjectType, subject.type), eq(usageEvents.subjectId, subject.id), eq(usageEvents.key, key)))
-          .limit(1);
-        return { event: toEvent(existing), created: false };
+          .where(
+            and(
+              eq(usageEvents.reportPending, true),
+              sql`${usageEvents.createdAt} >= ${toDate(after, "after")}`,
+              sql`${usageEvents.createdAt} < ${toDate(before, "before")}`,
+            ),
+          )
+          .orderBy(asc(usageEvents.createdAt))
+          .limit(clampLimit(limit));
+        return rows.map(toUsageEvent);
+      },
+      async markReported(id, at) {
+        if (!isUuid(id)) return;
+        await db().update(usageEvents).set({ reportPending: false, reportedAt: toDate(at, "at")! }).where(eq(usageEvents.id, id));
       },
       async sum(subject, metric, from, to) {
         if (!isUuid(subject.id)) return 0;

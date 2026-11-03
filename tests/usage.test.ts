@@ -21,7 +21,8 @@ vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (cookie.org 
 
 const usage = await import("@/server/services/usage");
 const orgs = await import("@/server/services/orgs");
-const { runDueJobs } = await import("@/server/jobs");
+const { enqueueJob, runDueJobs } = await import("@/server/jobs");
+const { usageReportJob } = await import("@/server/jobs/usage-report");
 
 const plan = (key: string, over: Partial<PlanInput> = {}): PlanInput => ({
   key,
@@ -162,7 +163,7 @@ describe("reporting to a metered price", () => {
     expect(meter.reports).toEqual([]);
   });
 
-  it("an organisation's usage goes to the customer paying its renewing subscription", async () => {
+  it("an organisation's usage goes to the customer of the subscription giving it access, even one set to cancel", async () => {
     vi.stubEnv("OPENSHIPKIT_TENANCY", "org");
     vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://example.com");
     const org = await orgs.createOrg(user, { name: "Acme" });
@@ -175,7 +176,7 @@ describe("reporting to a metered price", () => {
       interval: "month",
       status: "active",
       currentPeriodEnd: "2099-01-01T00:00:00.000Z",
-      cancelAtPeriodEnd: false,
+      cancelAtPeriodEnd: true, // its last period is still billed
       orgId: org.id,
       seats: null,
     });
@@ -191,5 +192,112 @@ describe("reporting to a metered price", () => {
     vi.stubEnv("BILLING_PROVIDER", "razorpay");
     await usage.recordUsage(me(), "api_calls", 1);
     expect((await store.jobs.list({})).items).toEqual([]);
+  });
+});
+
+describe("one stored event, one charge", () => {
+  beforeEach(() => {
+    vi.stubEnv("BILLING_PROVIDER", "stripe");
+    vi.stubEnv("BILLING_METERED_METRICS", "api_calls,tokens");
+  });
+
+  it("a key dedupes per metric: one request may record two metrics, and each is billed as stored", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    expect(await usage.recordUsage(me(), "api_calls", 1, { key: "req_1" })).toEqual({ created: true });
+    expect(await usage.recordUsage(me(), "tokens", 500, { key: "req_1" })).toEqual({ created: true });
+    expect((await usage.checkLimit(me(), "tokens", { adding: 0 })).used).toBe(500);
+    await runDueJobs();
+    expect(meter.reports).toEqual(
+      expect.arrayContaining([expect.objectContaining({ metric: "api_calls", quantity: 1 }), expect.objectContaining({ metric: "tokens", quantity: 500 })]),
+    );
+    expect(meter.reports).toHaveLength(2);
+  });
+
+  it("a key reused for a different quantity is refused, not silently kept", async () => {
+    await usage.recordUsage(me(), "api_calls", 1, { key: "req_2" });
+    await expect(usage.recordUsage(me(), "api_calls", 3, { key: "req_2" })).rejects.toMatchObject({ code: "conflict", details: { reason: "key_reused" } });
+  });
+
+  it("an event already reported is never sent again: not on a repeat, a re-queue, or a retried job", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    await usage.recordUsage(me(), "api_calls", 2, { key: "req_3" });
+    await runDueJobs();
+    await usage.recordUsage(me(), "api_calls", 2, { key: "req_3" }); // the caller retries after the report finished
+    expect(await usage.sweepUsageReports(Date.now() + 3_600_000)).toBe(0);
+    // A job queued again by hand (a retry from /admin/jobs after a first attempt that did reach the provider).
+    expect(await store.usage.listPendingReports("2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z", 10)).toEqual([]); // nothing pending any more
+    const reported = (await store.jobs.list({})).items[0].payload as { eventId: string };
+    await enqueueJob(usageReportJob, { eventId: reported.eventId });
+    await runDueJobs();
+    expect(meter.reports).toHaveLength(1);
+  });
+
+  it("the sweep re-queues an event whose queueing was lost", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    // Recorded as pending straight in the store: the insert happened, the queueing didn't.
+    await store.usage.record({ subject: me(), metric: "api_calls", quantity: 7, report: true });
+    expect(await usage.sweepUsageReports(Date.now())).toBe(0); // too fresh: the normal path may still queue it
+    expect(await usage.sweepUsageReports(Date.now() + 10 * 60_000)).toBe(1);
+    await runDueJobs();
+    expect(meter.reports).toEqual([expect.objectContaining({ quantity: 7 })]);
+  });
+});
+
+describe("consumeUsage", () => {
+  it("checks and records atomically: concurrent calls never pass the limit", async () => {
+    const results = await Promise.allSettled(Array.from({ length: 10 }, (_, i) => usage.consumeUsage(me(), "api_calls", 1, { key: `c${i}` })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(3); // the free plan allows 3
+    expect((await usage.checkLimit(me(), "api_calls", { adding: 0 })).used).toBe(3);
+    const refused = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason).toMatchObject({ code: "conflict", details: { reason: "limit_reached", limit: 3 } });
+  });
+
+  it("a retried key comes back without a second check or charge", async () => {
+    await usage.consumeUsage(me(), "api_calls", 3, { key: "batch" });
+    await expect(usage.consumeUsage(me(), "api_calls", 3, { key: "batch" })).resolves.toMatchObject({ created: false });
+  });
+});
+
+describe("the subscription's own period", () => {
+  it("uses the provider's start: a renewal on the 31st doesn't overlap the month before", () => {
+    // Period 31 Jan → 28 Feb. From the end alone it would read 28 Jan → 28 Feb.
+    expect(usage.periodAt(new Date("2026-02-10T00:00:00Z"), "2026-02-28T00:00:00.000Z", "2026-01-31T00:00:00.000Z")).toEqual({
+      from: "2026-01-31T00:00:00.000Z",
+      to: "2026-02-28T00:00:00.000Z",
+    });
+    // A yearly period: still split into months, from the renewal.
+    expect(usage.periodAt(new Date("2026-11-15T10:00:00Z"), "2027-06-20T08:00:00.000Z", "2026-06-20T08:00:00.000Z").from).toBe("2026-10-20T08:00:00.000Z");
+  });
+});
+
+describe("whose limits with teams on", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENSHIPKIT_TENANCY", "org");
+    vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://example.com");
+  });
+
+  it("a person with their own plan, in a team with none, is limited (and billed) by their own plan", async () => {
+    const org = await orgs.createOrg(user, { name: "Acme" });
+    cookie.org = org.id;
+    expect(await usage.usageSubject(user)).toEqual({ type: "org", id: org.id }); // nobody has a plan: the team
+    await store.billing.upsertSubscription({
+      userId: user.id,
+      provider: "stripe",
+      providerSubscriptionId: "sub_me",
+      providerCustomerId: "cus_me",
+      planKey: "pro",
+      interval: "month",
+      status: "active",
+      currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+    expect(await usage.usageSubject(user)).toEqual({ type: "user", id: user.id });
+    expect(await usage.checkLimit(await usage.usageSubject(user), "api_calls")).toMatchObject({ allowed: true, limit: 1000, plan: "pro" });
+  });
+
+  it("an explicit orgId (an API request has no cookie) must be one of theirs", async () => {
+    const org = await orgs.createOrg(user, { name: "Acme" });
+    expect(await usage.usageSubject(user, { orgId: org.id })).toEqual({ type: "org", id: org.id });
+    await expect(usage.usageSubject(user, { orgId: "00000000-0000-4000-8000-000000000000" })).rejects.toMatchObject({ code: "not_found" });
   });
 });

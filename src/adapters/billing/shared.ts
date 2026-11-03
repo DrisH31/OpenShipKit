@@ -97,6 +97,8 @@ export interface ProviderSubscriptionState {
   interval: PriceInterval | null;
   status: SubscriptionStatus;
   /** Any ISO-8601 instant (the provider's precision and offset); the sink normalises it. */
+  /** When the current period began, where the provider says (it anchors the usage period). */
+  currentPeriodStart?: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   /**

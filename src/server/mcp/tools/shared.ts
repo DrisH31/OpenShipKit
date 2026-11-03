@@ -164,6 +164,22 @@ export function changesBilling(current: Pick<Plan, "prices" | "trialDays"> & { l
 }
 
 /**
+ * Whether saving `next` for plan `key` (null: deleting it) changes the free plan: the one whose limits
+ * apply to everyone without a paid plan (freePlan in src/server/services/usage.ts). A write key could
+ * otherwise lift every free limit without touching a limit: hide the free plan (active: false), or
+ * add a priceless plan that sorts first.
+ */
+export async function changesFreePlan(key: string, next: Partial<Plan> | null): Promise<boolean> {
+  const [{ listPlans }, { freePlan }] = await Promise.all([import("@/server/services/plans"), import("@/server/services/usage")]);
+  const plans = await listPlans();
+  const current = plans.find((p) => p.key === key);
+  const others = plans.filter((p) => p.key !== key);
+  const after = next === null ? others : [...others, { ...(current ?? ({} as Plan)), ...next, key } as Plan];
+  const [a, b] = [freePlan(plans), freePlan(after)];
+  return a?.key !== b?.key || !sameLimits(a?.limits, b?.limits);
+}
+
+/**
  * Every editable field of a stored post, overlaid with `changes`. The post
  * tools always send the whole set to updatePost, so a field the agent did not
  * mention keeps its stored value whatever defaults the update schema applies.

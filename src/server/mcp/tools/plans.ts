@@ -21,11 +21,12 @@ import { planSchema, slugSchema } from "@/core/schemas";
 import { ServiceError } from "@/server/services/errors";
 import { deletePlan, getPlan, listPlans, patchPlan, upsertPlan } from "@/server/services/plans";
 import { DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, defineTool } from "../types";
-import { changesBilling, definedOnly, patchShape, requireScope } from "./shared";
+import { changesBilling, changesFreePlan, definedOnly, patchShape, requireScope } from "./shared";
 
 const planKey = slugSchema.describe("The plan's key, e.g. free, pro");
 
 const BILLING_CHANGE = "Changing a plan's prices, provider ids, trial or limits";
+const FREE_PLAN_CHANGE = "Changing which plan is the free plan (whose limits apply to everyone without a paid one)";
 
 const PRICE_NOTE =
   "amountCents is what /pricing shows. What a customer is charged is set on the Polar product in polarProductId; if a price changed, the matching Polar product must be changed by someone with Polar access.";
@@ -61,12 +62,13 @@ export const planUpsert = defineTool({
   name: "plan_upsert",
   title: "Create or replace a plan",
   description:
-    "Create a plan, or replace an existing one with the same key, from a complete definition. Fields you omit take their defaults (not the old values), so to change a few fields of an existing plan use plan_update. Prices: amountCents in minor units ($24.00 → 2400), at most one per interval (month, year, one_time); no prices = a free plan. Leave polarProductId null unless the person gave you the id. limits: what the plan allows by metric ({ api_calls: 10000, projects: 3, seats: 5 }; a metric not listed is unlimited). With a write key, prices, trialDays and limits must match what is stored (none, for a new plan); setting or changing them needs an admin key. Returns the saved plan.",
+    "Create a plan, or replace an existing one with the same key, from a complete definition. Fields you omit take their defaults (not the old values), so to change a few fields of an existing plan use plan_update. Prices: amountCents in minor units ($24.00 → 2400), at most one per interval (month, year, one_time); no prices = a free plan. Leave polarProductId null unless the person gave you the id. limits: what the plan allows by metric ({ api_calls: 10000, projects: 3, seats: 5 }; a metric not listed is unlimited). With a write key, prices, trialDays and limits must match what is stored (none, for a new plan), and the free plan must stay the free plan; anything else needs an admin key. Returns the saved plan.",
   scope: "write",
   annotations: WRITE_IDEMPOTENT,
   input: z.strictObject(planSchema.shape),
   async run(args, ctx) {
     if (changesBilling(await getPlan(args.key), args)) requireScope(ctx, "admin", BILLING_CHANGE);
+    if (await changesFreePlan(args.key, args)) requireScope(ctx, "admin", FREE_PLAN_CHANGE);
     const plan = await upsertPlan(args, ctx.actor);
     return { plan, note: PRICE_NOTE };
   },
@@ -78,7 +80,7 @@ export const planUpdate = defineTool({
   name: "plan_update",
   title: "Edit a plan",
   description:
-    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices, trialDays or limits needs an admin key; a write key edits the copy, features, highlighted, contactSales, ctaLabel, active and sortOrder. Returns the saved plan.",
+    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices, trialDays or limits needs an admin key, and so does any change to which plan is the free plan (the active, priceless plan first by sortOrder, whose limits everyone without a paid plan gets): hiding it, re-sorting it, or adding one before it. A write key edits the copy, features, highlighted, contactSales, ctaLabel, and active and sortOrder of paid plans. Returns the saved plan.",
   scope: "write",
   annotations: WRITE_IDEMPOTENT,
   input: z.strictObject({ key: planKey, ...patchShape(planFields) }),
@@ -95,6 +97,7 @@ export const planUpdate = defineTool({
       };
       if (changesBilling(current, next)) requireScope(ctx, "admin", BILLING_CHANGE);
     }
+    if (await changesFreePlan(key, patch)) requireScope(ctx, "admin", FREE_PLAN_CHANGE);
     const plan = await patchPlan(key, patch, ctx.actor);
     return { plan, ...("prices" in patch ? { note: PRICE_NOTE } : {}) };
   },

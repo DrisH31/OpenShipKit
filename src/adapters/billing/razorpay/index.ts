@@ -50,6 +50,7 @@ export type RazorpaySubscription = {
   quantity?: number | null;
   customer_id: string | null;
   notes?: Notes;
+  current_start?: number | null;
   current_end?: number | null;
   ended_at?: number | null;
   start_at?: number | null;
@@ -145,6 +146,7 @@ export function razorpaySubscriptionState(sub: RazorpaySubscription, now = Date.
     seats: typeof sub.quantity === "number" ? sub.quantity : null,
     interval: null, // Razorpay's plan says; the sink takes the interval from our matching plan price
     status,
+    currentPeriodStart: iso(sub.current_start),
     currentPeriodEnd: iso(sub.ended_at) ?? iso(sub.current_end) ?? (status === "trialing" ? iso(sub.start_at) : null),
     cancelAtPeriodEnd: false,
     cancelAtPeriodEndKnown: false,

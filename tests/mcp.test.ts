@@ -560,6 +560,24 @@ describe("admin tools", () => {
     expect(after.items.find((k) => k.id === reader.key.id)?.active).toBe(false);
   });
 
+  it("only an admin key changes which plan is the free plan (whose limits every free account gets)", async () => {
+    const forbidden = { error: "forbidden" };
+    for (const p of await store.plans.list({})) await store.plans.delete(p.key);
+    const base = { description: "", features: [], highlighted: false, contactSales: false, ctaLabel: "Go", trialDays: null, active: true };
+    await store.plans.upsert({ ...base, key: "free", name: "Free", prices: [], sortOrder: 1, limits: { api_calls: 100 } });
+    await store.plans.upsert({ ...base, key: "pro", name: "Pro", prices: [{ interval: "month", amountCents: 900, currency: "usd", polarProductId: "prod_p" }], sortOrder: 2, limits: {} });
+    // Hiding it, sorting another priceless plan first, or adding one before it: all lift the free limits.
+    expect((await call(writer, "plan_update", { key: "free", active: false })).structuredContent).toMatchObject(forbidden);
+    expect((await call(writer, "plan_upsert", { key: "starter", name: "Starter", sortOrder: 0 })).structuredContent).toMatchObject(forbidden);
+    // Copy edits to the free plan, and anything on a paid plan, stay a write key's.
+    await ok(writer, "plan_update", { key: "free", name: "Free forever" });
+    await ok(writer, "plan_update", { key: "pro", active: false, sortOrder: 0 });
+    // An undo held to the same rule: restore the free plan's "before" when it was the only free one (none).
+    await ok(admin, "plan_update", { key: "free", active: false });
+    const entry = (await ok<{ items: { id: string; after: { active: boolean } | null }[] }>(reader, "audit_list", { entity: "plan", entityId: "free", includeValues: true, limit: 50 })).items.find((e) => e.after?.active === false)!;
+    expect((await call(writer, "audit_restore", { id: entry.id })).structuredContent).toMatchObject(forbidden);
+  });
+
   it("usage_get reads one customer's usage against their plan's limits, admin only", async () => {
     const identity = { provider: "better-auth" as const, providerUserId: "p2", email: "metered@example.com", name: "M", image: null, emailVerified: true };
     const u = await store.users.upsertFromIdentity(identity, { makeAdmin: false });

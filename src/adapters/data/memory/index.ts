@@ -12,7 +12,7 @@ import "server-only";
 //
 
 import { randomUUID } from "node:crypto";
-import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
+import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider, type UsageInput } from "@/core/data";
 import type {
   AgentKey,
   AuditEntry,
@@ -27,6 +27,7 @@ import type {
   Subscriber,
   Subscription,
   UsageEvent,
+  UsageSubject,
   User,
 } from "@/core/types";
 import { grantsAccess, growthDays } from "@/core/types";
@@ -140,6 +141,29 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
   const seatsUsed = (orgId: string) =>
     [...t.orgMembers.values()].filter((m) => m.orgId === orgId).length +
     [...t.invitations.values()].filter((i) => i.orgId === orgId && invitationState(i) === "pending").length;
+  // ---- usage helpers (shared by record and consume)
+  const createdAtOf = new Map<string, string>();
+  const sameSubject = (a: UsageSubject, b: UsageSubject) => a.type === b.type && a.id === b.id;
+  const sumOf = (subject: UsageSubject, metric: string, from: string, to: string) => {
+    const lo = new Date(from).toISOString();
+    const hi = new Date(to).toISOString();
+    return t.usage.filter((e) => sameSubject(e.subject, subject) && e.metric === metric && e.occurredAt >= lo && e.occurredAt < hi).reduce((n, e) => n + e.quantity, 0);
+  };
+  const findKeyed = ({ subject, metric, key }: UsageInput) => (key ? t.usage.find((e) => e.key === key && e.metric === metric && sameSubject(e.subject, subject)) : undefined);
+  const validUsage = ({ quantity, occurredAt }: UsageInput) => {
+    if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
+    if (occurredAt !== undefined && Number.isNaN(Date.parse(occurredAt))) throw new DataError("invalid", `occurredAt is not a valid date: "${occurredAt}"`);
+  };
+  const recordUsage = (input: UsageInput): { event: UsageEvent; created: boolean } => {
+    const seen = findKeyed(input);
+    if (seen) return { event: clone(seen), created: false };
+    validUsage(input);
+    const { subject, metric, quantity, key = null, occurredAt, report = false } = input;
+    const event: UsageEvent = { id: randomUUID(), subject: { ...subject }, metric, quantity, key, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : now(), reportPending: report, reportedAt: null };
+    t.usage.push(event);
+    createdAtOf.set(event.id, now());
+    return { event: clone(event), created: true };
+  };
   const publicInvitation = ({ tokenHash: _hash, ...rest }: OrgInvitation & { tokenHash: string }): OrgInvitation => clone(rest); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   const store: DataStore = {
@@ -363,6 +387,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const stamp = now();
         const sub: Subscription = {
           ...input,
+          currentPeriodStart: input.currentPeriodStart ?? null,
           orgId: input.orgId ?? null,
           seats: input.seats ?? null,
           id: existing?.id ?? randomUUID(),
@@ -537,21 +562,42 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
     },
 
     usage: {
-      async record({ subject, metric, quantity, key = null, occurredAt }) {
-        if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
-        if (occurredAt !== undefined && Number.isNaN(Date.parse(occurredAt))) throw new DataError("invalid", `occurredAt is not a valid date: "${occurredAt}"`);
-        if (key !== null) {
-          const seen = t.usage.find((e) => e.key === key && e.subject.type === subject.type && e.subject.id === subject.id);
-          if (seen) return { event: clone(seen), created: false };
+      async record(input) {
+        return recordUsage(input);
+      },
+      async consume({ limit, from, to, ...input }) {
+        // One synchronous stretch (no await between the sum and the insert): atomic on one event loop.
+        const existing = findKeyed(input);
+        if (existing) return { event: clone(existing), created: false, used: sumOf(input.subject, input.metric, from, to) };
+        validUsage(input);
+        const used = sumOf(input.subject, input.metric, from, to);
+        if (used + input.quantity > limit) return { event: null, created: false, used };
+        return { ...recordUsage(input), used };
+      },
+      async get(id) {
+        const e = t.usage.find((x) => x.id === id);
+        return e ? clone(e) : null;
+      },
+      async listPendingReports(after, before, limit) {
+        const lo = new Date(after).toISOString();
+        const hi = new Date(before).toISOString();
+        return t.usage
+          .filter((e) => {
+            const at = createdAtOf.get(e.id) ?? e.occurredAt;
+            return e.reportPending && at >= lo && at < hi;
+          })
+          .slice(0, limit)
+          .map(clone);
+      },
+      async markReported(id, at) {
+        const e = t.usage.find((x) => x.id === id);
+        if (e) {
+          e.reportPending = false;
+          e.reportedAt = new Date(at).toISOString();
         }
-        const event: UsageEvent = { id: randomUUID(), subject: { ...subject }, metric, quantity, key, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : now() };
-        t.usage.push(event);
-        return { event: clone(event), created: true };
       },
       async sum(subject, metric, from, to) {
-        return t.usage
-          .filter((e) => e.subject.type === subject.type && e.subject.id === subject.id && e.metric === metric && e.occurredAt >= new Date(from).toISOString() && e.occurredAt < new Date(to).toISOString())
-          .reduce((n, e) => n + e.quantity, 0);
+        return sumOf(subject, metric, from, to);
       },
       async totals(subject, from, to) {
         const out: Record<string, number> = {};

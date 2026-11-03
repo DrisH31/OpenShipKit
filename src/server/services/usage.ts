@@ -13,38 +13,56 @@ import "server-only";
 //      await requireWithinLimit(subject, "api_calls");             // before the work
 //      await recordUsage(subject, "api_calls", 1, { key: requestId }); // after it
 //
-// Whose limits: the subject's plan. That's a person, or with teams on, the
-// organisation they're working in (usageSubject). With no paid plan, the free
-// plan's limits apply (the active plan with no paid price, first by sortOrder),
-// and with no free plan, nothing is limited.
+//  - Or both at once, atomically: consumeUsage(subject, "api_calls", 1, { key })
+//    records only if it fits (concurrent calls for one metric queue). The two-step
+//    form above lets concurrent requests both slip in at limit - 1.
 //
-// Metered prices: a metric listed in BILLING_METERED_METRICS is also reported to
-// the billing provider's meter (Polar, Stripe) by a background job, one per
-// event (../jobs/usage-report.ts). Limits here and charges there are separate:
-// a metered price usually has no limit, or a high one as a safety cap.
+// Whose limits: the subject's plan (usageSubject). That's a person, or with
+// teams on, the organisation they're working in, unless the organisation has
+// no plan and the person has their own: then the person, as for requirePlan.
+// With no paid plan, the free plan's limits apply (the active plan with no paid
+// price that isn't "contact sales", first by sortOrder); with no free plan,
+// nothing is limited.
 //
-// The period resets monthly: on the subscription's renewal day, or on the 1st
-// (UTC) for the free plan and lifetime purchases. A yearly plan's quotas reset
+// Metered prices: an event of a metric in BILLING_METERED_METRICS is stored as
+// pending (an outbox) and sent to the billing provider's meter (Polar, Stripe)
+// by a job that reads the stored event, never the caller's arguments
+// (../jobs/usage-report.ts). A sweep re-queues anything left pending.
+//
+// The period resets monthly: the subscription's own period where the provider
+// gave its start, else a month back from the renewal, or the 1st (UTC) for the
+// free plan and lifetime purchases. A yearly plan's quotas reset
 // monthly too, which is the common SaaS shape; a quota meant per year is a
 // count the app keeps itself.
 //
 
 import { METRIC_RE } from "@/core/schemas";
-import type { Entitlement, Plan, UsageSubject, User } from "@/core/types";
+import type { Entitlement, Plan, UsageEvent, UsageSubject, User } from "@/core/types";
 import { getData } from "../data";
 import { billingProvider, meteredMetrics } from "../env";
 import { enqueueJob } from "../jobs";
 import { usageReportJob } from "../jobs/usage-report";
+import { log } from "../log";
 import { currentOrg } from "../orgs";
 import { getEntitlement, getOrgEntitlement } from "./billing";
 import { ServiceError } from "./errors";
-import { teamsEnabled } from "./orgs";
+import { orgAccess, teamsEnabled } from "./orgs";
 
-/** Whose usage and limits apply to what `user` is doing: their organisation with teams on, else themselves. */
-export async function usageSubject(user: User): Promise<UsageSubject> {
+/**
+ * Whose usage and limits apply to what `user` is doing. With teams on: the organisation, `orgId` if
+ * given (it must be one of theirs), else the current one. Give `orgId` outside a browser session, such
+ * as an API request, where there is no "current organisation" cookie. But if that organisation has no
+ * plan and the person has their own, the person: their plan is the one that applies, as for requirePlan.
+ */
+export async function usageSubject(user: User, opts: { orgId?: string } = {}): Promise<UsageSubject> {
   if (teamsEnabled()) {
-    const access = await currentOrg(user);
-    if (access) return { type: "org", id: access.org.id };
+    const access = opts.orgId ? await orgAccess(user, opts.orgId) : await currentOrg(user);
+    if (access) {
+      const org = await getOrgEntitlement(access.org.id);
+      if (org.source !== "free") return { type: "org", id: access.org.id };
+      const mine = await getEntitlement(user.id);
+      return mine.source !== "free" ? { type: "user", id: user.id } : { type: "org", id: access.org.id };
+    }
   }
   return { type: "user", id: user.id };
 }
@@ -62,8 +80,19 @@ function addMonths(d: Date, n: number): Date {
   return out;
 }
 
-/** Pure: the month-long period containing `now`, anchored on `renewsAt`'s day (or the 1st, UTC). */
-export function periodAt(now: Date, renewsAt: string | null): Period {
+/**
+ * Pure: the month-long period containing `now`. With the subscription's own period (`startsAt` to
+ * `renewsAt`) containing now, exactly that: a renewal on the 31st has periods 31 Jan to 28 Feb to 31
+ * Mar, which no rule from the end alone can tell. Otherwise anchored on `renewsAt`'s day (a yearly plan
+ * resets monthly), or the calendar month (UTC).
+ */
+export function periodAt(now: Date, renewsAt: string | null, startsAt: string | null = null): Period {
+  if (renewsAt && startsAt) {
+    const start = new Date(startsAt);
+    const end = new Date(renewsAt);
+    // A month-long period that contains now (a yearly one is split into months below).
+    if (start <= now && now < end && addMonths(start, 1) >= end) return { from: start.toISOString(), to: end.toISOString() };
+  }
   if (!renewsAt) {
     const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     return { from: from.toISOString(), to: addMonths(from, 1).toISOString() };
@@ -77,12 +106,15 @@ export function periodAt(now: Date, renewsAt: string | null): Period {
   return { from: addMonths(anchor, -k).toISOString(), to: addMonths(anchor, -(k - 1)).toISOString() };
 }
 
+/** Pure: the free plan, whose limits apply to anyone without a paid one: active, no paid price, not "contact sales", first by sortOrder. */
+export function freePlan(plans: readonly Plan[]): Plan | null {
+  return [...plans].filter((p) => p.active && !p.contactSales && !p.prices.some((x) => x.amountCents > 0)).sort((a, b) => a.sortOrder - b.sortOrder || a.key.localeCompare(b.key))[0] ?? null;
+}
+
 /** Pure: the plan whose limits apply, given the entitlement and every plan. */
 export function limitingPlan(entitlement: Entitlement, plans: readonly Plan[]): Plan | null {
   const held = entitlement.planKey ? plans.find((p) => p.key === entitlement.planKey) : undefined;
-  if (held) return held;
-  // No paid plan: the free plan, the active one with no paid price, first by sortOrder.
-  return [...plans].filter((p) => p.active && !p.prices.some((x) => x.amountCents > 0)).sort((a, b) => a.sortOrder - b.sortOrder || a.key.localeCompare(b.key))[0] ?? null;
+  return held ?? freePlan(plans);
 }
 
 export type LimitContext = { plan: Plan | null; period: Period };
@@ -90,8 +122,8 @@ export type LimitContext = { plan: Plan | null; period: Period };
 /** The plan whose limits apply to `subject` right now, and its current period. */
 export async function limitContext(subject: UsageSubject, now = new Date()): Promise<LimitContext> {
   const [entitlement, plans] = await Promise.all([subject.type === "org" ? getOrgEntitlement(subject.id) : getEntitlement(subject.id), (await getData()).plans.list({})]);
-  const renewsAt = entitlement.source === "subscription" ? entitlement.currentPeriodEnd : null;
-  return { plan: limitingPlan(entitlement, plans), period: periodAt(now, renewsAt) };
+  const sub = entitlement.source === "subscription";
+  return { plan: limitingPlan(entitlement, plans), period: periodAt(now, sub ? entitlement.currentPeriodEnd : null, sub ? (entitlement.currentPeriodStart ?? null) : null) };
 }
 
 /** The limit on `metric` for this context, or null for unlimited. */
@@ -104,7 +136,19 @@ function assertMetric(metric: string): void {
   if (!METRIC_RE.test(metric) || metric.length > 40) throw new ServiceError("invalid", `"${metric}" isn't a metric name: use lower-case words joined by underscores (api_calls).`);
 }
 
+function assertQuantity(quantity: number): void {
+  if (!Number.isInteger(quantity) || quantity < 0) throw new ServiceError("invalid", "Usage is a whole number of at least 0.");
+}
+
 export type LimitCheck = { allowed: boolean; limit: number | null; used: number; metric: string; plan: string | null };
+
+const limitReached = (metric: string, limit: number | null, used: number, metered: boolean) =>
+  new ServiceError("conflict", `Your plan allows ${limit} ${metric.replace(/_/g, " ")}${metered ? " a month" : ""}, and that's used up. Upgrade for more.`, {
+    reason: "limit_reached",
+    metric,
+    limit,
+    used,
+  });
 
 /**
  * Whether `adding` more of `metric` fits the plan's limit. `current` is the count the app keeps (a
@@ -122,33 +166,92 @@ export async function checkLimit(subject: UsageSubject, metric: string, opts: { 
 /** checkLimit, refusing with ServiceError("conflict", reason "limit_reached") when it doesn't fit. */
 export async function requireWithinLimit(subject: UsageSubject, metric: string, opts: { current?: number; adding?: number } = {}): Promise<LimitCheck> {
   const check = await checkLimit(subject, metric, opts);
-  if (!check.allowed) {
-    throw new ServiceError("conflict", `Your plan allows ${check.limit} ${metric.replace(/_/g, " ")}${opts.current === undefined ? " a month" : ""}, and that's used up. Upgrade for more.`, {
-      reason: "limit_reached",
-      metric,
-      limit: check.limit,
-      used: check.used,
-    });
-  }
+  if (!check.allowed) throw limitReached(metric, check.limit, check.used, opts.current === undefined);
   return check;
 }
 
+/** Whether this metric's events go to the billing provider's meter (BILLING_METERED_METRICS, on Polar or Stripe). */
+function reportable(metric: string, quantity: number): boolean {
+  const provider = billingProvider();
+  return quantity > 0 && (provider === "polar" || provider === "stripe") && meteredMetrics().has(metric);
+}
+
+/** A key reused for different usage is a bug in the caller, not a retry: say so instead of silently keeping the first. */
+function assertSameRetry(event: UsageEvent, quantity: number): void {
+  if (event.quantity !== quantity) {
+    throw new ServiceError("conflict", `The key "${event.key}" already recorded ${event.quantity} ${event.metric}, not ${quantity}. Use a new key for new usage.`, { reason: "key_reused" });
+  }
+}
+
+/** Queue the stored event's report. Keyed by the event, so at most one job waits for it. */
+async function queueReport(event: UsageEvent): Promise<void> {
+  if (event.reportPending) await enqueueJob(usageReportJob, { eventId: event.id }, { key: `usage:${event.id}` });
+}
+
 /**
- * Record `quantity` of `metric` for `subject`. With a `key` (a request id, a job id) it's
- * idempotent: a retry records nothing. Recording never refuses on a limit: check first.
+ * Record `quantity` of `metric` for `subject`. With a `key` (a request id, a job id) it's idempotent
+ * per metric: a retry records nothing (and a reused key with a different quantity is refused).
+ * Recording never refuses on a limit: check first, or use consumeUsage.
  */
 export async function recordUsage(subject: UsageSubject, metric: string, quantity: number, opts: { key?: string; occurredAt?: Date } = {}): Promise<{ created: boolean }> {
   assertMetric(metric);
-  if (!Number.isInteger(quantity) || quantity < 0) throw new ServiceError("invalid", "Usage is a whole number of at least 0.");
-  const { event, created } = await (await getData()).usage.record({ subject, metric, quantity, key: opts.key ?? null, occurredAt: opts.occurredAt?.toISOString() });
-  // Queued on a repeat too (keyed by the event, so at most one is waiting): if a first call recorded
-  // the event and then failed to queue, the caller's retry still gets it reported. The provider drops
-  // a second report of the same event id.
-  const provider = billingProvider();
-  if (quantity > 0 && (provider === "polar" || provider === "stripe") && meteredMetrics().has(metric)) {
-    await enqueueJob(usageReportJob, { eventId: event.id, subject, metric, quantity: event.quantity, occurredAt: event.occurredAt }, { key: `usage:${event.id}` });
-  }
+  assertQuantity(quantity);
+  const { event, created } = await (await getData()).usage.record({ subject, metric, quantity, key: opts.key ?? null, occurredAt: opts.occurredAt?.toISOString(), report: reportable(metric, quantity) });
+  if (!created) assertSameRetry(event, quantity);
+  // Queued on a repeat too, while still pending: a first call that recorded and then failed to queue
+  // is finished by the caller's retry (and the sweep catches the rest).
+  await queueReport(event);
   return { created };
+}
+
+/**
+ * Check and record in one atomic step: records `quantity` of `metric` only if it fits this period's
+ * limit, else refuses like requireWithinLimit. Concurrent calls for one subject's metric queue, so the
+ * limit holds exactly. A key already recorded comes back as a retry, without a second check.
+ */
+export async function consumeUsage(subject: UsageSubject, metric: string, quantity = 1, opts: { key?: string; occurredAt?: Date } = {}): Promise<{ created: boolean; used: number; limit: number | null }> {
+  assertMetric(metric);
+  assertQuantity(quantity);
+  const ctx = await limitContext(subject);
+  const limit = limitOf(ctx, metric);
+  const data = await getData();
+  const input = { subject, metric, quantity, key: opts.key ?? null, occurredAt: opts.occurredAt?.toISOString(), report: reportable(metric, quantity) };
+  if (limit === null) {
+    const { event, created } = await data.usage.record(input);
+    if (!created) assertSameRetry(event, quantity);
+    await queueReport(event);
+    return { created, used: await data.usage.sum(subject, metric, ctx.period.from, ctx.period.to), limit };
+  }
+  const { event, created, used } = await data.usage.consume({ ...input, limit, from: ctx.period.from, to: ctx.period.to });
+  if (!event) throw limitReached(metric, limit, used, true);
+  if (!created) assertSameRetry(event, quantity);
+  await queueReport(event);
+  return { created, used: created ? used + quantity : used, limit };
+}
+
+/** Pending reports older than this are re-queued by the sweep: the normal path queues them at once. */
+const SWEEP_AFTER_MS = 5 * 60_000;
+/**
+ * And younger than this. An event the provider keeps refusing (no meter by that name) would otherwise
+ * be re-queued forever; after a day it stays pending, its failed job in /admin/jobs says why, and
+ * retrying that job sends it.
+ */
+const SWEEP_WITHIN_MS = 24 * 60 * 60_000;
+
+/**
+ * Re-queue usage reports still pending a while after they were recorded (within a day): an insert
+ * whose queueing failed (a crash, a database blip), or a report job that failed for good. The job
+ * runner calls this every few minutes. Returns how many it queued.
+ */
+export async function sweepUsageReports(now = Date.now()): Promise<number> {
+  const pending = await (await getData()).usage.listPendingReports(new Date(now - SWEEP_WITHIN_MS).toISOString(), new Date(now - SWEEP_AFTER_MS).toISOString(), 200);
+  let queued = 0;
+  for (const event of pending) {
+    const { created } = await enqueueJob(usageReportJob, { eventId: event.id }, { key: `usage:${event.id}` });
+    if (created) queued++;
+  }
+  if (queued) log.info("usage", `re-queued ${queued} usage report(s) still pending`);
+  return queued;
 }
 
 export type UsageLine = { metric: string; used: number; limit: number | null };

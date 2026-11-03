@@ -609,21 +609,40 @@ function ArrayInput({ node, path, value, onChange, label }: Props & { node: Extr
   );
 }
 
-/** A record keyed by name: rows of name → value. Rows live in local state, so a half-typed name doesn't reorder or drop them. */
+type MapRow = { id: string; name: string; value: unknown };
+
+/** What a map's rows save as: named rows only (a later name wins). An emptied value is null, so the schema refuses it rather than the metric silently going unlimited. */
+const rowsToValue = (rows: MapRow[]) => Object.fromEntries(rows.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value === undefined ? null : r.value]));
+
+/**
+ * A record keyed by name: rows of name → value. The rows are local (so a half-typed name doesn't
+ * reorder or drop them) but follow the value: when it changes from outside (Discard, a saved result,
+ * the JSON tab), the rows are rebuilt from it.
+ */
 function MapInput({ node, path, value, onChange, label }: Props & { node: Extract<FieldNode, { kind: "map" }> }) {
   const ctx = useContext(EditorCtx);
   const f = useField(path);
   const rec = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-  const [rows, setRows] = useState(() => Object.entries(rec).map(([k, v]) => ({ id: newRowKey(), name: k, value: v })));
+  const fromValue = () => Object.entries(rec).map(([k, v]) => ({ id: newRowKey(), name: k, value: v }));
+  const [rows, setRows] = useState<MapRow[]>(fromValue);
+  // Rebuild when the value isn't what these rows produce: it was changed from outside.
+  if (JSON.stringify(rowsToValue(rows)) !== JSON.stringify(rec)) setRows(fromValue());
   const name = f.labelFor(label);
   const hint = f.hint ?? node.description;
   const headingId = useId();
   const numeric = node.value.kind === "number";
+  const pendingFocus = useRef<number | null>(null);
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    const target = pendingFocus.current;
+    if (target === null) return;
+    pendingFocus.current = null;
+    (document.getElementById(`${f.id}-row-${target}-name`) ?? document.getElementById(`${f.id}-add`))?.focus();
+  });
 
-  const emit = (next: typeof rows) => {
+  const emit = (next: MapRow[]) => {
     setRows(next);
-    // Later rows win on a repeated name; the duplicate is flagged below.
-    onChange(path, Object.fromEntries(next.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value])));
+    onChange(path, rowsToValue(next));
   };
   const seen = new Map<string, number>();
   for (const r of rows) if (r.name.trim()) seen.set(r.name.trim(), (seen.get(r.name.trim()) ?? 0) + 1);
@@ -645,7 +664,9 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
           const rowId = `${f.id}-row-${i}`;
           const key = row.name.trim();
           const messages = key ? messagesAt(ctx, [...path, key]) : [];
-          const dup = key && (seen.get(key) ?? 0) > 1;
+          const dup = key !== "" && (seen.get(key) ?? 0) > 1;
+          const unnamed = key === "" && row.value !== undefined && row.value !== "" && row.value !== null;
+          const note = dup ? `“${key}” is listed twice: only the last one is kept.` : unnamed ? "Give it a name, or it won't be saved." : null;
           return (
             <li key={row.id} id={rowId} className="grid gap-2 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto] sm:items-end">
               <div className="flex flex-col gap-1">
@@ -661,6 +682,7 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
                   readOnly={f.readOnly}
                   className="font-mono"
                   aria-invalid={dup || messages.length ? true : undefined}
+                  aria-describedby={describedBy(note !== null && `${rowId}-note`)}
                   onChange={(e) => emit(rows.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)))}
                 />
               </div>
@@ -672,23 +694,43 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
                   id={`${rowId}-value`}
                   type={numeric ? "number" : "text"}
                   inputMode={numeric ? "numeric" : undefined}
-                  step={numeric && node.value.kind === "number" && !node.value.integer ? "any" : 1}
+                  step={node.value.kind === "number" && !node.value.integer ? "any" : 1}
                   min={node.value.kind === "number" ? node.value.minimum : undefined}
                   max={node.value.kind === "number" ? node.value.maximum : undefined}
                   value={numeric ? (typeof row.value === "number" && Number.isFinite(row.value) ? row.value : "") : String(row.value ?? "")}
                   readOnly={f.readOnly}
                   aria-invalid={messages.length ? true : undefined}
+                  aria-describedby={describedBy(messages.length > 0 && `${rowId}-err`)}
                   onChange={(e) => {
                     const raw = e.target.value;
-                    const next = numeric ? (raw === "" ? undefined : Number(raw)) : raw;
+                    // Emptied: null, which the schema refuses with a message here, never a silently dropped limit.
+                    const next = numeric ? (raw === "" ? null : Number(raw)) : raw;
                     emit(rows.map((r) => (r.id === row.id ? { ...r, value: next } : r)));
                   }}
                 />
               </div>
-              <Button type="button" variant="ghost" size="icon" className="size-11" disabled={f.readOnly} aria-label={`Remove ${key || `row ${i + 1}`}`} onClick={() => emit(rows.filter((r) => r.id !== row.id))}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11"
+                disabled={f.readOnly}
+                aria-label={`Remove ${key || `row ${i + 1}`}`}
+                onClick={() => {
+                  const next = rows.filter((r) => r.id !== row.id);
+                  pendingFocus.current = Math.min(i, next.length - 1) >= 0 ? Math.min(i, next.length - 1) : null;
+                  if (next.length === 0) pendingFocus.current = -1; // no rows left: Add
+                  emit(next);
+                  setSaid(`Removed ${key || `row ${i + 1}`}. ${next.length === 0 ? "None left." : `${next.length} left.`}`);
+                }}
+              >
                 <Trash2Icon aria-hidden />
               </Button>
-              {dup ? <p className="text-small text-danger sm:col-span-3">“{key}” is listed twice: only the last one is kept.</p> : null}
+              {note ? (
+                <p id={`${rowId}-note`} className="text-small text-danger sm:col-span-3">
+                  {note}
+                </p>
+              ) : null}
               <div className="sm:col-span-3">
                 <Issues id={`${rowId}-err`} messages={messages} />
               </div>
@@ -696,8 +738,21 @@ function MapInput({ node, path, value, onChange, label }: Props & { node: Extrac
           );
         })}
       </ul>
+      <p role="status" className="sr-only">
+        {said}
+      </p>
       <div>
-        <Button type="button" variant="outline" size="sm" disabled={f.readOnly} onClick={() => setRows([...rows, { id: newRowKey(), name: "", value: numeric ? 0 : "" }])}>
+        <Button
+          id={`${f.id}-add`}
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={f.readOnly}
+          onClick={() => {
+            pendingFocus.current = rows.length;
+            setRows([...rows, { id: newRowKey(), name: "", value: undefined }]);
+          }}
+        >
           <PlusIcon aria-hidden /> Add
         </Button>
       </div>

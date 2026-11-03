@@ -261,8 +261,22 @@ export interface OrgsRepo {
  * Usage events (src/server/services/usage.ts): append-only. A `key` makes recording idempotent
  * per subject: the same key twice records once (`created: false`).
  */
+export type UsageInput = { subject: UsageSubject; metric: string; quantity: number; key?: string | null; occurredAt?: string; /** Queue it for the billing provider's meter. */ report?: boolean };
+
 export interface UsageRepo {
-  record(input: { subject: UsageSubject; metric: string; quantity: number; key?: string | null; occurredAt?: string }): Promise<{ event: UsageEvent; created: boolean }>;
+  /** With a key, an event already recorded for (subject, metric, key) comes back instead (`created: false`). */
+  record(input: UsageInput): Promise<{ event: UsageEvent; created: boolean }>;
+  /**
+   * record(), only if the metric's total in [from, to) plus this quantity stays within `limit`, checked
+   * and inserted atomically (concurrent consumes of one subject's metric queue). Over the limit: no
+   * event, and `used` says what was there. A key already recorded comes back without a check.
+   */
+  consume(input: UsageInput & { limit: number; from: string; to: string }): Promise<{ event: UsageEvent | null; created: boolean; used: number }>;
+  get(id: string): Promise<UsageEvent | null>;
+  /** Events waiting for the billing provider, created in [after, before), oldest first. */
+  listPendingReports(after: string, before: string, limit: number): Promise<UsageEvent[]>;
+  /** The event reached the provider: no longer pending. */
+  markReported(id: string, at: string): Promise<void>;
   /** The total quantity for one metric in [from, to). */
   sum(subject: UsageSubject, metric: string, from: string, to: string): Promise<number>;
   /** Every metric's total in [from, to). */

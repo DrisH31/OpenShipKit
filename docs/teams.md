@@ -113,13 +113,15 @@ With teams on, the organisation holds the plan, and everyone in it shares it:
   can't be deleted while its subscription would keep renewing.
 
 **Per seat.** Tick **Charged per seat** on a price in `/admin/plans`, and
-give it a Polar product with seat-based pricing. A checkout then buys one
+give it a seat-based product or price at your billing provider (Polar seat-based pricing; a Stripe or Razorpay quantity). A checkout then buys one
 seat per member and open invitation. The verified webhook records the seats,
 and inviting or accepting stops at that number ("All 5 seats are in use").
 A resend doesn't take a second seat. The check happens in the same database
 transaction as the write, with the organisation's row locked, so simultaneous
-invitations can't overshoot. Without a per-seat subscription there's no seat
-limit.
+invitations can't overshoot. Without a per-seat subscription, the team's plan
+can still cap seats with a `seats` limit (`limits: { seats: 5 }`, the free
+plan's for a team with no plan: [usage.md](usage.md)); with neither, there's
+no seat limit.
 
 **Who pays.** Polar keys a customer by email, so the subscription is billed
 to the owner who bought it, and their Polar customer portal manages it. The

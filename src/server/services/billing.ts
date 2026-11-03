@@ -73,6 +73,7 @@ export function computeEntitlement(
         planKey: s.planKey,
         source: "subscription" as const,
         status: s.status,
+        ...(s.currentPeriodStart ? { currentPeriodStart: s.currentPeriodStart } : {}),
         currentPeriodEnd: s.currentPeriodEnd,
         cancelAtPeriodEnd: s.cancelAtPeriodEnd,
       },

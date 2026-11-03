@@ -32,6 +32,7 @@ import {
   auditDetail,
   auditSummary,
   changesBilling,
+  changesFreePlan,
   contactEmailOf,
   definedOnly,
   feedbackView,
@@ -153,6 +154,9 @@ async function guardRestore(entryId: string, ctx: ToolContext): Promise<void> {
   }
   if (changesBilling(await getPlan(entry.entityId), restoring)) {
     requireScope(ctx, "admin", "This restore changes what the plan charges (prices, provider ids, trial or limits) and");
+  }
+  if (await changesFreePlan(entry.entityId, restoring)) {
+    requireScope(ctx, "admin", "This restore changes which plan is the free plan, whose limits apply to everyone without a paid one, and");
   }
 }
 

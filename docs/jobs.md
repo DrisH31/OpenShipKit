@@ -50,11 +50,14 @@ nobody.
 ## Usage reports
 
 With `BILLING_METERED_METRICS` set, each recorded usage event of a listed metric
-queues a `usage.report` job that sends it to the Polar or Stripe meter
-([usage.md](usage.md#charging-for-usage-metered-prices)). It retries for about
-eight hours, which outlasts a provider outage, and our event id travels with it
-so the provider drops a repeat. A report that failed for good is in
-`/admin/jobs` to retry.
+is stored as pending and queues a `usage.report` job that sends the stored event
+to the Polar or Stripe meter
+([usage.md](usage.md#charging-for-usage-metered-prices)), then marks it
+reported. An event already reported is never sent again. Retries run for about
+three hours (30 seconds doubling to an hour), and every five minutes the runner
+re-queues events still pending from the last day, so a crash between recording
+and queueing loses nothing. A report that failed for good is in `/admin/jobs` to
+retry.
 
 ## Adding a job
 

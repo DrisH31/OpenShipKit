@@ -217,9 +217,12 @@ export interface UsageEvent {
   subject: UsageSubject;
   metric: string;
   quantity: number;
-  /** Dedupes: a second event with the same key for the same subject is ignored. */
+  /** Dedupes: a second event with the same key for the same subject and metric is ignored. */
   key: string | null;
   occurredAt: string;
+  /** Waiting to be reported to the billing provider's meter (metered prices); false once it has been, or if it never will be. */
+  reportPending: boolean;
+  reportedAt: string | null;
 }
 
 // ---------------------------------------------------------------- billing
@@ -276,6 +279,8 @@ export interface Subscription {
   planKey: string | null;
   interval: PriceInterval | null;
   status: SubscriptionStatus;
+  /** When the current billing period began, as the provider says; null when it doesn't (rows from before it was stored). */
+  currentPeriodStart?: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   /**
@@ -313,6 +318,8 @@ export interface Entitlement {
   planKey: string | null;
   source: "subscription" | "purchase" | "free";
   status: SubscriptionStatus | "lifetime" | "free";
+  /** The subscription's current period, when the provider gave its start (usage periods use it). */
+  currentPeriodStart?: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
 }

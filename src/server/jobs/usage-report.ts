@@ -1,51 +1,60 @@
 import "server-only";
 
 //
-// usage.report: sends one recorded usage event to the billing provider's meter
-// (Polar or Stripe), for a metric listed in BILLING_METERED_METRICS. recordUsage()
-// in ../services/usage.ts queues it, one job per event, keyed by the event's id.
+// usage.report: sends one stored usage event to the billing provider's meter
+// (Polar or Stripe). The usage service queues it for an event recorded as
+// pending (a metric in BILLING_METERED_METRICS), keyed by the event's id; the
+// sweep in ../services/usage.ts re-queues any left pending.
 //
-// Whose customer: a person's own; for an organisation, the customer of whoever
-// pays its renewing subscription (the same payer billing uses). No customer (a
-// free account, a team with no paid plan) means there is nothing to bill: the
-// job ends without sending anything.
+// What is sent is read from the stored event, never from whoever queued it,
+// and an event already reported is skipped: so a repeated recordUsage, a
+// re-queue or a retry from /admin/jobs can't charge twice. The one window left
+// is a crash between the provider accepting the event and markReported; the
+// retry then sends the same event id, which the provider drops as a duplicate
+// (Polar external_id; Stripe identifier, within its 24 hours, well inside this
+// job's retries).
 //
-// At least once, like every job: the event's id goes to the provider as its
-// idempotency id (Polar external_id, Stripe identifier), so a retry is a
-// duplicate the provider drops, never a second charge.
+// Whose customer: a person's own; for an organisation, the customer of the
+// subscription that gives it access (paid up, even if set to cancel). No
+// customer (a free account, a team with no paid plan) means there is nothing
+// to bill: the event is settled without sending anything.
 //
 
 import { z } from "zod";
-import { isRenewing } from "@/core/types";
+import { grantsAccess } from "@/core/types";
+import { getBilling } from "../billing";
+import { getData } from "../data";
 import { PermanentJobError, defineJob } from "./define";
 
 export const usageReportJob = defineJob({
   kind: "usage.report",
-  schema: z.strictObject({
-    eventId: z.string().min(1).max(100),
-    subject: z.strictObject({ type: z.enum(["user", "org"]), id: z.string().min(1).max(100) }),
-    metric: z.string().min(1).max(40),
-    quantity: z.number().int().min(0),
-    occurredAt: z.iso.datetime({ offset: true }),
-  }),
-  // 30 s doubling to an hour, about 8 hours in all: a provider outage, not a lost event. Stripe takes
-  // events up to 35 days old, Polar any.
+  schema: z.strictObject({ eventId: z.string().min(1).max(100) }),
+  // 30 s doubling to an hour: about three hours of retries in all, which outlasts a provider outage.
+  // The sweep re-queues an event still pending after that.
   maxAttempts: 10,
-  run: async ({ eventId, subject, metric, quantity, occurredAt }) => {
-    const [{ getBilling }, { getData }] = await Promise.all([import("../billing"), import("../data")]);
-    const provider = await getBilling();
-    if (!provider) return; // billing switched off since it was queued
-    if (!provider.reportUsage) throw new PermanentJobError(`${provider.label} has no meters: usage can't be reported to it.`);
+  run: async ({ eventId }) => {
     const data = await getData();
+    const event = await data.usage.get(eventId);
+    if (!event || !event.reportPending) return; // gone, or already reported
+    const provider = await getBilling();
+    if (!provider?.reportUsage) {
+      // Billing switched off, or to a provider with no meters, since it was recorded: nothing can be
+      // billed, so it's settled rather than left for the sweep to queue again forever.
+      await data.usage.markReported(event.id, new Date().toISOString());
+      if (provider) throw new PermanentJobError(`${provider.label} has no meters: usage can't be reported to it.`);
+      return;
+    }
     let customerId: string | null;
-    if (subject.type === "user") {
-      customerId = await data.billing.getCustomerId(subject.id, provider.id);
+    if (event.subject.type === "user") {
+      customerId = await data.billing.getCustomerId(event.subject.id, provider.id);
     } else {
-      const subs = await data.billing.listSubscriptions({ orgId: subject.id, limit: 50 });
-      const paying = subs.items.find((s) => s.provider === provider.id && isRenewing(s));
+      const subs = await data.billing.listSubscriptions({ orgId: event.subject.id, limit: 50 });
+      const paying = subs.items.find((s) => s.provider === provider.id && grantsAccess(s));
       customerId = paying ? (paying.providerCustomerId ?? (await data.billing.getCustomerId(paying.userId, provider.id))) : null;
     }
-    if (!customerId) return;
-    await provider.reportUsage({ id: eventId, customerId, metric, quantity, occurredAt });
+    if (customerId) {
+      await provider.reportUsage({ id: event.id, customerId, metric: event.metric, quantity: event.quantity, occurredAt: event.occurredAt });
+    }
+    await data.usage.markReported(event.id, new Date().toISOString());
   },
 });

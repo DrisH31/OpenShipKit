@@ -538,7 +538,7 @@ describe("the webhook sink seam", () => {
 
   it("hands the adapter's re-fetched, normalised state to an injected sink and claims the event through it", async () => {
     const { state, client } = fakePolar();
-    state.subs.set("psub_1", polarSub({ current_period_end: "2031-01-02T03:04:05.123456Z" }));
+    state.subs.set("psub_1", polarSub({ current_period_start: "2030-12-02T03:04:05.123456Z", current_period_end: "2031-01-02T03:04:05.123456Z" }));
     state.orders.set("pord_1", polarOrder({ currency: "EUR", metadata: { planKey: "lifetime", productId: "polar_lifetime" } }));
     const subs: ProviderSubscriptionState[] = [];
     const orders: ProviderOrderState[] = [];
@@ -565,6 +565,7 @@ describe("the webhook sink seam", () => {
         seats: null,
         interval: "month",
         status: "active",
+        currentPeriodStart: "2030-12-02T03:04:05.123456Z",
         currentPeriodEnd: "2031-01-02T03:04:05.123456Z",
         cancelAtPeriodEnd: false,
       },

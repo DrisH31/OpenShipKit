@@ -142,12 +142,13 @@ const SUBSCRIPTION_FIELDS = [
 /** Upsert the canonical subscription state; audit only a real change. Returns whether anything changed. */
 export async function upsertSubscription(input: SubscriptionUpsert, actor?: Actor): Promise<boolean> {
   const data = await getData();
-  const normalized: SubscriptionUpsert = { ...input, orgId: input.orgId ?? null, seats: input.seats ?? null, currentPeriodEnd: normalizeInstant(input.currentPeriodEnd) };
+  const normalized: SubscriptionUpsert = { ...input, orgId: input.orgId ?? null, seats: input.seats ?? null, currentPeriodEnd: normalizeInstant(input.currentPeriodEnd), currentPeriodStart: normalizeInstant(input.currentPeriodStart ?? null) };
   const before = await data.billing.getSubscription(normalized.provider, normalized.providerSubscriptionId);
   const changed =
     !before ||
     SUBSCRIPTION_FIELDS.some((k) => before[k] !== normalized[k]) ||
-    !sameInstant(before.currentPeriodEnd, normalized.currentPeriodEnd);
+    !sameInstant(before.currentPeriodEnd, normalized.currentPeriodEnd) ||
+    !sameInstant(before.currentPeriodStart ?? null, normalized.currentPeriodStart ?? null);
   if (!changed) return false;
   const after = await data.billing.upsertSubscription(normalized);
   await recordAudit(
@@ -245,6 +246,7 @@ async function applySubscription(state: ProviderSubscriptionState, opts: { actor
     planKey,
     interval: plan?.interval ?? state.interval,
     status: state.status,
+    currentPeriodStart: state.currentPeriodStart ?? null,
     currentPeriodEnd: state.currentPeriodEnd,
     cancelAtPeriodEnd,
     // Bound to the organisation our checkout named, whether or not it still exists: a deleted

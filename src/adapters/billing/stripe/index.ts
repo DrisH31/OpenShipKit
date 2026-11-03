@@ -88,6 +88,7 @@ export function subscriptionState(sub: Stripe.Subscription): ProviderSubscriptio
     interval: recurring === "year" ? "year" : recurring === "month" ? "month" : null,
     status: mapStatus(sub.status),
     // Ended: the end. Otherwise the item's period end (where Stripe keeps it in this API version).
+    currentPeriodStart: iso(item?.current_period_start),
     currentPeriodEnd: iso(sub.ended_at) ?? iso(item?.current_period_end),
     // cancel_at set (a scheduled cancellation) also means it won't renew.
     cancelAtPeriodEnd: sub.cancel_at_period_end || (sub.cancel_at !== null && sub.cancel_at !== undefined && sub.status !== "canceled"),

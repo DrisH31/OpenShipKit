@@ -49,6 +49,7 @@ const BATCH = 5;
 const POLL_IDLE_MS = 5_000;
 const POLL_ERROR_MS = 30_000;
 const PRUNE_EVERY_MS = 60 * 60_000;
+const SWEEP_EVERY_MS = 5 * 60_000;
 export const RETENTION_DAYS = 14;
 const DEFAULT_MAX_ATTEMPTS = 5;
 
@@ -191,7 +192,7 @@ export async function pruneJobs(now = Date.now()): Promise<number> {
   return (await getData()).jobs.prune(new Date(now - RETENTION_DAYS * 24 * 60 * 60_000).toISOString());
 }
 
-type RunnerState = { timer: ReturnType<typeof setTimeout> | null; stopped: boolean; lastPrune: number };
+type RunnerState = { timer: ReturnType<typeof setTimeout> | null; stopped: boolean; lastPrune: number; lastSweep: number };
 
 /**
  * Starts this process's runner, once (Next's dev server re-evaluates modules,
@@ -206,7 +207,7 @@ export function startJobRunner(): void {
   }
   const g = globalThis as unknown as { __openshipkitJobRunner?: RunnerState };
   if (g.__openshipkitJobRunner && !g.__openshipkitJobRunner.stopped) return;
-  const state: RunnerState = { timer: null, stopped: false, lastPrune: 0 };
+  const state: RunnerState = { timer: null, stopped: false, lastPrune: 0, lastSweep: 0 };
   g.__openshipkitJobRunner = state;
 
   const schedule = (ms: number) => {
@@ -217,6 +218,11 @@ export function startJobRunner(): void {
   const tick = async () => {
     try {
       const { claimed } = await runDueJobs();
+      if (Date.now() - state.lastSweep > SWEEP_EVERY_MS) {
+        state.lastSweep = Date.now();
+        // Usage reports left pending (a crash between recording and queueing): src/server/services/usage.ts.
+        await (await import("../services/usage")).sweepUsageReports();
+      }
       if (Date.now() - state.lastPrune > PRUNE_EVERY_MS) {
         state.lastPrune = Date.now();
         const pruned = await pruneJobs();

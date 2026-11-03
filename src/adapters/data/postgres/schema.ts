@@ -170,6 +170,7 @@ export const subscriptions = pgTable(
     planKey: text("plan_key"),
     interval: text("interval").$type<PriceInterval>(),
     status: text("status").$type<SubscriptionStatus>().notNull(),
+    currentPeriodStart: ts("current_period_start"),
     currentPeriodEnd: ts("current_period_end"),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     /**
@@ -411,11 +412,16 @@ export const usageEvents = pgTable(
     quantity: bigint("quantity", { mode: "number" }).notNull(),
     key: text("key"),
     occurredAt: ts("occurred_at").notNull().defaultNow(),
+    // The outbox for metered prices: true until the event has reached the billing provider's meter.
+    reportPending: boolean("report_pending").notNull().default(false),
+    reportedAt: ts("reported_at"),
     createdAt: createdAt(),
   },
   (t) => [
     index("usage_events_sum_idx").on(t.subjectType, t.subjectId, t.metric, t.occurredAt),
-    uniqueIndex("usage_events_key_key").on(t.subjectType, t.subjectId, t.key).where(sql`key is not null`),
+    // A key dedupes one metric's event: a request that records two metrics may use its id for both.
+    uniqueIndex("usage_events_key_key").on(t.subjectType, t.subjectId, t.metric, t.key).where(sql`key is not null`),
+    index("usage_events_report_idx").on(t.createdAt).where(sql`report_pending`),
     check("usage_events_subject_check", sql`${t.subjectType} in ('user', 'org')`),
     check("usage_events_quantity_check", sql`${t.quantity} >= 0`),
   ],
