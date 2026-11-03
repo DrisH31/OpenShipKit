@@ -113,6 +113,16 @@ export function githubHeadingId(text: string): string {
     .replace(/ /g, "-");
 }
 
+/**
+ * The id a first heading with this text gets in a doc (headingIds: "github"): GitHub's, when it is a
+ * safe id, else the site's own slug, exactly as render() decides. For generated docs that link to
+ * their own headings (src/server/api-reference.ts).
+ */
+export function docHeadingId(text: string): string {
+  const gh = githubHeadingId(text);
+  return SAFE_ID.test(gh) ? gh : (slugify(text) || "section").slice(0, 110);
+}
+
 /** A trailing "=WIDTHxHEIGHT" in an image title: the image's intrinsic size. */
 const IMAGE_SIZE = /(?:^|\s)=(\d{1,5})x(\d{1,5})$/;
 

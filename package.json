@@ -23,6 +23,7 @@
     "db:studio": "drizzle-kit studio",
     "db:seed": "node --conditions=react-server --import tsx scripts/seed.mts",
     "mcp:key": "node --conditions=react-server --import tsx scripts/mcp-key.mts",
+    "docs:api": "WRITE_API_DOCS=1 vitest run tests/api-reference.test.ts",
     "smoke": "tsx scripts/smoke.mts",
     "e2e": "tsx scripts/e2e.mts",
     "ds:sync": "node scripts/ds-sync.mts"

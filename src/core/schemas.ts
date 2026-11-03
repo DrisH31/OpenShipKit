@@ -156,4 +156,10 @@ export const feedbackUpdateSchema = z.object({
 
 export const emailSchema = z.email().max(254).transform((e) => e.trim().toLowerCase());
 
+/** POST /api/billing/checkout: which plan, at which interval. */
+export const checkoutInputSchema = z.object({
+  planKey: slugSchema.describe("The plan's key, e.g. pro"),
+  interval: z.enum(["month", "year", "one_time"]).describe("Which of the plan's prices"),
+});
+
 export const agentScopeSchema = z.enum(["read", "write", "admin"]);

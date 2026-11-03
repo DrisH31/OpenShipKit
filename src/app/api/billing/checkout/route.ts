@@ -19,9 +19,8 @@
 // DataStore, never from the request.
 //
 
-import { z } from "zod";
 import { BILLING_DISABLED_MESSAGE, BILLING_GENERIC_ERROR, checkoutConflictCode } from "@/components/billing/format";
-import { slugSchema } from "@/core/schemas";
+import { checkoutInputSchema } from "@/core/schemas";
 import { DEMO_READ_ONLY_ERROR, DEMO_READ_ONLY_MESSAGE } from "@/core/demo";
 import { getAuth } from "@/server/auth";
 import { isDemoUser } from "@/server/demo";
@@ -36,10 +35,8 @@ import { log } from "@/server/log";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const inputSchema = z.object({
-  planKey: slugSchema,
-  interval: z.enum(["month", "year", "one_time"]),
-});
+// The body's shape lives in core (checkoutInputSchema), where the API reference reads it too.
+const inputSchema = checkoutInputSchema;
 
 const RETURN_TO = "/pricing";
 

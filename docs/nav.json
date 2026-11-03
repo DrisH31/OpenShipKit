@@ -17,6 +17,7 @@
       "customization",
       "site-profile",
       "mcp",
+      "api",
       "modules/README",
       "modules/ai",
       "modules/rag",

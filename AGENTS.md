@@ -24,6 +24,7 @@ npm run setup -- --profile site   # a landing page + blog with no SaaS (OPENSHIP
 npm run setup -- --billing stripe --email smtp --tenancy org   # choices as flags; with no options in a terminal it asks
 npm run ds:sync -- --from <design-system>   # dry run; --apply to copy tokens + ui/ from the design system (below)
 npm run db:generate -- --name <change>   # after editing src/adapters/data/postgres/schema.ts
+npm run docs:api       # regenerate docs/api.md (a new route handler goes in src/server/api-reference.ts first)
 npm run db:migrate     # apply migrations (stop `npm run dev` first if on the embedded database)
 ```
 
@@ -144,7 +145,7 @@ Throw `ServiceError(code, message)` for refusals. Call it from a server action
 ### Add an MCP tool
 1. In the matching `src/server/mcp/tools/<group>.ts`: `defineTool({ name: "noun_verb", title, description, scope, annotations, input: z.strictObject({…}), run })`, and add it to that file’s exported array.
 2. `run` calls a service. Pick the least `scope` (`read` < `write` < `admin`) and the right annotation (`READ_ONLY`, `WRITE_IDEMPOTENT`, `WRITE_ADDITIVE`, `DESTRUCTIVE`).
-3. Name it in `docs/mcp.md` — `tests/mcp.test.ts` fails otherwise.
+3. Name it in `docs/mcp.md` — `tests/mcp.test.ts` fails otherwise — and run `npm run docs:api` to regenerate `docs/api.md`.
 
 ### Add a database column
 1. `src/adapters/data/postgres/schema.ts` — the column (nullable or with a default, so existing rows migrate).
