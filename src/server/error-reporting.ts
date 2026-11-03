@@ -20,11 +20,14 @@ import "server-only";
 // Reporting must never hurt the request that failed: it doesn't throw, it
 // gives up after REPORT_TIMEOUT_MS, and it stops for the rest of the minute
 // after MAX_EVENTS_PER_MINUTE (an outage would otherwise send one event per
-// request and spend the tracker's quota in minutes).
+// request and spend the tracker's quota in minutes). The same scope and
+// message is sent once a minute at most, so one failure repeating on every
+// request can't use up the budget the others need.
 //
 
 import { randomUUID } from "node:crypto";
 import { optionalEnv } from "./env";
+import { scrubError, scrubText } from "./scrub";
 
 const REPORT_TIMEOUT_MS = 3_000;
 const MAX_EVENTS_PER_MINUTE = 30;
@@ -86,7 +89,7 @@ export type ErrorReport = {
 
 /** The Sentry event for a report. Exported for the tests. */
 export function buildEvent(report: ErrorReport, environment: string, now = Date.now()): Record<string, unknown> {
-  const err = report.error;
+  const err = scrubError(report.error);
   const event: Record<string, unknown> = {
     event_id: randomUUID().replace(/-/g, ""),
     timestamp: now / 1000,
@@ -94,7 +97,7 @@ export function buildEvent(report: ErrorReport, environment: string, now = Date.
     level: "error",
     logger: report.scope,
     environment,
-    message: { formatted: report.message },
+    message: { formatted: scrubText(report.message) },
     tags: { scope: report.scope, ...(report.request?.kind ? { route_kind: report.request.kind } : {}) },
   };
   if (err instanceof Error) {
@@ -125,11 +128,15 @@ function safeJson(value: unknown): unknown {
 
 let budget = { start: 0, count: 0 };
 let warnedBadDsn = false;
+/** scope + message → when it was last sent. */
+const lastSent = new Map<string, number>();
+const MAX_REMEMBERED = 500;
 
 /** Resets the per-minute cap. Tests only. */
 export function resetReportingForTests(): void {
   budget = { start: 0, count: 0 };
   warnedBadDsn = false;
+  lastSent.clear();
 }
 
 /** Sends one report when ERROR_TRACKING_DSN is set. Never throws; resolves when sent or given up. */
@@ -144,8 +151,14 @@ export async function reportError(report: ErrorReport, fetcher: typeof fetch = f
   }
 
   const now = Date.now();
+  const errorText = report.error instanceof Error ? `${report.error.name}: ${report.error.message}` : "";
+  const fingerprint = `${report.scope}\u0000${report.request?.route ?? ""}\u0000${report.message}\u0000${errorText}`;
+  const previous = lastSent.get(fingerprint);
+  if (previous !== undefined && now - previous < 60_000) return;
   if (now - budget.start >= 60_000) budget = { start: now, count: 0 };
   if (++budget.count > MAX_EVENTS_PER_MINUTE) return;
+  if (lastSent.size >= MAX_REMEMBERED) lastSent.clear();
+  lastSent.set(fingerprint, now);
 
   const event = buildEvent(report, optionalEnv("ERROR_TRACKING_ENVIRONMENT") ?? process.env.NODE_ENV ?? "development", now);
   const body = [

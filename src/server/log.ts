@@ -20,8 +20,9 @@ import "server-only";
 // is about that address (a failed send).
 //
 
-import { optionalEnv } from "./env";
+import { isProduction, optionalEnv } from "./env";
 import { reportError } from "./error-reporting";
+import { scrubError, scrubStack, scrubText } from "./scrub";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -36,14 +37,14 @@ function json(): boolean {
   const v = optionalEnv("LOG_FORMAT")?.toLowerCase();
   if (v === "json") return true;
   if (v === "pretty") return false;
-  return process.env.NODE_ENV === "production";
+  return isProduction();
 }
 
-/** An Error as plain JSON fields: its own message and stack, and the cause chain (bounded). */
+/** An Error as plain JSON fields: its own message and stack, and the cause chain (bounded), all scrubbed (./scrub.ts). */
 export function serializeError(error: unknown, depth = 0): Record<string, unknown> {
-  if (!(error instanceof Error)) return { message: String(error) };
-  const out: Record<string, unknown> = { name: error.name, message: error.message };
-  if (error.stack) out.stack = error.stack;
+  if (!(error instanceof Error)) return { message: scrubText(String(error)) };
+  const out: Record<string, unknown> = { name: error.name, message: scrubText(error.message) };
+  if (error.stack) out.stack = scrubStack(error.stack);
   const code = (error as { code?: unknown }).code;
   if (typeof code === "string" || typeof code === "number") out.code = code;
   if (error.cause !== undefined && depth < 3) out.cause = serializeError(error.cause, depth + 1);
@@ -55,6 +56,7 @@ export function formatJson(level: LogLevel, scope: string, msg: string, detail: 
   const line: Record<string, unknown> = { time: now.toISOString(), level, scope, msg };
   if (detail instanceof Error) line.error = serializeError(detail);
   else if (detail !== undefined && detail !== null && typeof detail === "object") line.data = detail;
+  else if (typeof detail === "string") line.detail = scrubText(detail);
   else if (detail !== undefined) line.detail = detail;
   try {
     return JSON.stringify(line);
@@ -77,7 +79,7 @@ export function write(level: LogLevel, scope: string, msg: string, detail?: unkn
   if (RANK[level] < threshold()) return;
   if (json()) CONSOLE[level](formatJson(level, scope, msg, detail));
   else if (detail === undefined) CONSOLE[level](`[${scope}] ${msg}`);
-  else CONSOLE[level](`[${scope}] ${msg}`, detail);
+  else CONSOLE[level](`[${scope}] ${msg}`, scrubError(detail));
 }
 
 export const log = {

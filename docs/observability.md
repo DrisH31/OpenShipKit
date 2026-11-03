@@ -74,16 +74,23 @@ Two paths report:
 | The error's type, message and stack frames | Request or webhook bodies |
 | The route (`/dashboard/billing`), method and path | The query string (reset and verification tokens travel there) |
 | The environment | Who was signed in, their email, their IP address |
+| A failed query's SQL | The query's parameter values |
 
-A message holds whatever the code wrote into it. That's why the rule above
-keeps secrets out of log lines.
+That last row matters more than it looks. drizzle-orm puts a failed query's
+parameters in the error message, and during a database blip those are session
+tokens, reset identifiers and emails. `src/server/scrub.ts` cuts them from
+every message, stack and cause before anything is logged or sent, in both log
+formats. A message still holds whatever the code wrote into it, which is why the
+rule above keeps secrets out of log lines.
 
 ### It can't take the site down with it
 
 - Reporting runs in the background for `log.error` and gives up after three
   seconds. A slow or unreachable tracker never delays a response.
-- At most 30 events a minute per process. An outage that fails every request
-  would otherwise spend the tracker's quota in minutes. The log still has
+- At most 30 events a minute per process, and the same failure (scope,
+  route, message and error) at most once a minute. An outage that fails every
+  request would otherwise spend the tracker's quota in minutes, and one bad row
+  failing on every render would crowd out everything else. The log still has
   every line.
 - A failure to report is one line in the log, never a report about a report.
 

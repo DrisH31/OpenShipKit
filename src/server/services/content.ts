@@ -90,10 +90,10 @@ export async function getContentState<K extends ContentKey>(key: K): Promise<Con
   if (row) {
     const { value, issues } = parseStored(key, row.value);
     if (value && issues.length) {
-      log.error("content", `stored "${key}" has fields that fail its schema; rendering their defaults (save /admin/content/${key} to fix)`, issues);
+      log.warn("content", `stored "${key}" has fields that fail its schema; rendering their defaults (save /admin/content/${key} to fix)`, issues);
     }
     if (value) return { key, value, stored: true, updatedAt: row.updatedAt };
-    log.error("content", `stored "${key}" fails its schema; rendering the default`, issues);
+    log.warn("content", `stored "${key}" fails its schema; rendering the default`, issues);
   }
   return { key, value: DEFAULT_CONTENT[key], stored: false, updatedAt: null };
 }

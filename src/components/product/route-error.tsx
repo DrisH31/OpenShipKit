@@ -31,6 +31,7 @@ export function RouteError({
   audience: "customer" | "admin";
 }) {
   useEffect(() => {
+    // eslint-disable-next-line no-console -- a client component: this is the browser console
     console.error(error);
   }, [error]);
   const digest = error.digest ? <code className="font-mono text-caption">{error.digest}</code> : null;

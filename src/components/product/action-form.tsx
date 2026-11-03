@@ -104,6 +104,7 @@ export function ActionForm({
       } catch (error) {
         // Next's own navigations (a redirect from the action) are handled by the router.
         if (typeof (error as { digest?: unknown })?.digest === "string" && String((error as { digest: string }).digest).startsWith("NEXT_")) throw error;
+        // eslint-disable-next-line no-console -- a client component: this is the browser console
         console.error(error);
         result = failure("We couldn’t reach the server, so nothing was saved. Check your connection and try again.");
       }

@@ -92,15 +92,22 @@ export function parseSmtpUrl(value: string): SmtpSettings {
   if (!url.hostname) throw new Error("SMTP_URL has no host.");
   const secure = url.protocol === "smtps:";
   const port = url.port ? Number(url.port) : secure ? 465 : 587;
-  const user = decodeURIComponent(url.username);
-  const pass = decodeURIComponent(url.password);
+  let user: string;
+  let password: string;
+  try {
+    user = decodeURIComponent(url.username);
+    password = decodeURIComponent(url.password);
+  } catch {
+    // A raw % in the password, say: decodeURIComponent's own "URI malformed" names nothing.
+    throw new Error("SMTP_URL's user name or password isn't percent-encoded: write % as %25, @ as %40, : as %3A and / as %2F.");
+  }
   return {
     host: url.hostname,
     port,
     secure,
     // smtps:// is TLS already; smtp:// must upgrade, except to a relay on this machine.
     requireTLS: !secure && !LOOPBACK.has(url.hostname),
-    ...(user ? { auth: { user, pass } } : {}),
+    ...(user ? { auth: { user, pass: password } } : {}),
   };
 }
 

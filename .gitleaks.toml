@@ -1,7 +1,12 @@
 # gitleaks (the Security workflow's secret scan): the default rules, minus
-# the places that hold made-up secrets on purpose. Allowlist a path here only
-# when every secret-shaped string in it is a fixture; a real key is never
-# fixed by adding it here, only by rotating it (docs/security.md).
+# the made-up secrets the tests need. Each fixture is allowed by its exact
+# value AND only inside a test file, so a real key pasted into a test still
+# fails the scan. A real key is never fixed by listing it here, only by
+# rotating it (docs/security.md).
+#
+# [[allowlists]] needs gitleaks 8.25 or later: .github/workflows/security.yml
+# pins GITLEAKS_VERSION, because the action's default is older and would
+# ignore this file.
 
 title = "OpenShipKit"
 
@@ -9,15 +14,23 @@ title = "OpenShipKit"
 useDefault = true
 
 [[allowlists]]
-description = "Test fixtures: fake secrets that exist to be rejected, hashed or compared"
+description = "Fake secrets in tests: session secrets, an IndexNow key, a Polar id"
+condition = "AND"
 paths = [
-  '''(^|/)tests/''',
-  '''\.test\.tsx?$''',
+  '''(^|/)tests/[^/]+\.test\.ts$''',
+  '''^src/.+\.test\.ts$''',
+]
+regexes = [
+  '''^k3J9-x8Qp2Lm7Zr4Vt6Wb1Nc5Yd0Hf8Gs2Ue9Ai$''',
+  '''^q8Vd0mJ2rX5tL9wB3nH7yK1cF4gP6sZaE0uT2iO8$''',
+  '''^0123456789abcdef0123456789abcdef$''',
+  '''^cus_polar_123$''',
+  '''^sess_9f8e7d6c5b4a$''',
 ]
 
 [[allowlists]]
 description = "Container image tags (name:version), not credentials"
 regexTarget = "line"
 regexes = [
-  '''image:\s*[a-z0-9./_-]+:[A-Za-z0-9._-]+''',
+  '''^\s*image:\s*[a-z0-9./_-]+:[A-Za-z0-9._-]+\s*$''',
 ]

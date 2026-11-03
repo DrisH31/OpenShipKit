@@ -59,6 +59,10 @@ describe("SMTP_URL", () => {
     expect(parseSmtpUrl("smtp://mail.internal:25").requireTLS).toBe(true);
   });
 
+  it("says how to encode a password with a raw %, instead of 'URI malformed'", () => {
+    expect(() => parseSmtpUrl("smtps://me:100%sure@smtp.example.com")).toThrow(/isn't percent-encoded: write % as %25/);
+  });
+
   it("refuses what isn't an SMTP URL, without repeating the password", () => {
     expect(() => parseSmtpUrl("https://u:hunter2@smtp.example.com")).toThrow(/must start with smtps:\/\/ .* not https:\/\//);
     expect(() => parseSmtpUrl("smtp.example.com:587")).toThrow();

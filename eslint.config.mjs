@@ -37,11 +37,12 @@ export default defineConfig([
     rules: restrict("^@/adapters/(?!auth/better-auth/actions$)", ACTIONS_ONLY),
   },
   // Server code logs through src/server/log.ts: JSON in production, and errors reach ERROR_TRACKING_DSN (ROADMAP 1.3).
-  // Client components ("use client") log to the browser and are exempt; so are the logger, the reporter (it can't
-  // report its own failure), the console email provider (its output is the email) and instrumentation's Edge-safe dev warning.
+  // Exempt: the logger, the reporter (it can't report its own failure), the console email provider (its output
+  // is the email) and instrumentation (compiled for Edge too). A client component's browser console.error
+  // carries an eslint-disable line saying so.
   {
-    files: ["src/server/**", "src/adapters/**", "src/app/**/route.ts", "src/app/**/actions.ts", "src/app/sitemap.ts"],
-    ignores: [...TESTS, "src/server/log.ts", "src/server/error-reporting.ts", "src/adapters/email/console/**"],
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [...TESTS, "src/server/log.ts", "src/server/error-reporting.ts", "src/adapters/email/console/**", "src/instrumentation.ts"],
     rules: { "no-console": ["error"] },
   },
   // Generated output: drizzle/ (drizzle-kit) and src/lib/cn-tables.ts (`cn build`, checked against cn-config.ts by src/lib/utils.test.ts).

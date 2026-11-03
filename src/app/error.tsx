@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 export default function ErrorPage({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   useEffect(() => {
+    // eslint-disable-next-line no-console -- a client component: this is the browser console
     console.error(error);
   }, [error]);
 

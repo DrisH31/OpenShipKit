@@ -738,7 +738,9 @@ describe("social profiles in site settings", () => {
 
   it("reads a stored value the new rule refuses as that field's default, keeping the rest", async () => {
     const { getContent, getContentState } = await import("@/server/services/content");
-    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A warning, not an error: a stored row failing its schema repeats on every render and is an
+    // admin's fix, not a crash (it would otherwise spend the error tracker's budget).
+    const errors = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       await store.content.set("site", { ...DEFAULT_CONTENT.site, name: "Acme", social: { ...DEFAULT_CONTENT.site.social, linkedin: "acme", x: "@acme" } });
       const site = await getContent("site");

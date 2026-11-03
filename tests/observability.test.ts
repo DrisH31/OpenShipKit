@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEvent, parseDsn, parseStack, reportError, resetReportingForTests } from "@/server/error-reporting";
 import { formatJson, log } from "@/server/log";
 import { logRequestError } from "@/server/request-error";
+import { scrubError, scrubStack, scrubText } from "@/server/scrub";
+import { DrizzleQueryError } from "drizzle-orm/errors";
 
 beforeEach(() => resetReportingForTests());
 afterEach(() => {
@@ -139,6 +141,16 @@ describe("error tracking", () => {
     expect(ok).toHaveBeenCalledTimes(30);
   });
 
+  it("sends a repeating failure once a minute, leaving the budget for the others", async () => {
+    vi.stubEnv("ERROR_TRACKING_DSN", "https://k@errors.example.com/1");
+    const ok = vi.fn(async () => new Response(null, { status: 200 }));
+    for (let i = 0; i < 50; i++) await reportError({ scope: "content", message: "stored hero fails", error: new Error("bad") }, ok as unknown as typeof fetch);
+    expect(ok).toHaveBeenCalledTimes(1);
+    await reportError({ scope: "billing", message: "checkout failed", error: new Error("x") }, ok as unknown as typeof fetch);
+    await reportError({ scope: "content", message: "stored hero fails", error: new Error("a different error") }, ok as unknown as typeof fetch);
+    expect(ok).toHaveBeenCalledTimes(3);
+  });
+
   it("says once that a malformed DSN reports nothing", async () => {
     vi.stubEnv("ERROR_TRACKING_DSN", "nonsense");
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -164,5 +176,46 @@ describe("error tracking", () => {
     expect(JSON.parse(lines[0])).toMatchObject({ level: "error", scope: "request", error: { message: "db down" } });
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(String(fetcher.mock.calls[0][1]?.body)).not.toContain("SECRET");
+  });
+});
+
+describe("scrubbing failed queries", () => {
+  const TOKEN = "sess_9f8e7d6c5b4a";
+  const failed = () =>
+    new DrizzleQueryError('select "user_id" from "auth_session" where "token" = $1', [TOKEN, "someone@example.com"], new Error("connect ECONNREFUSED 127.0.0.1:5432"));
+
+  it("keeps the SQL and the cause, and drops the parameter values", () => {
+    const err = failed();
+    expect(err.message).toContain(TOKEN); // what drizzle really produces
+    expect(scrubText(err.message)).toBe('Failed query: select "user_id" from "auth_session" where "token" = $1\nparams: [redacted]');
+    const stack = scrubStack(err.stack!);
+    expect(stack).not.toContain(TOKEN);
+    expect(stack).toMatch(/\n {4}at /);
+    const copy = scrubError(err) as Error;
+    expect(copy.cause).toBeInstanceOf(Error);
+    expect(JSON.stringify({ m: copy.message, s: copy.stack, c: (copy.cause as Error).message })).not.toContain(TOKEN);
+  });
+
+  it("never writes them to a JSON or pretty log line, or a string detail", () => {
+    const outer = new Error("session lookup failed", { cause: failed() });
+    const json = formatJson("error", "auth", "x", outer) + formatJson("error", "auth", "x", failed()) + formatJson("error", "auth", "x", failed().message);
+    expect(json).not.toContain(TOKEN);
+    expect(json).not.toContain("someone@example.com");
+
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("LOG_FORMAT", "pretty");
+    log.error("auth", "x", failed());
+    const printed = errors.mock.calls[0][1] as Error;
+    expect(`${printed.message}${printed.stack}`).not.toContain(TOKEN);
+  });
+
+  it("never sends them to the tracker", async () => {
+    vi.stubEnv("ERROR_TRACKING_DSN", "https://k@errors.example.com/1");
+    const fetcher = vi.fn<(url: string | URL | Request, init?: RequestInit) => Promise<Response>>(async () => new Response(null, { status: 200 }));
+    await reportError({ scope: "request", message: failed().message, error: failed() }, fetcher as unknown as typeof fetch);
+    const body = String(fetcher.mock.calls[0][1]?.body);
+    expect(body).not.toContain(TOKEN);
+    expect(body).not.toContain("someone@example.com");
+    expect(body).toContain("Failed query");
   });
 });

@@ -10,8 +10,9 @@ import "server-only";
 //                      in .data/pglite, migrated and seeded at boot. Required in production.
 //   DATA_PROVIDER      postgres (default) | memory (unit tests only; data resets on restart)
 //   BILLING_PROVIDER   polar | none     (POLAR_ACCESS_TOKEN → polar, else none)
-//   EMAIL_PROVIDER     resend | console (RESEND_API_KEY → resend, else console: printed to the log;
-//                      in production only To and Subject unless EMAIL_CONSOLE_PRINT_BODIES=true)
+//   EMAIL_PROVIDER     resend | smtp | console (RESEND_API_KEY → resend, else SMTP_URL → smtp, else
+//                      console: printed to the log; in production only To and Subject unless
+//                      EMAIL_CONSOLE_PRINT_BODIES=true)
 //   OPENSHIPKIT_PROFILE saas (default) | site: a landing page + blog with no pricing, billing or
 //                      plans (src/core/profile.ts; billing is then none whatever Polar keys are set)
 //
