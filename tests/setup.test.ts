@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveBillingProvider, resolveEmailProvider, resolveTenancy } from "@/server/env-rules";
+import { FEATURE_NAMES, resolveBillingProvider, resolveEmailProvider, resolveTenancy, resolveWithout } from "@/server/env-rules";
 
 const ROOT = resolve(__dirname, "..");
 const dirs: string[] = [];
@@ -60,6 +60,15 @@ describe("npm run setup", () => {
   it("refuses a value it doesn't know, and billing on a content site", () => {
     expect(run(["--billing", "paypal"]).out).toMatch(/--billing "paypal" must be one of: none, polar, stripe, razorpay/);
     expect(run(["--profile", "site", "--billing", "stripe"]).status).toBe(1);
+  });
+
+  it("--without switches features off, and refuses one it doesn't know", () => {
+    const r = run(["--without", "mcp,blog"]);
+    expect(r.value("OPENSHIPKIT_WITHOUT")).toBe("mcp,blog");
+    expect(resolveWithout({ OPENSHIPKIT_WITHOUT: r.value("OPENSHIPKIT_WITHOUT")! })).toEqual(["mcp", "blog"]);
+    expect(run(["--without", "admin"]).out).toMatch(/--without "admin" must be one of: blog, mcp/);
+    // The script's list is the app's.
+    expect(/must be one of: ([a-z, ]+)/.exec(run(["--without", "x"]).out)?.[1].split(", ").sort()).toEqual([...FEATURE_NAMES].sort());
   });
 
   it("offers exactly the values the app accepts", () => {

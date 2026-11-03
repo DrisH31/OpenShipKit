@@ -20,7 +20,7 @@ import { formatPublishDate, isoDay, templatePlaceholders } from "@/components/bl
 import { ArticleToc } from "@/components/blog/toc";
 import { Container } from "@/components/marketing/layout";
 import { JsonLd } from "@/components/seo/json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import type { User } from "@/core/types";
 import { renderMarkdown } from "@/server/markdown";
 import { getCurrentUser } from "@/server/session";
@@ -43,6 +43,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     siteImage: ogImage,
     defaultImageAlt: cardAlt,
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
   });

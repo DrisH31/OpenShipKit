@@ -16,9 +16,9 @@ import { Pager } from "@/components/blog/pager";
 import { Container } from "@/components/marketing/layout";
 import { Eyebrow } from "@/components/marketing/type";
 import { JsonLd } from "@/components/seo/json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { breadcrumbJsonLd, collectionPageJsonLd } from "@/shared/jsonld";
-import { blogFeed, changelogFeed, pageMetadata } from "@/shared/seo";
+import { changelogFeed, pageMetadata } from "@/shared/seo";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -40,7 +40,7 @@ export async function generateMetadata({ searchParams }: { searchParams: SearchP
     siteName: name,
     locale,
     twitterSite,
-    feeds: [changelogFeed(name), blogFeed(name)],
+    feeds: siteFeeds(name, [changelogFeed(name)]),
   });
 }
 

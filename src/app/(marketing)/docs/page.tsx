@@ -16,7 +16,7 @@ import { notFound } from "next/navigation";
 import { DocBody } from "@/components/docs/doc-body";
 import { DocsShell } from "@/components/docs/docs-shell";
 import { JsonLd } from "@/components/seo/json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { docsEnabled, docsPath, editUrl, getDoc, getDocsIndex, renderDoc } from "@/server/docs";
 import { breadcrumbJsonLd, collectionPageJsonLd } from "@/shared/jsonld";
 import { OPENSHIPKIT_NAME } from "@/shared/project";
@@ -35,6 +35,7 @@ export async function generateMetadata(): Promise<Metadata> {
     description: readme.entry.description || `How to set up, run and change ${name}.`,
     path: "/docs",
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
     siteImage: ogImage,

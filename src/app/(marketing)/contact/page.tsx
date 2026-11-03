@@ -11,7 +11,7 @@ import type { Metadata } from "next";
 import { DatabaseIcon, MailIcon, ReplyIcon } from "lucide-react";
 import { Container } from "@/components/marketing/layout";
 import { SectionHeader } from "@/components/marketing/section-header";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { ContactForm } from "@/components/site/contact-form";
 import { isContactTopic } from "@/components/site/contact-topics";
 import { getCurrentUser } from "@/server/session";
@@ -27,6 +27,7 @@ export async function generateMetadata(): Promise<Metadata> {
     siteImage: ogImage,
     defaultImageAlt: cardAlt,
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
   });

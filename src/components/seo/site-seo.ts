@@ -13,6 +13,8 @@ import { safeImageUrl } from "@/components/blog/format";
 import { siteUrl } from "@/server/env";
 import { getContent } from "@/server/services/content";
 import { isShowcase, siteCardAlt, xHandle, xProfileUrl } from "@/shared/seo";
+import { featureOn } from "@/server/profile";
+import { blogFeed, type FeedLink } from "@/shared/seo";
 
 export interface SiteSeo {
   base: string;
@@ -65,3 +67,11 @@ export const getSiteSeo = cache(async (): Promise<SiteSeo> => {
     showcase: isShowcase(site),
   };
 });
+
+/**
+ * The feeds a page advertises: the blog's, unless the blog is switched off (OPENSHIPKIT_WITHOUT=blog),
+ * then none, so no page links to a feed that answers 404. `extra` goes first (a changelog page's own).
+ */
+export function siteFeeds(siteName: string, extra: FeedLink[] = []): FeedLink[] {
+  return [...extra, ...(featureOn("blog") ? [blogFeed(siteName)] : [])];
+}

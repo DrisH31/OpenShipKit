@@ -28,7 +28,7 @@ import "server-only";
 //
 
 import type { Tenancy } from "@/core/orgs";
-import type { SiteProfile } from "@/core/profile";
+import type { Feature, SiteProfile } from "@/core/profile";
 import type { BillingProviderId, DataProviderId, EmailProviderId } from "@/core/types";
 import { resolveSupportUrl } from "@/shared/support";
 import {
@@ -40,6 +40,7 @@ import {
   resolveEmailProvider,
   resolveProfile,
   resolveTenancy,
+  resolveWithout,
   resolveMediaStorage,
   resolveSiteUrl,
   type DataMode,
@@ -75,6 +76,11 @@ export function dataMode(): DataMode {
 /** OPENSHIPKIT_PROFILE: "saas" (default) or "site" (no pricing, billing or plans). Pass it down; never re-read env in a component. */
 export function siteProfile(): SiteProfile {
   return resolveProfile(process.env);
+}
+
+/** OPENSHIPKIT_WITHOUT: the features switched off (src/core/profile.ts FEATURE_PATHS). */
+export function without(): Feature[] {
+  return resolveWithout(process.env);
 }
 
 /** MEDIA_STORAGE: where uploaded images live (src/server/services/media-storage.ts). */

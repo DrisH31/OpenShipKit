@@ -16,6 +16,7 @@ import { PAGE_SIZE, cleanCursor, getListedPage, getTags, paginate, parseTrail } 
 import { pageLabel } from "@/components/blog/format";
 import { getSiteSeo } from "@/components/seo/site-seo";
 import { pageMetadata } from "@/shared/seo";
+import { requireFeature } from "@/server/profile";
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
 
@@ -28,6 +29,7 @@ function copy(name: string) {
 }
 
 export async function generateMetadata({ searchParams }: { searchParams: SearchParams }): Promise<Metadata> {
+  requireFeature("blog"); // OPENSHIPKIT_WITHOUT=blog: a plain 404
   const sp = await searchParams;
   const cursor = cleanCursor(sp.cursor);
   // The same cached read as the page: the title of a later page needs its newest post's date.
@@ -49,6 +51,7 @@ export async function generateMetadata({ searchParams }: { searchParams: SearchP
 }
 
 export default async function BlogIndexPage({ searchParams }: { searchParams: SearchParams }) {
+  requireFeature("blog");
   const sp = await searchParams;
   const cursor = cleanCursor(sp.cursor);
   const [{ base, name, locale }, page, tags] = await Promise.all([

@@ -31,9 +31,9 @@ import type { MetadataRoute } from "next";
 import { getPublishedRefs } from "@/components/blog/data";
 import { isIndexableTag, tagHref } from "@/components/blog/format";
 import { getSiteSeo } from "@/components/seo/site-seo";
-import { forProfile, type SiteProfile } from "@/core/profile";
+import { forProfile, type Feature, type SiteProfile } from "@/core/profile";
 import { docsOn, docsPath, getDocsIndex } from "@/server/docs";
-import { publicDocs, siteProfile } from "@/server/env";
+import { publicDocs, siteProfile, without } from "@/server/env";
 import { absoluteUrl } from "@/shared/seo";
 import { log } from "@/server/log";
 
@@ -44,15 +44,17 @@ const MAX_URLS = 50_000;
 
 const STATIC_PATHS = ["/", "/pricing", "/contact", "/blog", "/changelog"] as const;
 
-/** The static paths this profile serves: /pricing only in saas. */
-function staticPaths(profile: SiteProfile): string[] {
-  return forProfile(profile, STATIC_PATHS.map((href) => ({ href }))).map((p) => p.href);
+/** The static paths this profile serves: /pricing only in saas, /blog only with the blog on. */
+function staticPaths(profile: SiteProfile, off: readonly Feature[]): string[] {
+  return forProfile(profile, STATIC_PATHS.map((href) => ({ href })), off).map((p) => p.href);
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const off = without();
+  const blog = !off.includes("blog");
   const [{ base, showcase }, allPosts, allChangelog, pages] = await Promise.all([
     getSiteSeo(),
-    getPublishedRefs("post", MAX_URLS),
+    blog ? getPublishedRefs("post", MAX_URLS) : Promise.resolve([]),
     getPublishedRefs("changelog", MAX_URLS),
     getPublishedRefs("page", MAX_URLS),
   ]);
@@ -70,7 +72,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const indexModified: Record<string, string | undefined> = { "/blog": newest(posts), "/changelog": newest(changelog) };
 
   const entries: MetadataRoute.Sitemap = [
-    ...staticPaths(siteProfile()).map((path) => ({
+    ...staticPaths(siteProfile(), off).map((path) => ({
       url: absoluteUrl(base, path),
       ...(indexModified[path] ? { lastModified: indexModified[path] } : {}),
     })),

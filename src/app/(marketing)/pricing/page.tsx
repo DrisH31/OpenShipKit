@@ -26,7 +26,7 @@ import { Faq, type FaqEntry } from "@/components/sections/faq";
 import { PricingPlans, viewerPlan } from "@/components/sections/pricing-plans";
 import { comparisonRows, hasIntervalChoice, yearlySaving } from "@/components/sections/plan-rules";
 import { SoftwareJsonLd } from "@/components/seo/site-json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { requireSaasProfile } from "@/server/profile";
 import { getContent } from "@/server/services/content";
 import { isBillingEnabled } from "@/server/services/billing";
@@ -44,6 +44,7 @@ export async function generateMetadata(): Promise<Metadata> {
     siteImage: ogImage,
     defaultImageAlt: cardAlt,
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
   });

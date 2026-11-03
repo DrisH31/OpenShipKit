@@ -13,6 +13,7 @@ import { PAGE_SIZE, cleanCursor, getListedPage, getTags, isCatchAllTag, paginate
 import { MIN_INDEXABLE_TAG_POSTS, pageLabel, tagHref, tagLabel } from "@/components/blog/format";
 import { getSiteSeo } from "@/components/seo/site-seo";
 import { pageMetadata } from "@/shared/seo";
+import { requireFeature } from "@/server/profile";
 
 type Params = Promise<{ tag: string }>;
 type SearchParams = Promise<Record<string, string | string[] | undefined>>;
@@ -27,6 +28,7 @@ function decodeTag(raw: string): string | null {
 }
 
 export async function generateMetadata({ params, searchParams }: { params: Params; searchParams: SearchParams }): Promise<Metadata> {
+  requireFeature("blog"); // OPENSHIPKIT_WITHOUT=blog: a plain 404
   const [{ tag: raw }, sp] = await Promise.all([params, searchParams]);
   const tag = decodeTag(raw);
   if (!tag) return {};
@@ -52,6 +54,7 @@ export async function generateMetadata({ params, searchParams }: { params: Param
 }
 
 export default async function BlogTagPage({ params, searchParams }: { params: Params; searchParams: SearchParams }) {
+  requireFeature("blog");
   const [{ tag: raw }, sp] = await Promise.all([params, searchParams]);
   const tag = decodeTag(raw);
   if (!tag) notFound();

@@ -9,6 +9,7 @@
 //   npm run setup -- --dry-run                      show what would change, write nothing
 //   npm run setup -- --profile site                 a landing page + blog with no SaaS (OPENSHIPKIT_PROFILE=site)
 //   npm run setup -- --billing stripe --email smtp --tenancy org   choose the providers up front
+//   npm run setup -- --without blog,mcp             switch features off (OPENSHIPKIT_WITHOUT; nothing is deleted)
 //   npm run setup -- -i                             ask, one question at a time (the default in a terminal
 //                                                   when no options are given)
 //
@@ -73,6 +74,8 @@ interface Options {
   billing?: Billing;
   email?: Email;
   tenancy?: Tenancy;
+  /** --without: features switched off (OPENSHIPKIT_WITHOUT). */
+  without?: Feature[];
   /** -i, or a terminal with no options at all. */
   interactive: boolean;
   dryRun: boolean;
@@ -85,6 +88,9 @@ type Email = "console" | "resend" | "smtp";
 const EMAILS: readonly Email[] = ["console", "resend", "smtp"];
 type Tenancy = "personal" | "org";
 const TENANCIES: readonly Tenancy[] = ["personal", "org"];
+/** What --without can switch off: src/core/profile.ts FEATURE_PATHS (tests/setup.test.ts keeps them equal). */
+type Feature = "blog" | "mcp";
+const FEATURES: readonly Feature[] = ["blog", "mcp"];
 
 /** What each provider still needs in the file, and where it's explained. Never asked for: pasted into the file. */
 const NEEDS: Record<Exclude<Billing, "none"> | Exclude<Email, "console">, { keys: string[]; doc: string }> = {
@@ -120,6 +126,8 @@ Usage: npm run setup -- [options]
   --billing <none|polar|stripe|razorpay>   BILLING_PROVIDER (saas only)
   --email <console|resend|smtp>            EMAIL_PROVIDER
   --tenancy <personal|org>                 OPENSHIPKIT_TENANCY: org turns teams on (docs/teams.md)
+  --without <blog,mcp>   switch features off: their pages answer 404 and every link to them goes
+                         (OPENSHIPKIT_WITHOUT; nothing is deleted; docs/site-profile.md)
   -i, --interactive      ask the questions one at a time (the default in a terminal with no options)
   --dry-run              print what would change and write nothing
   -h, --help             this help
@@ -188,6 +196,12 @@ function parseArgs(args: string[]): Options {
       case "--tenancy":
         options.tenancy = choice(flag, take(), TENANCIES);
         break;
+      case "--without": {
+        const names = take().split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+        for (const n of names) if (!FEATURES.includes(n as Feature)) fail(`--without "${n}" must be one of: ${FEATURES.join(", ")}`);
+        options.without = [...new Set(names)] as Feature[];
+        break;
+      }
       case "-i":
       case "--interactive":
         options.interactive = true;
@@ -334,6 +348,7 @@ function fills(options: Options, creating: boolean): Map<string, { value: string
   if (options.profile === "site") out.set("BILLING_PROVIDER", { value: "none", note: "from --profile site (no checkout, no webhooks)" });
   else if (options.billing) out.set("BILLING_PROVIDER", { value: options.billing, note: "your choice of billing provider" });
   if (options.email) out.set("EMAIL_PROVIDER", { value: options.email, note: "your choice of email" });
+  if (options.without?.length) out.set("OPENSHIPKIT_WITHOUT", { value: options.without.join(","), note: `switched off: ${options.without.join(", ")} (their pages answer 404)` });
   if (options.tenancy && options.profile !== "site") out.set("OPENSHIPKIT_TENANCY", { value: options.tenancy, note: options.tenancy === "org" ? "teams on (docs/teams.md)" : "one person per account" });
   return out;
 }

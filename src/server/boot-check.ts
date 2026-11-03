@@ -30,6 +30,7 @@ import {
   resolveEmailProvider,
   resolveMediaStorage,
   resolveProfile,
+  resolveWithout,
   weakAuthSecretReason,
 } from "@/server/env-rules";
 import { log } from "@/server/log";
@@ -85,6 +86,7 @@ export function checkProductionEnv(): void {
     if (!env("EMAIL_FROM")) fatal.push("SMTP needs EMAIL_FROM: a name and an address on a domain your SMTP server may send for (docs/email.md).");
   }
   const profile = rule(() => resolveProfile(process.env));
+  rule(() => resolveWithout(process.env));
   // A malformed BILLING_PROVIDER throws on every billing read, in either profile: fatal here, like EMAIL_PROVIDER.
   const paid = profile ? rule(() => resolveBillingProvider(process.env)) : null;
   // The provider in use needs its key and its webhook secret: without the secret every webhook is

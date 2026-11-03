@@ -19,12 +19,14 @@ import { FRESH_SIGN_IN_MINUTES } from "@/lib/reauth";
 import { hasFreshSignIn, signInAgainTo } from "@/components/dashboard/fresh-sign-in";
 import { actorFor, requireAdmin } from "@/server/session";
 import { mintAgentKey, revokeAgentKey } from "@/server/services/agent-keys";
+import { requireFeature } from "@/server/profile";
 
 /** Where "Sign in again" returns: the mint form. */
 const MINT_RETURN = "/admin/agents#mint";
 
 export async function mintKeyAction(_state: ActionState, form: FormData): Promise<ActionState> {
   const admin = await requireAdmin();
+  requireFeature("mcp");
   const scope = text(form, "scope") || "write";
   if (scope === "admin" && !(await hasFreshSignIn())) {
     return failure(`An Admin key needs a fresh sign-in. Choose “Sign in again” below, then mint within ${FRESH_SIGN_IN_MINUTES} minutes.`);

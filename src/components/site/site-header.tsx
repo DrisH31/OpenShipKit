@@ -43,7 +43,7 @@ import { cn } from "@/lib/utils";
 import { isShowcase } from "@/shared/seo";
 import { SUPPORT_LABEL } from "@/shared/support";
 import { getAuth } from "@/server/auth";
-import { publicDocs, siteProfile, supportUrl } from "@/server/env";
+import { publicDocs, siteProfile, supportUrl, without } from "@/server/env";
 import { docsOn } from "@/server/docs";
 import { getCurrentUser } from "@/server/session";
 import { getContent } from "@/server/services/content";
@@ -65,7 +65,7 @@ async function viewer(): Promise<{ user: User | null; signInHref: string }> {
 
 export async function SiteHeader() {
   const [navigation, site, { user, signInHref }] = await Promise.all([
-    getContent("navigation").then((nav) => navigationForProfile(siteProfile(), nav)),
+    getContent("navigation").then((nav) => navigationForProfile(siteProfile(), nav, without())),
     getContent("site"),
     viewer(),
   ]);

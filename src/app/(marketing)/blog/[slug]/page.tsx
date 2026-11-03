@@ -30,10 +30,12 @@ import type { Post } from "@/core/types";
 import { readingMinutes, renderMarkdown } from "@/server/markdown";
 import { articleJsonLd, breadcrumbJsonLd } from "@/shared/jsonld";
 import { OG_IMAGE_SIZE, pageMetadata } from "@/shared/seo";
+import { requireFeature } from "@/server/profile";
 
 type Params = Promise<{ slug: string }>;
 
 export async function generateMetadata({ params }: { params: Params }): Promise<Metadata> {
+  requireFeature("blog"); // OPENSHIPKIT_WITHOUT=blog: a plain 404
   const { slug } = await params;
   const post = await getPublished("post", slug);
   if (!post) return {};
@@ -91,6 +93,7 @@ async function relatedCandidates(post: Post): Promise<Post[]> {
 }
 
 export default async function BlogPostPage({ params }: { params: Params }) {
+  requireFeature("blog");
   const { slug } = await params;
   const post = await getPublished("post", slug);
   if (!post) notFound();

@@ -16,10 +16,10 @@ import { getPublished, isHiddenStarter } from "@/components/blog/data";
 import { coverAltText, safeImageUrl } from "@/components/blog/format";
 import { Container } from "@/components/marketing/layout";
 import { JsonLd } from "@/components/seo/json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { renderMarkdown } from "@/server/markdown";
 import { articleJsonLd, breadcrumbJsonLd } from "@/shared/jsonld";
-import { blogFeed, changelogEntryTitle, changelogFeed, OG_IMAGE_SIZE, pageMetadata } from "@/shared/seo";
+import { changelogEntryTitle, changelogFeed, OG_IMAGE_SIZE, pageMetadata } from "@/shared/seo";
 
 type Params = Promise<{ slug: string }>;
 
@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     siteName: name,
     locale,
     twitterSite,
-    feeds: [changelogFeed(name), blogFeed(name)],
+    feeds: siteFeeds(name, [changelogFeed(name)]),
   });
 }
 

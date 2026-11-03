@@ -36,6 +36,7 @@ import { readingMinutes } from "@/server/markdown";
 import { getContent } from "@/server/services/content";
 import { listListed } from "@/server/services/posts";
 import { log } from "@/server/log";
+import { featureOn } from "@/server/profile";
 
 /** The newest listed posts, or null when they can't be read (logged; see the header). */
 async function newestPosts(count: number, showcase: boolean): Promise<Post[] | null> {
@@ -50,6 +51,7 @@ async function newestPosts(count: number, showcase: boolean): Promise<Post[] | n
 }
 
 export async function LatestPosts() {
+  if (!featureOn("blog")) return null; // OPENSHIPKIT_WITHOUT=blog: no posts to point at
   const section = await getContent("latestPosts");
   if (!section.enabled) return null;
   const { locale, showcase } = await getSiteSeo();

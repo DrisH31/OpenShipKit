@@ -19,6 +19,7 @@ import { NONCE_HEADER } from "@/core/csp";
 import { getContent } from "@/server/services/content";
 import { ROBOTS_INDEX } from "@/shared/seo";
 import "./globals.css";
+import { featureOn } from "@/server/profile";
 
 // Faces are self-hosted by next/font: no request to Google at runtime. Only the
 // latin subset is preloaded (two files); add "latin-ext" for accented languages,
@@ -44,7 +45,8 @@ export async function generateMetadata(): Promise<Metadata> {
     applicationName: site.name,
     // No canonical or og:url here: they would leak to every page that doesn't set its
     // own and point it at the home page. Each page sets them with pageMetadata().
-    alternates: { types: { "application/rss+xml": [{ url: "/blog/rss.xml", title: `${site.name} blog` }] } },
+    // The blog's feed, unless the blog is switched off (OPENSHIPKIT_WITHOUT=blog): never a link to a 404.
+    ...(featureOn("blog") ? { alternates: { types: { "application/rss+xml": [{ url: "/blog/rss.xml", title: `${site.name} blog` }] } } } : {}),
     openGraph: {
       type: "website",
       siteName: site.name,

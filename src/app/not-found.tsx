@@ -16,7 +16,7 @@ import { SiteFooter } from "@/components/site/site-footer";
 import { SiteHeader } from "@/components/site/site-header";
 import { forProfile } from "@/core/profile";
 import { cn } from "@/lib/utils";
-import { siteProfile } from "@/server/env";
+import { siteProfile, without } from "@/server/env";
 import { SkipLink } from "@/components/ui/skip-link";
 
 export const metadata: Metadata = {
@@ -32,7 +32,7 @@ const WAYS = [
 ];
 
 export default function NotFound() {
-  const ways = forProfile(siteProfile(), WAYS);
+  const ways = forProfile(siteProfile(), WAYS, without());
   return (
     <>
       <SkipLink />

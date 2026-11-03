@@ -5,9 +5,12 @@
 //
 
 import { rssResponse } from "@/components/seo/rss";
+import { featureResponse } from "@/server/profile";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
+  const off = featureResponse("blog"); // OPENSHIPKIT_WITHOUT=blog: a plain 404
+  if (off) return off;
   return rssResponse({ kind: "post", path: "/blog", feedPath: "/blog/rss.xml", titleSuffix: "Blog" });
 }

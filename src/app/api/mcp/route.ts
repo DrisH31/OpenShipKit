@@ -22,6 +22,7 @@ import { clientIp, rateLimit } from "@/server/rate-limit";
 import { authBlockedFor, authenticateMcp, bearerToken, noteAuthFailure, originAllowed } from "@/server/mcp/auth";
 import { RPC_ERROR, handleMcpMessage, isSupportedProtocolVersion, rpcError } from "@/server/mcp/protocol";
 import { log } from "@/server/log";
+import { featureResponse } from "@/server/profile";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,6 +43,8 @@ function corsHeaders(origin: string | null): Record<string, string> {
 }
 
 export async function POST(req: Request): Promise<Response> {
+  const off = featureResponse("mcp"); // OPENSHIPKIT_WITHOUT=mcp: no MCP server at all
+  if (off) return off;
   const origin = req.headers.get("origin");
   if (!originAllowed(origin)) {
     return json(403, { error: "forbidden", message: "This origin may not call the MCP server. Add it to MCP_ALLOWED_ORIGINS if it should." });
@@ -107,6 +110,8 @@ export async function POST(req: Request): Promise<Response> {
 
 /** CORS preflight, for an allowed browser origin only. */
 export async function OPTIONS(req: Request): Promise<Response> {
+  const off = featureResponse("mcp");
+  if (off) return off;
   const origin = req.headers.get("origin");
   if (!origin || !originAllowed(origin)) return new Response(null, { status: 403, headers: NO_STORE });
   return new Response(null, {

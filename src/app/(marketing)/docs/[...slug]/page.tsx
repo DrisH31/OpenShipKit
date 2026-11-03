@@ -16,7 +16,7 @@ import { notFound } from "next/navigation";
 import { DocBody } from "@/components/docs/doc-body";
 import { DocsShell } from "@/components/docs/docs-shell";
 import { JsonLd } from "@/components/seo/json-ld";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { docsEnabled, docsPath, docsTitle, editUrl, getDoc, getDocsIndex, renderDoc, type DocPage } from "@/server/docs";
 import { articleJsonLd, breadcrumbJsonLd } from "@/shared/jsonld";
 import { pageMetadata } from "@/shared/seo";
@@ -47,6 +47,7 @@ export async function generateMetadata({ params }: { params: Params }): Promise<
     path: docsPath(page.entry.slug),
     type: "article",
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
     siteImage: ogImage,

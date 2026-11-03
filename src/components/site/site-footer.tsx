@@ -44,7 +44,7 @@ import { cn } from "@/lib/utils";
 import { DRISH_LABS_URL, GETSHIPKIT_REPO, OPENSHIPKIT_REPO } from "@/shared/project";
 import { isShowcase } from "@/shared/seo";
 import { SUPPORT_LABEL } from "@/shared/support";
-import { publicDocs, siteProfile, supportUrl } from "@/server/env";
+import { publicDocs, siteProfile, supportUrl, without } from "@/server/env";
 import { docsOn } from "@/server/docs";
 import { getContent } from "@/server/services/content";
 import { withoutDocsLinks } from "./docs-links";
@@ -79,7 +79,7 @@ function wordmarkSize(name: string): string {
 }
 
 export async function SiteFooter() {
-  const [site, navigation] = await Promise.all([getContent("site"), getContent("navigation").then((nav) => navigationForProfile(siteProfile(), nav))]);
+  const [site, navigation] = await Promise.all([getContent("site"), getContent("navigation").then((nav) => navigationForProfile(siteProfile(), nav, without()))]);
   // The OpenShipKit showcase (the site not yet renamed) links its own repository; a renamed site shows only its own profiles.
   const isOpenShipKit = isShowcase(site);
   const support = isOpenShipKit ? supportUrl() : null;

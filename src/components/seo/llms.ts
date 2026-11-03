@@ -28,7 +28,7 @@ import "server-only";
 //
 
 import type { Plan, Post } from "@/core/types";
-import { siteProfile } from "@/server/env";
+import { siteProfile, without } from "@/server/env";
 import { listPlans } from "@/server/services/plans";
 import { formatPrice } from "@/shared/money";
 import { OPENSHIPKIT_REPO } from "@/shared/project";
@@ -77,6 +77,8 @@ interface Corpus {
   repo: string;
   /** False under OPENSHIPKIT_PROFILE=site: no /pricing page to link, and no plans. */
   pricingPage: boolean;
+  /** The blog is on (not in OPENSHIPKIT_WITHOUT). */
+  blog: boolean;
   plans: Plan[];
   posts: Post[];
   changelog: Post[];
@@ -92,10 +94,11 @@ interface CorpusSize {
 async function loadCorpus(size: CorpusSize | "all"): Promise<Corpus> {
   const newest = (kind: "post" | "changelog", limit: number) => getListedPage(kind, limit, null, null).then((page) => page.items);
   const pricingPage = siteProfile() === "saas";
+  const blog = !without().includes("blog"); // OPENSHIPKIT_WITHOUT=blog: no posts, no /blog links
   const [{ base, name, site, locale, showcase }, plans, posts, changelog, pages] = await Promise.all([
     getSiteSeo(),
     pricingPage ? listPlans({ activeOnly: true }) : [],
-    size === "all" ? getAllPublished("post", 1000) : newest("post", size.posts),
+    !blog ? [] : size === "all" ? getAllPublished("post", 1000) : newest("post", size.posts),
     size === "all" ? getAllPublished("changelog", 1000) : newest("changelog", size.changelog),
     getAllPublished("page", 200),
   ]);
@@ -110,6 +113,7 @@ async function loadCorpus(size: CorpusSize | "all"): Promise<Corpus> {
     // by default (Invariant 8), so it can't be the source here.
     repo: showcase ? githubRepo(OPENSHIPKIT_REPO) : "",
     pricingPage,
+    blog,
     plans,
     posts: posts.filter((p) => !isHiddenStarter(p, showcase)),
     changelog: changelog.filter((p) => !isHiddenStarter(p, showcase)),
@@ -186,7 +190,7 @@ export async function buildLlmsTxt(): Promise<string> {
     "",
     linkLine(c.base, "Home", "/", "what the product is and who it’s for"),
     ...(c.pricingPage ? [linkLine(c.base, "Pricing", "/pricing", c.showcase ? "the sample plans a new SaaS starts with" : "plans and prices")] : []),
-    linkLine(c.base, "Blog", "/blog", "guides and articles"),
+    ...(c.blog ? [linkLine(c.base, "Blog", "/blog", "guides and articles")] : []),
     linkLine(c.base, "Changelog", "/changelog", "every release, newest first"),
     linkLine(c.base, "Contact", "/contact", "questions, sales and support"),
     "",
@@ -201,7 +205,7 @@ export async function buildLlmsTxt(): Promise<string> {
   }
   const optional = [
     ...c.pages.map((p) => linkLine(c.base, p.title, `/legal/${p.slug}`, p.description)),
-    linkLine(c.base, "Blog RSS feed", "/blog/rss.xml"),
+    ...(c.blog ? [linkLine(c.base, "Blog RSS feed", "/blog/rss.xml")] : []),
     linkLine(c.base, "Changelog RSS feed", "/changelog/rss.xml"),
     linkLine(c.base, "Sitemap", "/sitemap.xml"),
   ];

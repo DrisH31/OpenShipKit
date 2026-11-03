@@ -68,6 +68,27 @@ Navigation you saved in `/admin/content/navigation` is never rewritten: a
 Pricing link in it is left out when the page renders, and comes back if you
 switch to `saas`. Remove it there if you want the stored copy clean.
 
+## Switching features off
+
+Whatever the profile, two features can be switched off on their own:
+
+```bash
+npm run setup -- --without blog,mcp     # or set OPENSHIPKIT_WITHOUT=blog,mcp
+```
+
+| Feature | What goes |
+|---|---|
+| `blog` | `/blog`, its posts, tag pages, feed and post images (404); the Blog links in the navigation, the latest-posts section, the blog in the sitemap and `llms.txt`, and the feed link in every page's head. The changelog and the legal pages are posts too, and stay. |
+| `mcp` | The MCP server at `/api/mcp` (404) and the admin's agent keys page. |
+
+It's a switch, like the profile, not a deletion: the code and the stored
+posts and keys stay, so emptying `OPENSHIPKIT_WITHOUT` brings everything back,
+and template updates still merge without conflicts in files you'd otherwise
+have deleted. A name the app doesn't know refuses to start the server, so a
+typo can't leave on a feature you meant to turn off. The list of each
+feature's paths is `FEATURE_PATHS` in `src/core/profile.ts`, the same place the
+profile's are listed.
+
 ## Deleting the SaaS code for good
 
 Only if you want the code gone, and accept that template updates will

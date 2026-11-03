@@ -34,6 +34,7 @@ import { maskEmailMap } from "@/shared/privacy-mask";
 import { privacyLens } from "@/server/demo";
 import { emailsByUserId } from "@/server/services/users";
 import { mintKeyAction, revokeKeyAction, signInAgainForAgentKeys } from "./actions";
+import { requireFeature } from "@/server/profile";
 
 export const metadata: Metadata = { title: "Agent keys" };
 
@@ -45,7 +46,9 @@ function devKeyActive(): boolean {
 }
 
 export default async function AgentsPage() {
-  const lens = privacyLens(await requireAdmin());
+  const admin = await requireAdmin();
+  requireFeature("mcp"); // OPENSHIPKIT_WITHOUT=mcp: no agent keys to manage
+  const lens = privacyLens(admin);
   const [keys, fresh] = await Promise.all([listAgentKeys(), hasFreshSignIn()]);
   // Masked for the read-only demo admin (src/shared/privacy-mask.ts).
   const creators = maskEmailMap(lens, await emailsByUserId(keys.flatMap((k) => (k.createdBy ? [k.createdBy] : []))));

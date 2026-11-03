@@ -50,7 +50,7 @@ import { Steps } from "@/components/sections/steps";
 import { Testimonials } from "@/components/sections/testimonials";
 import { siteProfile } from "@/server/env";
 import { getContent } from "@/server/services/content";
-import { getSiteSeo } from "@/components/seo/site-seo";
+import { getSiteSeo, siteFeeds } from "@/components/seo/site-seo";
 import { jsonLdIds, type JsonLdObject } from "@/shared/jsonld";
 import { OPENSHIPKIT_REPO } from "@/shared/project";
 import { absoluteUrl, isShowcase, pageMetadata } from "@/shared/seo";
@@ -99,6 +99,7 @@ export async function generateMetadata(): Promise<Metadata> {
     siteImage: ogImage,
     defaultImageAlt: cardAlt,
     siteName: name,
+    feeds: siteFeeds(name),
     locale,
     twitterSite,
   });

@@ -14,7 +14,7 @@
 //
 
 import type { Tenancy } from "@/core/orgs";
-import type { SiteProfile } from "@/core/profile";
+import type { Feature, SiteProfile } from "@/core/profile";
 import type { BillingProviderId, DataProviderId, EmailProviderId } from "@/core/types";
 
 export type EnvRecord = Readonly<Record<string, string | undefined>>;
@@ -43,6 +43,21 @@ export function resolveDataProvider(env: EnvRecord): DataProviderId {
  */
 export function resolveProfile(env: EnvRecord): SiteProfile {
   return oneOf(env, "OPENSHIPKIT_PROFILE", ["saas", "site"] as const, "saas");
+}
+
+/**
+ * OPENSHIPKIT_WITHOUT: features switched off, comma-separated (blog, mcp; src/core/profile.ts). Their
+ * routes answer 404 and every link to them goes. An unknown name throws, like any other bad switch:
+ * a typo must not leave a feature on that someone meant to turn off.
+ */
+/** The names of src/core/profile.ts's FEATURE_PATHS (only types may be imported here; tests/without.test.ts keeps them equal). */
+export const FEATURE_NAMES = ["blog", "mcp"] as const satisfies readonly Feature[];
+
+export function resolveWithout(env: EnvRecord): Feature[] {
+  const raw = readEnv(env, "OPENSHIPKIT_WITHOUT") ?? "";
+  const names = raw.split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+  for (const n of names) if (!(FEATURE_NAMES as readonly string[]).includes(n)) throw new Error(`OPENSHIPKIT_WITHOUT: "${n}" isn't a feature that can be switched off (${FEATURE_NAMES.join(", ")})`);
+  return [...new Set(names)] as Feature[];
 }
 
 /** MEDIA_STORAGE: disk (default: UPLOADS_DIR) | s3 (any S3-compatible bucket). Unset: s3 when S3_BUCKET is set. */

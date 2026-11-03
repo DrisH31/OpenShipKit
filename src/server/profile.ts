@@ -11,7 +11,8 @@ import "server-only";
 //
 
 import { notFound } from "next/navigation";
-import { siteProfile } from "./env";
+import type { Feature } from "@/core/profile";
+import { siteProfile, without } from "./env";
 
 /** True under OPENSHIPKIT_PROFILE=site: a landing page + blog, no pricing, billing or plans. */
 export function isSiteProfile(): boolean {
@@ -21,6 +22,22 @@ export function isSiteProfile(): boolean {
 /** 404 (notFound()) under the site profile; nothing under saas. Call it first in a SaaS-only page, layout or action. */
 export function requireSaasProfile(): void {
   if (isSiteProfile()) notFound();
+}
+
+/** Whether a feature is on (not in OPENSHIPKIT_WITHOUT). */
+export function featureOn(feature: Feature): boolean {
+  return !without().includes(feature);
+}
+
+/** 404 (notFound()) when `feature` is switched off. Call it first in that feature's pages, layouts and actions. */
+export function requireFeature(feature: Feature): void {
+  if (!featureOn(feature)) notFound();
+}
+
+/** A route handler's 404 when `feature` is switched off, or null to carry on. */
+export function featureResponse(feature: Feature): Response | null {
+  if (featureOn(feature)) return null;
+  return Response.json({ error: "not_found", message: "Not found" }, { status: 404, headers: { "cache-control": "no-store" } });
 }
 
 /** A route handler's 404 under the site profile, or null to carry on. */
