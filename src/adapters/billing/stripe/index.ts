@@ -30,7 +30,7 @@ import "server-only";
 import Stripe from "stripe";
 import type { BillingProvider, CheckoutInput } from "@/core/billing";
 import { priceIdFor } from "@/core/billing";
-import { requireEnv } from "@/server/env";
+import { optionalEnv, requireEnv } from "@/server/env";
 import { type BillingWebhookSink, type ProviderOrderState, type ProviderSubscriptionState, type WebhookApplyResult, appendRawParam, jsonResponse, logWebhook, mapStatus } from "../shared";
 
 /** The subset of the Stripe client this adapter uses: what tests fake. */
@@ -214,6 +214,8 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
     // A Stripe meter's event_name is the metric; it sums payload.value per stripe_customer_id.
     // identifier makes a retried job a duplicate Stripe drops (within its 24-hour window), and the
     // request's idempotency key covers a retry of the same request.
+    canMeter: () => Boolean(options.client) || Boolean(optionalEnv("STRIPE_SECRET_KEY")),
+
     async reportUsage({ id, customerId, metric, quantity, occurredAt }) {
       await stripe().billing.meterEvents.create(
         { event_name: metric, identifier: id, timestamp: Math.floor(Date.parse(occurredAt) / 1000), payload: { stripe_customer_id: customerId, value: String(quantity) } },

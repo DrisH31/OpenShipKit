@@ -118,6 +118,11 @@ export interface BillingProvider {
    */
   reportUsage?(event: UsageReport): Promise<void>;
   /**
+   * Whether reportUsage can work in this process right now (its key is set). False: the usage sweep
+   * queues nothing until it can, instead of retrying jobs that are bound to fail. Absent: assume yes.
+   */
+  canMeter?(): boolean;
+  /**
    * What the provider charges for a price id (a Polar product, a Stripe price, a Razorpay plan), so
    * /admin/plans can warn when the plan advertises something else. null: no such price. "skip": an id
    * the adapter makes up itself (a Razorpay one-time price, a payment link for the plan's own amount).

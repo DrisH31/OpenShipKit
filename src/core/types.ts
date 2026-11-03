@@ -288,6 +288,11 @@ export interface Subscription {
   status: SubscriptionStatus;
   /** When the current billing period began, as the provider says; null when it doesn't (rows from before it was stored). */
   currentPeriodStart?: string | null;
+  /**
+   * For a provider that can't report a pending cancel (Razorpay): the period end it reported when the
+   * app asked it to cancel. The recorded cancel holds while the provider still reports that period.
+   */
+  cancelRequestedFor?: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
   /**

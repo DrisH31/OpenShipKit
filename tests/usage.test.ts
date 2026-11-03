@@ -12,9 +12,9 @@ import type { Entitlement, Plan, PlanInput, User } from "@/core/types";
 let store: DataStore;
 vi.mock("@/server/data", () => ({ getData: async () => store }));
 vi.mock("@/server/email", () => ({ sendEmail: async () => ({ id: "em" }) }));
-const meter = vi.hoisted(() => ({ reports: [] as unknown[], off: false }));
+const meter = vi.hoisted(() => ({ reports: [] as unknown[], off: false, noKey: false }));
 vi.mock("@/server/billing", () => ({
-  getBilling: async () => (meter.off ? null : { id: "stripe", label: "Stripe", hasPortal: true, reportUsage: async (r: unknown) => void meter.reports.push(r) }),
+  getBilling: async () => (meter.off ? null : { id: "stripe", label: "Stripe", hasPortal: true, reportUsage: async (r: unknown) => void meter.reports.push(r), canMeter: () => !meter.noKey }),
 }));
 const cookie = vi.hoisted(() => ({ org: undefined as string | undefined }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (cookie.org ? { value: cookie.org } : undefined), set: () => {} }) }));
@@ -52,6 +52,7 @@ beforeEach(async () => {
   cookie.org = undefined;
   meter.reports = [];
   meter.off = false;
+  meter.noKey = false;
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -247,6 +248,17 @@ describe("one stored event, one charge", () => {
     await usageReportJob.run({ eventId: event.id });
     expect(meter.reports).toEqual([expect.objectContaining({ id: event.id, quantity: 4 })]);
     expect(await store.usage.get(event.id)).toMatchObject({ reportPending: false, reportedAt: expect.any(String) });
+  });
+
+  it("a provider whose key isn't set in this process: the job fails (stays pending) and the sweep pauses", async () => {
+    await store.billing.setCustomerId(user.id, "stripe", "cus_u1");
+    await usage.recordUsage(me(), "api_calls", 1, { key: "req_nokey" });
+    meter.noKey = true;
+    expect(await runDueJobs()).toMatchObject({ retrying: 1 });
+    expect((await store.jobs.list({})).items[0].lastError).toMatch(/key isn't set/);
+    await store.usage.record({ subject: me(), metric: "api_calls", quantity: 1, report: true });
+    expect(await usage.sweepUsageReports(Date.now() + 10 * 60_000)).toBe(0);
+    expect(meter.reports).toEqual([]);
   });
 
   it("an account with nobody to bill is settled without a sent date", async () => {

@@ -388,6 +388,8 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const sub: Subscription = {
           ...input,
           currentPeriodStart: input.currentPeriodStart ?? null,
+          // Kept across upserts (a webhook doesn't know it); cleared when the row no longer ends.
+          cancelRequestedFor: input.cancelAtPeriodEnd ? (input.cancelRequestedFor ?? existing?.cancelRequestedFor ?? null) : null,
           orgId: input.orgId ?? null,
           seats: input.seats ?? null,
           id: existing?.id ?? randomUUID(),
@@ -402,11 +404,12 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         for (const s of t.subscriptions.values()) if (isRenewing(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
         return out;
       },
-      async requestCancel(provider, providerSubscriptionId) {
+      async requestCancel(provider, providerSubscriptionId, periodEnd = null) {
         const s = t.subscriptions.get(`${provider}:${providerSubscriptionId}`);
         if (!s || !isRenewing(s)) return null;
         const before = clone(s);
         s.cancelAtPeriodEnd = true;
+        s.cancelRequestedFor = periodEnd ? new Date(periodEnd).toISOString() : (s.currentPeriodEnd ?? null);
         s.updatedAt = now();
         return before;
       },

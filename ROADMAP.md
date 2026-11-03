@@ -66,9 +66,10 @@ bucket. Neither was run against a live Stripe, Razorpay or cloud bucket here:
 the sandbox steps are in docs/billing.md and docs/content.md. Four rounds of
 independent review fixed, among others, Razorpay cancels that could leave a
 customer charged while shown "ends", trials that couldn't be cancelled, and
-chargebacks. Open, to confirm in a Razorpay sandbox: how a scheduled cancel
-shows in the API, and whether a delayed renewal webhook can drop a cancel that
-landed (the fix would store the period a cancel was made in).
+chargebacks. A recorded Razorpay cancel holds only within the period Razorpay
+reported when it was asked (stored with it), so a late renewal webhook can't
+drop a cancel that landed. Open, to confirm in a Razorpay sandbox: how a
+scheduled cancel shows in the API.
 
 | # | Item |
 |---|---|
@@ -86,9 +87,9 @@ to Polar or Stripe meters by a background job, idempotent by event id; neither
 was run against a live provider here (docs/usage.md has the setup). Four rounds
 of review gave the outbox one final state per event (sent, nobody to bill, or
 expired past the provider's 35 days), an atomic `consumeUsage`, and periods
-from the provider's own billing period. Open: a per-adapter "can meter" check
-(a provider whose key is missing retries rather than pausing), and a running
-counter for customers with very high event volume (docs/usage.md has the cost).
+from the provider's own billing period; the sweep pauses while a provider can't
+meter in that process (its key missing). Open: a running counter for customers
+with very high event volume (docs/usage.md has the cost).
 
 | # | Item |
 |---|---|

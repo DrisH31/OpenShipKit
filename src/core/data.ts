@@ -144,7 +144,7 @@ export interface BillingRepo {
    * only if it still renews (a renewing status, not set to end), and returns the row as it was before;
    * null when it doesn't (already set to end, ended, or no such row). Two presses at once: one gets the row, the other null.
    */
-  requestCancel(provider: PaidProvider, providerSubscriptionId: string): Promise<Subscription | null>;
+  requestCancel(provider: PaidProvider, providerSubscriptionId: string, periodEnd?: string | null): Promise<Subscription | null>;
   /** How many subscriptions each provider still has renewing (a renewing status, not set to end), by provider. */
   countRenewingByProvider(): Promise<Partial<Record<PaidProvider, number>>>;
   /** Insert or update (refund flag) by (provider, providerOrderId). */

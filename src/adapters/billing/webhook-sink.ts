@@ -243,7 +243,9 @@ async function applySubscription(state: ProviderSubscriptionState, opts: { actor
   if (state.cancelAtPeriodEndKnown === false && !cancelAtPeriodEnd && state.status !== "canceled") {
     const before = await (await getData()).billing.getSubscription(provider, state.providerSubscriptionId);
     if (before?.cancelAtPeriodEnd) {
-      const samePeriod = sameInstant(before.currentPeriodEnd, normalizeInstant(state.currentPeriodEnd));
+      // The period the cancel was asked in, as the provider reported it then (not the row's, which a
+      // delayed renewal webhook can leave a period behind).
+      const samePeriod = sameInstant(before.cancelRequestedFor ?? before.currentPeriodEnd, normalizeInstant(state.currentPeriodEnd));
       if (samePeriod) cancelAtPeriodEnd = true;
       else log(provider, `subscription ${state.providerSubscriptionId}: renewed after a cancel recorded here, so the cancel didn't reach ${provider}; it renews again and can be cancelled again`, true);
     }
@@ -294,8 +296,8 @@ async function applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult
   return changed ? "applied" : "unchanged";
 }
 
-async function requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor): Promise<boolean> {
-  const before = await (await getData()).billing.requestCancel(provider, providerSubscriptionId);
+async function requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor, periodEnd?: string | null): Promise<boolean> {
+  const before = await (await getData()).billing.requestCancel(provider, providerSubscriptionId, normalizeInstant(periodEnd ?? null));
   if (!before) return false;
   // recordAudit never throws (a lost audit row is logged, never turned into a failed write).
   await recordAudit(actor, "subscription.update", "subscription", before.id, before, { ...before, cancelAtPeriodEnd: true });

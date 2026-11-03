@@ -171,6 +171,8 @@ export const subscriptions = pgTable(
     interval: text("interval").$type<PriceInterval>(),
     status: text("status").$type<SubscriptionStatus>().notNull(),
     currentPeriodStart: ts("current_period_start"),
+    /** The period end the provider reported when the app asked it to cancel (a cancel it can't report back). */
+    cancelRequestedFor: ts("cancel_requested_for"),
     currentPeriodEnd: ts("current_period_end"),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
     /**

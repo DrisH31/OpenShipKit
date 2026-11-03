@@ -140,6 +140,25 @@ describe("Razorpay", () => {
     expect(isRenewing(row)).toBe(true); // so the billing page offers Cancel again
   });
 
+  it("a cancel that landed survives a renewal webhook that arrives late (the period is Razorpay's, not the row's)", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await activate(rzp, "l1"); // the row: period P0
+    // Razorpay renews into P1, but that webhook is delayed. The person cancels; the answer is lost.
+    sub.current_end = sub.current_end + 30 * 86_400;
+    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce(Object.assign(new Error("Gateway Timeout"), { statusCode: 504 }));
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me())).rejects.toMatchObject({ kind: "no_answer" });
+    expect(await store.billing.getSubscription("razorpay", "sub_1")).toMatchObject({ cancelAtPeriodEnd: true, cancelRequestedFor: new Date(sub.current_end * 1000).toISOString() });
+    // The delayed P1 webhook: the cancel was asked in P1, so it holds.
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.charged", payload: { subscription: { entity: { id: "sub_1" } } } }, "l2"));
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+    // P2 would mean Razorpay charged again: the cancel didn't take, and the row renews.
+    sub.current_end = sub.current_end + 30 * 86_400;
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.charged", payload: { subscription: { entity: { id: "sub_1" } } } }, "l3"));
+    expect(await store.billing.getSubscription("razorpay", "sub_1")).toMatchObject({ cancelAtPeriodEnd: false, cancelRequestedFor: null });
+  });
+
   it("a refusal puts the row back and says Razorpay's reason", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;

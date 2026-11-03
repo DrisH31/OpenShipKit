@@ -60,6 +60,7 @@ export const usageReportJob = defineJob({
     const provider = await getBilling();
     if (!provider) throw new Error("Billing is off in this process, so metered usage can't be reported. It stays pending until billing is back.");
     if (!provider.reportUsage) throw new Error(`${provider.label} has no meters, so metered usage can't be reported to it. It stays pending.`);
+    if (provider.canMeter && !provider.canMeter()) throw new Error(`${provider.label}'s key isn't set in this process, so metered usage can't be reported. It stays pending until it is.`);
     let customerId: string | null;
     if (event.subject.type === "user") {
       customerId = await data.billing.getCustomerId(event.subject.id, provider.id);

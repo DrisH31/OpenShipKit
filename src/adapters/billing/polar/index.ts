@@ -178,6 +178,8 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
 
     // A Polar meter filters on the event name (the metric) and sums metadata.quantity. external_id
     // makes a retried job a duplicate Polar skips, not a second charge.
+    canMeter: () => Boolean(options.client) || Boolean(optionalEnv("POLAR_ACCESS_TOKEN")),
+
     async reportUsage({ id, customerId, metric, quantity, occurredAt }) {
       await polar().events.ingest({ events: [{ name: metric, customer_id: customerId, external_id: id, timestamp: occurredAt, metadata: { quantity } }] });
     },

@@ -1,0 +1,1 @@
+ALTER TABLE "subscriptions" ADD COLUMN "cancel_requested_for" timestamp (3) with time zone;

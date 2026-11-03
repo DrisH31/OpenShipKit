@@ -12,7 +12,7 @@ providers, usage and limits, and developer experience.
 
 ### Upgrade notes
 
-- **Seven new migrations** (0005 jobs … 0011 usage report outcome): stop
+- **Eight new migrations** (0005 jobs … 0012 cancel requested for): stop
   `npm run dev`, then `npm run db:migrate`. If you have migrations of your own,
   read [upgrading.md](docs/upgrading.md#if-you-have-your-own-migrations) first.
 - **Nothing to set to keep working as before.** Every new variable is optional

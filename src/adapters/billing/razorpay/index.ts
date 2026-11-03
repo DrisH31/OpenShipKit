@@ -288,7 +288,8 @@ export function createRazorpayProvider(options: RazorpayProviderOptions = {}): B
         await out.applySubscription({ ...razorpaySubscriptionState(before), cancelAtPeriodEndKnown: true }, { actor });
         return;
       }
-      if (!(await out.requestCancel("razorpay", providerSubscriptionId, actor))) {
+      // The period it's asked in, as Razorpay reports it now: the recorded cancel holds while that lasts.
+      if (!(await out.requestCancel("razorpay", providerSubscriptionId, actor, razorpaySubscriptionState(before).currentPeriodEnd))) {
         throw new BillingProviderError("conflict", "It's already set to end.");
       }
       const inCycle = before.status !== "authenticated" && before.status !== "created";

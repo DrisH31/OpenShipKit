@@ -246,6 +246,7 @@ const toSubscription = (r: SubscriptionRow): Subscription => ({
   interval: r.interval,
   status: r.status,
   currentPeriodStart: isoOrNull(r.currentPeriodStart),
+  cancelRequestedFor: isoOrNull(r.cancelRequestedFor),
   currentPeriodEnd: isoOrNull(r.currentPeriodEnd),
   cancelAtPeriodEnd: r.cancelAtPeriodEnd,
   orgId: r.orgId,
@@ -794,6 +795,12 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           interval: input.interval,
           status: input.status,
           currentPeriodStart: toDate(input.currentPeriodStart ?? null, "currentPeriodStart"),
+          // Kept across upserts (a webhook doesn't know it) unless given; cleared when the row no longer ends.
+          ...(input.cancelAtPeriodEnd
+            ? input.cancelRequestedFor !== undefined
+              ? { cancelRequestedFor: toDate(input.cancelRequestedFor, "cancelRequestedFor") }
+              : {}
+            : { cancelRequestedFor: null }),
           currentPeriodEnd: toDate(input.currentPeriodEnd, "currentPeriodEnd"),
           cancelAtPeriodEnd: input.cancelAtPeriodEnd,
           orgId: input.orgId ?? null,
@@ -820,11 +827,11 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .groupBy(subscriptions.provider);
         return Object.fromEntries(rows.map((r) => [r.provider, Number(r.n)]));
       },
-      async requestCancel(provider, providerSubscriptionId) {
+      async requestCancel(provider, providerSubscriptionId, periodEnd = null) {
         // Atomic: only the update that flips the flag gets a row back. Before it, the flag was false.
         const [row] = await db()
           .update(subscriptions)
-          .set({ cancelAtPeriodEnd: true, updatedAt: now })
+          .set({ cancelAtPeriodEnd: true, cancelRequestedFor: periodEnd ? toDate(periodEnd, "periodEnd") : sql`${subscriptions.currentPeriodEnd}`, updatedAt: now })
           .where(
             and(
               eq(subscriptions.provider, provider),

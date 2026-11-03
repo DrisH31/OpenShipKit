@@ -268,7 +268,8 @@ export async function sweepUsageReports(now = Date.now()): Promise<number> {
   const expired = await data.usage.expirePendingReports(iso(now - REPORT_WINDOW_MS));
   if (expired) log.warn("usage", `${expired} metered usage event(s) expired unsent: older than the billing provider accepts (35 days)`);
 
-  const canMeter = Boolean((await getBilling())?.reportUsage);
+  const provider = await getBilling();
+  const canMeter = Boolean(provider?.reportUsage) && (provider?.canMeter?.() ?? true);
   let queued = 0;
   if (canMeter) {
     const pending = await data.usage.listPendingReports(iso(now - REPORT_WINDOW_MS), iso(now - SWEEP_AFTER_MS), 200, { failedSince: iso(now - RETRY_FAILED_AFTER_MS) });

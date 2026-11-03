@@ -141,7 +141,7 @@ export interface BillingWebhookSink {
    * Record that the app is asking the provider to cancel: atomically, only if the row still renews
    * (a second press at once gets false and stops). Audited as `actor`.
    */
-  requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor): Promise<boolean>;
+  requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor, periodEnd?: string | null): Promise<boolean>;
   /** Claim the event id — call LAST, after the write succeeded. False when it was already claimed. */
   markEventProcessed(provider: PaidProvider, eventId: string): Promise<boolean>;
 }

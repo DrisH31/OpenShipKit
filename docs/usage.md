@@ -146,9 +146,8 @@ an outbox:
   so a crash between recording and queueing loses nothing. A failed job in `/admin/jobs` says why it failed.
 - Billing off, or unable to meter, where the job runs (a worker started without
   the provider's key) is an error, not a skip: the event stays pending, the
-  sweep queues nothing while billing is off or its provider has no meters, and
-  the event is sent once billing is back. (A provider that is on but missing its
-  key fails each attempt instead, and the job's error says so.)
+  sweep queues nothing while billing is off, its provider has no meters, or its
+  key isn't set in that process, and the event is sent once it can be.
 - Every event reaches a final state: **sent**, **settled** with nobody to bill
   (a free account), or **expired**: it happened more than 35 days ago (by its
   own time, the one Stripe checks), older than Stripe accepts a meter event, so

@@ -522,6 +522,12 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.cancelAtPeriodEnd).toBe(true);
         expect(await store.billing.requestCancel("polar", "no_such_sub")).toBeNull();
         expect((await store.billing.countRenewingByProvider()).polar ?? 0).toBe((counts.polar ?? 0) - 1);
+        // The period it was asked in is kept across a webhook's upsert, and cleared once it renews again.
+        expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.cancelRequestedFor).toBe("2099-01-01T00:00:00.000Z");
+        await store.billing.upsertSubscription({ ...input, status: "active", cancelAtPeriodEnd: true, currentPeriodEnd: "2099-01-01T00:00:00.000Z" });
+        expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.cancelRequestedFor).toBe("2099-01-01T00:00:00.000Z");
+        await store.billing.upsertSubscription({ ...input, status: "active", cancelAtPeriodEnd: false, currentPeriodEnd: "2099-02-01T00:00:00.000Z" });
+        expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.cancelRequestedFor).toBeNull();
         const started = await store.billing.upsertSubscription({ ...input, currentPeriodStart: "2026-10-31T00:00:00.000Z" });
         expect(started.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");
         expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");
