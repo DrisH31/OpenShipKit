@@ -51,7 +51,7 @@ import type {
 } from "@/core/types";
 import type { OrgRole } from "@/core/orgs";
 
-type PaidProvider = "polar";
+type PaidProvider = "polar" | "stripe" | "razorpay";
 
 /** timestamptz with millisecond precision (see the header). */
 const ts = (name: string) => timestamp(name, { withTimezone: true, precision: 3, mode: "date" });

@@ -20,13 +20,17 @@ import { LinkPending } from "@/components/product/link-pending";
 import { billingProvider } from "@/server/env";
 import { requireAdmin } from "@/server/session";
 import { listPlans } from "@/server/services/plans";
+import { PRICE_ID_LABEL, PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing";
 
 export const metadata: Metadata = { title: "Plans" };
 
 export default async function PlansPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await requireAdmin();
   const [plans, sp] = await Promise.all([listPlans(), searchParams]);
-  const billingOn = billingProvider() === "polar";
+  const configured = billingProvider();
+  const billingOn = configured !== "none";
+  // Whose ids the list checks: the configured provider, or Polar's while billing is off (the default recommendation).
+  const provider: PaidProviderId = configured === "none" ? "polar" : configured;
 
   return (
     <>
@@ -34,7 +38,7 @@ export default async function PlansPage({ searchParams }: { searchParams: Promis
         title="Plans"
         answer={
           billingOn
-            ? "What the pricing page sells. Each paid price needs its Polar product id before it can be bought."
+            ? `What the pricing page sells. Each paid price needs its ${PRICE_ID_LABEL[provider]} before it can be bought.`
             : "What the pricing page shows. Payments are off until POLAR_ACCESS_TOKEN is set, so nothing can be bought yet."
         }
         action={
@@ -57,14 +61,14 @@ export default async function PlansPage({ searchParams }: { searchParams: Promis
               <TableRow>
                 <TableHead className="px-4">Plan</TableHead>
                 <TableHead>Prices</TableHead>
-                <TableHead className="hidden sm:table-cell">Polar</TableHead>
+                <TableHead className="hidden sm:table-cell">{PROVIDER_LABEL[provider]}</TableHead>
                 <TableHead className="px-4">Shown</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {plans.map((p) => {
                 const paid = p.prices.filter((x) => x.amountCents > 0);
-                const linked = paid.filter((x) => x.polarProductId).length;
+                const linked = paid.filter((x) => priceIdFor(p, x, provider)).length;
                 return (
                   <TableRow key={p.key}>
                     <TableCell className="px-4 py-3">

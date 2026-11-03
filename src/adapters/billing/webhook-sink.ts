@@ -22,6 +22,7 @@ import "server-only";
 // a string compare would call every redelivery a change and audit it.
 //
 
+import { priceIdFor } from "@/core/billing";
 import type { PaidProvider } from "@/core/data";
 import type { Actor, Plan, PriceInterval, PurchaseInput, SubscriptionUpsert } from "@/core/types";
 import { getData } from "@/server/data";
@@ -62,18 +63,20 @@ export function sameInstant(a: string | null, b: string | null): boolean {
 export interface PlanMatch {
   planKey: string;
   interval: PriceInterval;
+  /** The matched price is charged per seat: only then does a subscription's quantity become its seats. */
+  perSeat: boolean;
 }
 
 /**
  * Which plan and interval a Polar product id belongs to (set per price in
  * /admin/plans). Inactive plans count: a customer can still hold one.
  */
-export async function findPlanByProductId(productId: string | null | undefined): Promise<PlanMatch | null> {
+export async function findPlanByProductId(productId: string | null | undefined, provider: PaidProvider = "polar"): Promise<PlanMatch | null> {
   if (!productId) return null;
   const plans: Plan[] = await (await getData()).plans.list();
   for (const plan of plans) {
     for (const price of plan.prices) {
-      if (price.polarProductId && price.polarProductId === productId) return { planKey: plan.key, interval: price.interval };
+      if (priceIdFor(plan, price, provider) === productId) return { planKey: plan.key, interval: price.interval, perSeat: price.perSeat === true };
     }
   }
   return null;
@@ -210,10 +213,17 @@ async function applySubscription(state: ProviderSubscriptionState): Promise<Webh
     log(provider, `subscription ${state.providerSubscriptionId}: no app user for customer ${state.providerCustomerId ?? "?"} — not applied`, true);
     return "unknown_user";
   }
-  const plan = await findPlanByProductId(state.productId);
+  const plan = await findPlanByProductId(state.productId, provider);
   const planKey = plan?.planKey ?? planFromCheckout(state);
   if (!planKey) warnUnmatched(provider, `subscription ${state.providerSubscriptionId}`, state.productId);
   await rememberCustomer(provider, userId, state.providerCustomerId);
+  // A provider that can't report a pending cancellation: keep the one we recorded (from our own
+  // cancel request) while the subscription is still on; once it has ended, there is nothing to keep.
+  let cancelAtPeriodEnd = state.cancelAtPeriodEnd;
+  if (state.cancelAtPeriodEndKnown === false && !cancelAtPeriodEnd && state.status !== "canceled") {
+    const before = await (await getData()).billing.getSubscription(provider, state.providerSubscriptionId);
+    cancelAtPeriodEnd = before?.cancelAtPeriodEnd ?? false;
+  }
   const changed = await upsertSubscription({
     userId,
     provider,
@@ -223,11 +233,12 @@ async function applySubscription(state: ProviderSubscriptionState): Promise<Webh
     interval: plan?.interval ?? state.interval,
     status: state.status,
     currentPeriodEnd: state.currentPeriodEnd,
-    cancelAtPeriodEnd: state.cancelAtPeriodEnd,
+    cancelAtPeriodEnd,
     // Bound to the organisation our checkout named, whether or not it still exists: a deleted
     // organisation's subscription must grant nothing, never become the buyer's personal plan.
     orgId: state.orgIdHint && UUID.test(state.orgIdHint) ? state.orgIdHint : null,
-    seats: state.seats ?? null,
+    // A quantity is a seat count only on a per-seat price (Stripe and Razorpay report a quantity for every subscription).
+    seats: plan?.perSeat ? (state.seats ?? null) : plan ? null : (state.seats ?? null),
   });
   return changed ? "applied" : "unchanged";
 }
@@ -239,7 +250,7 @@ async function applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult
     log(provider, `order ${state.providerOrderId}: no app user for customer ${state.providerCustomerId ?? "?"} — not applied`, true);
     return "unknown_user";
   }
-  const plan = await findPlanByProductId(state.productId);
+  const plan = await findPlanByProductId(state.productId, provider);
   const planKey = plan?.planKey ?? planFromCheckout(state);
   if (!planKey) warnUnmatched(provider, `order ${state.providerOrderId}`, state.productId);
   await rememberCustomer(provider, userId, state.providerCustomerId);

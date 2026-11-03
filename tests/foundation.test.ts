@@ -437,7 +437,7 @@ describe("plan inheritance survives admin edits", () => {
 describe("one-time checkout", () => {
   it("refuses a second purchase of the same plan and a purchase on top of a live subscription", async () => {
     const createCheckout = vi.fn(async () => ({ url: "https://polar.example/checkout" }));
-    billingState.provider = { id: "polar", label: "Polar", createCheckout, createPortal: vi.fn(), handleWebhook: vi.fn() };
+    billingState.provider = { id: "polar", label: "Polar", hasPortal: true, createCheckout, createPortal: vi.fn(), handleWebhook: vi.fn() };
     const { startCheckout } = await import("@/server/services/billing");
     const { upsertPlan } = await import("@/server/services/plans");
     const lifetime = await upsertPlan(
@@ -858,7 +858,7 @@ async function sellSeededPlans() {
 
 function fakeCheckout() {
   const createCheckout = vi.fn(async () => ({ url: "https://polar.example/checkout" }));
-  billingState.provider = { id: "polar", label: "Polar", createCheckout, createPortal: vi.fn(), handleWebhook: vi.fn() };
+  billingState.provider = { id: "polar", label: "Polar", hasPortal: true, createCheckout, createPortal: vi.fn(), handleWebhook: vi.fn() };
   return createCheckout;
 }
 

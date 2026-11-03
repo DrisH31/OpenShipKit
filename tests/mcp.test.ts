@@ -573,7 +573,8 @@ describe("admin tools", () => {
     const guide = await ok<{ content: { keys: { key: string; schema: object }[] }; plans: object; yourKey: { scope: string } }>(reader, "guide");
     expect(guide.content.keys.map((k) => k.key)).toContain("hero");
     expect(guide.yourKey.scope).toBe("read");
-    expect(JSON.stringify(guide).toLowerCase()).not.toContain("stripe");
+    // Each billing provider's price field is described to the agent (Stripe and Razorpay are real providers now).
+    expect(JSON.stringify(guide)).toMatch(/polarProductId[\s\S]*stripePriceId[\s\S]*razorpayPlanId/);
     const part = await ok<Record<string, unknown>>(reader, "guide", { topic: "plans" });
     expect(part).toHaveProperty("plans");
     expect(part).not.toHaveProperty("content");

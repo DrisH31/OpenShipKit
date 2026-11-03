@@ -31,7 +31,7 @@ const billingState = vi.hoisted(() => ({ cookie: undefined as string | undefined
 vi.mock("@/server/billing", () => ({
   getBilling: async () => ({
     id: "polar",
-    label: "Polar",
+    label: "Polar", hasPortal: true,
     createCheckout: async () => ({ url: "https://polar.example.com/checkout" }),
     createPortal: async () => ({ url: "https://polar.example.com/portal" }),
     handleWebhook: async () => new Response(null),

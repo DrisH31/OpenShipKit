@@ -62,8 +62,8 @@ describe("the env rule", () => {
     expect(resolveBillingProvider({ POLAR_ACCESS_TOKEN: "polar_x" })).toBe("polar");
     expect(resolveBillingProvider({ ...SITE, POLAR_ACCESS_TOKEN: "polar_x" })).toBe("none");
     expect(resolveBillingProvider({ ...SITE, BILLING_PROVIDER: "polar", POLAR_ACCESS_TOKEN: "polar_x" })).toBe("none");
-    // A typo is still a typo: it doesn't hide behind the profile.
-    expect(() => resolveBillingProvider({ ...SITE, BILLING_PROVIDER: "stripe" })).toThrow(/BILLING_PROVIDER/);
+    // A typo is still a typo: it doesn't hide behind the profile. ("stripe" was the example until it became a real provider.)
+    expect(() => resolveBillingProvider({ ...SITE, BILLING_PROVIDER: "paddle" })).toThrow(/BILLING_PROVIDER/);
   });
 
   it("is what the server reads, lazily", async () => {
@@ -312,7 +312,8 @@ describe("the production boot check", () => {
   });
 
   it("says nothing about profiles under saas", async () => {
-    const { exited, log } = await boot({ POLAR_ACCESS_TOKEN: "polar_x" });
+    // With its webhook secret: production now refuses a billing key without one (every webhook would fail).
+    const { exited, log } = await boot({ POLAR_ACCESS_TOKEN: "polar_x", POLAR_WEBHOOK_SECRET: "whsec_x" });
     expect(exited).toBe(false);
     expect(log).not.toContain("OPENSHIPKIT_PROFILE");
   });

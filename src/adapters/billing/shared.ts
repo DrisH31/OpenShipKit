@@ -99,6 +99,12 @@ export interface ProviderSubscriptionState {
   /** Any ISO-8601 instant (the provider's precision and offset); the sink normalises it. */
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /**
+   * False when the provider's object can't say whether it is set to end (Razorpay keeps a pending
+   * cycle-end cancellation "active" with no field for it): the sink then keeps what it recorded,
+   * until the subscription actually ends.
+   */
+  cancelAtPeriodEndKnown?: boolean;
 }
 
 /** A provider one-time order as the provider says it is NOW, normalised. */

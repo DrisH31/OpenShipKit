@@ -136,6 +136,7 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
   return {
     id: "polar",
     label: "Polar",
+    hasPortal: true,
 
     async createCheckout(input: CheckoutInput) {
       const { user, plan, price, customerId } = input;

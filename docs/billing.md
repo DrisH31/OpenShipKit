@@ -1,4 +1,4 @@
-# Billing (optional): Polar
+# Billing (optional): Polar, Stripe or Razorpay
 
 Billing is **off by default**. The pricing page still shows your plans, free
 plans work, and nothing can be bought. When you’re ready to charge, OpenShipKit
@@ -7,8 +7,11 @@ on the invoice, so it calculates, collects and remits VAT and sales tax
 worldwide and issues the receipts. You get paid out; you don’t register for
 tax in every country.
 
-Polar is the only payment provider. The code is `src/adapters/billing/polar/`
-behind the `BillingProvider` contract (`src/core/billing.ts`).
+Polar is the default and the guide below sets it up. [Stripe](#stripe-instead)
+and [Razorpay](#razorpay-instead-india) (for India) work the same way, one provider at
+a time (`BILLING_PROVIDER`). Each lives in `src/adapters/billing/<provider>/`
+behind the `BillingProvider` contract (`src/core/billing.ts`), and
+`tests/billing-adapters.test.ts` holds every adapter to the same scenarios.
 
 ## The rule
 
@@ -120,6 +123,66 @@ Call these on the server — in a page, action or route — after `requireUser()
 `CheckoutButton` and `PortalButton` (`src/components/billing`) are plain
 forms that post to these and work without JavaScript. Both routes check the
 request’s `Origin` against `NEXT_PUBLIC_SITE_URL` and rate-limit per user.
+
+## Stripe instead
+
+`BILLING_PROVIDER=stripe` (or just `STRIPE_SECRET_KEY` set, with no Polar
+token). Stripe isn't the merchant of record: you turn on Stripe Tax and
+receipts in your Stripe dashboard.
+
+1. **Products and prices.** In Stripe, create a product per plan and a
+   recurring price per interval (or a one-time price). In `/admin/plans`,
+   paste each price's id (`price_…`) into **Stripe price id**. For teams,
+   a per-seat price uses Stripe's per-unit pricing: the checkout buys one
+   unit per seat.
+2. **Webhook.** Developers → Webhooks → Add endpoint
+   `<NEXT_PUBLIC_SITE_URL>/api/billing/webhook` with the events
+   `customer.subscription.created`, `customer.subscription.updated`,
+   `customer.subscription.deleted`, `customer.subscription.paused`,
+   `customer.subscription.resumed`, `checkout.session.completed`,
+   `checkout.session.async_payment_succeeded` and `charge.refunded`. Put its
+   signing secret in `STRIPE_WEBHOOK_SECRET`.
+3. **The customer portal.** Settings → Billing → Customer portal: turn on
+   cancelling and updating payment methods. **Manage billing** opens it.
+
+Test with `sk_test_…` keys and Stripe's test cards. The rules don't change:
+access comes only from a signature-verified webhook, the subscription is
+re-fetched from Stripe before anything is written, and each event is handled
+once.
+
+## Razorpay instead (India)
+
+`BILLING_PROVIDER=razorpay` (or just `RAZORPAY_KEY_ID` set). Razorpay takes
+UPI, cards and netbanking. GST invoices are set up in its dashboard.
+
+1. **Plans.** For each recurring price, create a Razorpay plan
+   (Subscriptions → Plans) with the same amount and period, and paste its id
+   (`plan_…`) into **Razorpay plan id**. A one-time price needs nothing in
+   Razorpay: the checkout is a payment link for the price's amount.
+2. **Webhook.** Account & Settings → Webhooks →
+   `<NEXT_PUBLIC_SITE_URL>/api/billing/webhook`, with a secret you choose
+   (`RAZORPAY_WEBHOOK_SECRET`) and the events `subscription.authenticated`,
+   `subscription.activated`, `subscription.charged`, `subscription.pending`,
+   `subscription.halted`, `subscription.cancelled`, `subscription.completed`,
+   `subscription.paused`, `subscription.resumed`, `subscription.updated`,
+   `payment_link.paid` and `refund.processed`.
+3. **Keys.** `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`
+   (`rzp_test_…` while testing).
+
+What's different about Razorpay:
+
+- **No customer portal.** The billing page lists the person's renewing
+  subscriptions with a **Cancel at period end** button instead of Manage
+  billing. Updating a card goes through Razorpay's own emails and links.
+- **A cancellation is remembered by the app.** Razorpay keeps a subscription
+  cancelled "at the end of the cycle" as `active`, with no field saying it will
+  end. The app records the cancellation when you press the button and keeps it
+  until Razorpay moves the subscription to `cancelled`. A cancellation made in
+  Razorpay's dashboard isn't seen until then.
+- **Subscriptions run for at most 120 months (10 years).** Razorpay needs a
+  cycle count. When it runs out, the subscription shows as completed.
+- **Refunds of one-time purchases** are recognised because the app copies its
+  notes onto the payment when the link is paid.
 
 ## Variables
 

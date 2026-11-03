@@ -2,7 +2,8 @@ import "server-only";
 
 //
 // Pricing plans. The pricing page, checkout and entitlement checks all read
-// these. A price's polarProductId connects it to the Polar product it sells.
+// these. A price's provider ids (polarProductId, stripePriceId, razorpayPlanId:
+// src/core/billing.ts) connect it to what it sells there.
 //
 // A plan someone pays for is load-bearing: every renewal webhook finds the
 // plan by its Polar product id. So while a live subscription or an unrefunded
@@ -26,6 +27,7 @@ import { assertNotDemo } from "../demo";
 import { getData } from "../data";
 import { recordAudit } from "./audit";
 import { ServiceError, parseInput } from "./errors";
+import { PRICE_ID_LABEL, storedPriceIds } from "@/core/billing";
 
 export async function listPlans(opts: { activeOnly?: boolean } = {}): Promise<Plan[]> {
   return (await getData()).plans.list(opts);
@@ -70,16 +72,17 @@ async function assertNoHolders(key: string, doing: string): Promise<void> {
   if (holders.subscriptions + holders.purchases === 0) return;
   throw new ServiceError(
     "conflict",
-    `Can't ${doing}: ${describeHolders(holders)} use plan "${key}", and their renewals find it by its Polar product id. Set it inactive instead (active: false) to hide it from pricing and checkout.`,
+    `Can't ${doing}: ${describeHolders(holders)} use plan "${key}", and their renewals find it by its billing provider's id for the price. Set it inactive instead (active: false) to hide it from pricing and checkout.`,
   );
 }
 
-/** Product ids `before` sells that `after` no longer sells at the same interval. */
+/** Provider ids `before` sells that `after` no longer sells at the same interval, whichever provider. */
 function droppedProductIds(before: Plan, after: { prices: Plan["prices"] }): string[] {
-  return before.prices
-    .filter((p) => p.polarProductId)
-    .filter((p) => !after.prices.some((q) => q.interval === p.interval && q.polarProductId === p.polarProductId))
-    .map((p) => p.polarProductId as string);
+  return before.prices.flatMap((p) =>
+    storedPriceIds(p)
+      .filter(({ field, id }) => !after.prices.some((q) => q.interval === p.interval && (q[field] ?? null) === id))
+      .map(({ id }) => id),
+  );
 }
 
 /**
@@ -92,7 +95,7 @@ export async function assertSafePlanChange(key: string, current: Plan | null, ne
     await assertNotIncluded(current);
     return assertNoHolders(key, "delete it");
   }
-  if (droppedProductIds(current, next).length > 0) await assertNoHolders(key, "remove or change a price's Polar product id");
+  if (droppedProductIds(current, next).length > 0) await assertNoHolders(key, "remove or change a price's billing provider id");
 }
 
 /** Refuse deleting a plan another plan includes: that plan's buyers would silently lose it. */
@@ -147,21 +150,21 @@ export async function carryPlanRename(before: Plan | null, after: Plan, actor: A
  * wrong one.
  */
 async function assertUniqueProductIds(key: string, prices: Plan["prices"]): Promise<void> {
-  const taken = new Map<string, string>(); // product id → where it is already used
+  const taken = new Map<string, string>(); // provider:id → where it is already used
   for (const plan of await listPlans()) {
     if (plan.key === key) continue;
-    for (const p of plan.prices) if (p.polarProductId) taken.set(p.polarProductId, `plan "${plan.key}" (${p.interval})`);
+    for (const p of plan.prices) for (const { provider, id } of storedPriceIds(p)) taken.set(`${provider}:${id}`, `plan "${plan.key}" (${p.interval})`);
   }
   prices.forEach((price, i) => {
-    const id = price.polarProductId;
-    if (!id) return;
-    const usedBy = taken.get(id);
-    if (usedBy) {
-      throw new ServiceError("conflict", `Polar product ${id} is already used by ${usedBy}. Each price needs its own Polar product.`, [
-        { path: `prices.${i}.polarProductId`, message: `Already used by ${usedBy}` },
-      ]);
+    for (const { provider, field, id } of storedPriceIds(price)) {
+      const usedBy = taken.get(`${provider}:${id}`);
+      if (usedBy) {
+        throw new ServiceError("conflict", `${PRICE_ID_LABEL[provider]} ${id} is already used by ${usedBy}. Each price needs its own.`, [
+          { path: `prices.${i}.${field}`, message: `Already used by ${usedBy}` },
+        ]);
+      }
+      taken.set(`${provider}:${id}`, `plan "${key}" (${price.interval})`);
     }
-    taken.set(id, `plan "${key}" (${price.interval})`);
   });
 }
 
@@ -174,7 +177,15 @@ async function assertUniqueProductIds(key: string, prices: Plan["prices"]): Prom
 export async function validatePlanWrite(input: unknown): Promise<PlanInput> {
   const raw = parseInput(planSchema, input);
   // A pasted id often carries a space, which would never match Polar's: trim it (empty → none).
-  const parsed = { ...raw, prices: raw.prices.map((p) => ({ ...p, polarProductId: p.polarProductId?.trim() || null })) };
+  const parsed = {
+    ...raw,
+    prices: raw.prices.map((p) => ({
+      ...p,
+      polarProductId: p.polarProductId?.trim() || null,
+      ...(p.stripePriceId !== undefined ? { stripePriceId: p.stripePriceId?.trim() || null } : {}),
+      ...(p.razorpayPlanId !== undefined ? { razorpayPlanId: p.razorpayPlanId?.trim() || null } : {}),
+    })),
+  };
   const intervals = parsed.prices.map((p) => p.interval);
   if (new Set(intervals).size !== intervals.length) throw new ServiceError("invalid", "At most one price per interval");
   await assertUniqueProductIds(parsed.key, parsed.prices);

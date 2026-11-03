@@ -128,9 +128,9 @@ export function assertNotFutureDated(status: string | undefined, publishedAt: st
 
 // ---------------------------------------------------------------- plans
 
-/** The billing-relevant part of one price: what checkout charges and which Polar product it maps to. */
+/** The billing-relevant part of one price: what checkout charges and which provider objects it maps to. */
 function priceKey(p: PlanPrice): string {
-  return `${p.interval}|${p.amountCents}|${p.currency.toLowerCase()}|${p.polarProductId ?? ""}`;
+  return `${p.interval}|${p.amountCents}|${p.currency.toLowerCase()}|${p.polarProductId ?? ""}|${p.stripePriceId ?? ""}|${p.razorpayPlanId ?? ""}|${p.perSeat ? "seat" : ""}`;
 }
 
 /**

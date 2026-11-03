@@ -33,6 +33,8 @@ import { siteProfile, siteUrl } from "../env";
 import { currentOrg } from "../orgs";
 import { ServiceError } from "./errors";
 import { orgSeats, requireOrgPermission, teamsEnabled } from "./orgs";
+import { PRICE_ID_LABEL, priceIdFor } from "@/core/billing";
+import { recordAudit } from "./audit";
 
 /** Live subscriptions that grant a plan: an entitled status in its period, and a plan to grant. */
 function liveSubscriptions(subscriptions: Subscription[], now: number): (Subscription & { planKey: string })[] {
@@ -272,8 +274,9 @@ export async function startCheckout(user: User, planKey: string, interval: Price
   if (plan.contactSales) throw new ServiceError("invalid", "This plan is sold by contacting sales");
   const price = plan.prices.find((p) => p.interval === interval);
   if (!price) throw new ServiceError("invalid", `Plan "${planKey}" has no ${interval} price`);
-  if (!price.polarProductId) {
-    throw new ServiceError("unavailable", `Plan "${planKey}" (${interval}) has no Polar product id yet — set it in /admin/plans`);
+  const billingFor = await getBilling();
+  if (billingFor && !priceIdFor(plan, price, billingFor.id)) {
+    throw new ServiceError("unavailable", `Plan "${planKey}" (${interval}) has no ${PRICE_ID_LABEL[billingFor.id]} yet — set it in /admin/plans`);
   }
   const refusal = checkoutRefusal({ planKey, interval, ...(await billingRows(user.id)) });
   if (refusal) throw new ServiceError("conflict", refusal.message, { reason: refusal.reason });
@@ -295,13 +298,16 @@ export async function openPortal(user: User): Promise<string> {
   if (teamsEnabled()) {
     // Manage billing is the payer's own portal: everything they pay for (ownBilling). An owner who
     // doesn't pay is told who does on the billing page, not here.
-    if (!(await getBilling())) throw new ServiceError("unavailable", "Billing isn't configured");
+    const provider = await getBilling();
+    if (!provider) throw new ServiceError("unavailable", "Billing isn't configured");
+    if (!provider.hasPortal) throw new ServiceError("invalid", `${provider.label} has no customer portal: cancel from the billing page.`);
     const own = await ownBilling(user);
     if (!own) throw new ServiceError("not_found", "You haven't bought anything here, so there's no billing to manage.");
     return (await own.billing.createPortal({ user, customerId: own.customerId, returnUrl: `${siteUrl()}/dashboard/billing` })).url;
   }
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
+  if (!billing.hasPortal) throw new ServiceError("invalid", `${billing.label} has no customer portal: cancel from the billing page.`);
   const customerId = await (await getData()).billing.getCustomerId(user.id, billing.id);
   if (!customerId) throw new ServiceError("not_found", "No billing account yet; subscribe to a plan first");
   const { url } = await billing.createPortal({ user, customerId, returnUrl: `${siteUrl()}/dashboard/billing` });
@@ -315,8 +321,9 @@ async function sellable(planKey: string, interval: PriceInterval): Promise<{ pla
   if (plan.contactSales) throw new ServiceError("invalid", "This plan is sold by contacting sales");
   const price = plan.prices.find((p) => p.interval === interval);
   if (!price) throw new ServiceError("invalid", `Plan "${planKey}" has no ${interval} price`);
-  if (!price.polarProductId) {
-    throw new ServiceError("unavailable", `Plan "${planKey}" (${interval}) has no Polar product id yet — set it in /admin/plans`);
+  const billingFor = await getBilling();
+  if (billingFor && !priceIdFor(plan, price, billingFor.id)) {
+    throw new ServiceError("unavailable", `Plan "${planKey}" (${interval}) has no ${PRICE_ID_LABEL[billingFor.id]} yet — set it in /admin/plans`);
   }
   return { plan, price };
 }
@@ -430,4 +437,36 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
 /** Whether Manage billing would open for this person (ownBilling, the same question openPortal asks). */
 export async function paysForAnything(user: User): Promise<boolean> {
   return (await ownBilling(user)) !== null;
+}
+
+/**
+ * For a provider with no customer portal (Razorpay): the subscriptions this person pays for that
+ * still renew, which the billing page offers to cancel. Empty with a portal provider, or billing off.
+ */
+export async function listCancellable(user: User): Promise<Subscription[]> {
+  const billing = await getBilling();
+  if (!billing || billing.hasPortal) return [];
+  return (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 })).items.filter(isRenewing);
+}
+
+/**
+ * Stop a subscription this person pays for from renewing, through the provider's API (for a provider
+ * with no portal). It runs to the end of the period. Only its payer may; audited. The provider hands
+ * the new state to the webhook sink, so the row changes the same way a webhook would change it.
+ */
+export async function cancelSubscription(user: User, subscriptionId: string): Promise<void> {
+  assertNotDemo(user);
+  const billing = await getBilling();
+  if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
+  if (!billing.cancelAtPeriodEnd) throw new ServiceError("invalid", `Cancel in ${billing.label}'s portal: Manage billing.`);
+  const sub = (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 })).items.find((s) => s.id === subscriptionId);
+  if (!sub) throw new ServiceError("not_found", "No such subscription of yours.");
+  if (!isRenewing(sub)) throw new ServiceError("conflict", "It's already set to end, or has ended.");
+  await billing.cancelAtPeriodEnd(sub.providerSubscriptionId);
+  await recordAudit({ type: "user", id: user.id, label: user.email }, "subscription.cancel", "subscription", sub.id, { cancelAtPeriodEnd: false }, { cancelAtPeriodEnd: true });
+}
+
+/** Whether Manage billing can open a portal (Polar, Stripe) or the page offers Cancel instead (Razorpay). */
+export async function billingHasPortal(): Promise<boolean> {
+  return (await getBilling())?.hasPortal ?? false;
 }

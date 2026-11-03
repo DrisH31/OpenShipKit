@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
 }));
 const fakeBilling: BillingProvider = {
   id: "polar",
-  label: "Polar",
+  label: "Polar", hasPortal: true,
   createCheckout: async (input) => {
     h.checkouts.push(input);
     return { url: "https://polar.example.com/checkout/1" };

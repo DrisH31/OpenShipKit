@@ -24,6 +24,14 @@ import { listAudit } from "./services/audit";
 import { getContentState } from "./services/content";
 import { listPlans } from "./services/plans";
 import { getPublishedPost } from "./services/posts";
+import { PRICE_ID_LABEL, PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing";
+
+/** The two variables that turn each provider on: its key and its webhook secret. */
+const PROVIDER_KEYS: Record<PaidProviderId, [string, string]> = {
+  polar: ["POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET"],
+  stripe: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+  razorpay: ["RAZORPAY_KEY_ID", "RAZORPAY_WEBHOOK_SECRET"],
+};
 
 /**
  * The published starter blog posts and changelog entries still in OpenShipKit's
@@ -49,8 +57,14 @@ export async function getSetupSteps(saas: boolean): Promise<SetupStep[]> {
   ]);
   const renamed = !isShowcase(site.value);
   const paidPrices = plans.filter((p) => p.active && !p.contactSales).flatMap((p) => p.prices.filter((x) => x.amountCents > 0));
-  const unlinked = paidPrices.filter((p) => !p.polarProductId).length;
-  const billingOn = billingProvider() === "polar";
+  const configured = billingProvider();
+  const billingOn = configured !== "none";
+  // The provider being set up, or Polar's wording while billing is off (the default recommendation).
+  const provider: PaidProviderId = configured === "none" ? "polar" : configured;
+  const unlinked = plans
+    .filter((p) => p.active && !p.contactSales)
+    .flatMap((plan) => plan.prices.filter((x) => x.amountCents > 0).map((price) => priceIdFor(plan, price, provider)))
+    .filter((id) => !id).length;
   const url = siteUrl();
   const deployed = !isDemo() && !isLocalUrl(url);
 
@@ -88,10 +102,10 @@ export async function getSetupSteps(saas: boolean): Promise<SetupStep[]> {
       title: "Turn on payments",
       body: (
         <>
-          Set <code className="font-mono text-caption">POLAR_ACCESS_TOKEN</code> and <code className="font-mono text-caption">POLAR_WEBHOOK_SECRET</code>, and point Polar’s
-          webhook at this address:
+          Set <code className="font-mono text-caption">{PROVIDER_KEYS[provider][0]}</code> and <code className="font-mono text-caption">{PROVIDER_KEYS[provider][1]}</code>{" "}
+          for {PROVIDER_LABEL[provider]} (or Stripe or Razorpay instead: the billing guide), and point its webhook at this address:
           <CopyValue value={`${url}/api/billing/webhook`} srLabel="Copy the webhook address" className="my-1 flex w-fit" />
-          Polar is the merchant of record, so it handles tax and receipts.
+          {provider === "polar" ? "Polar is the merchant of record, so it handles tax and receipts." : "Tax and receipts are set up in its dashboard."}
         </>
       ),
       state: billingOn ? "done" : "optional",
@@ -99,13 +113,13 @@ export async function getSetupSteps(saas: boolean): Promise<SetupStep[]> {
     },
     {
       id: "polar",
-      title: "Connect each price to a Polar product",
+      title: `Connect each price to its ${PRICE_ID_LABEL[provider]}`,
       body:
         paidPrices.length === 0
           ? "No paid prices yet. Add one to a plan first."
           : unlinked
-            ? `${unlinked} of ${paidPrices.length} paid prices have no Polar product id yet. Checkout stays off for those until you paste one in.`
-            : "Every paid price has a Polar product id.",
+            ? `${unlinked} of ${paidPrices.length} paid prices have no ${PRICE_ID_LABEL[provider]} yet. Checkout stays off for those until you paste one in.`
+            : `Every paid price has a ${PRICE_ID_LABEL[provider]}.`,
       state: paidPrices.length > 0 && unlinked === 0 ? "done" : billingOn ? "todo" : "optional",
       action: { label: "Add product ids", href: "/admin/plans" },
     },

@@ -12,8 +12,8 @@
 export type AuthProviderId = "better-auth";
 /** postgres (your server, or embedded PGlite in development) | memory (unit tests only). */
 export type DataProviderId = "postgres" | "memory";
-/** Polar (merchant of record), or none: billing is optional and off by default. */
-export type BillingProviderId = "polar" | "none";
+/** Polar (merchant of record), Stripe, Razorpay (India), or none: billing is optional and off by default. One at a time. */
+export type BillingProviderId = "polar" | "stripe" | "razorpay" | "none";
 /** Resend, your own SMTP server or relay, or console (prints to the server log) in development. */
 export type EmailProviderId = "resend" | "smtp" | "console";
 
@@ -164,8 +164,12 @@ export interface PlanPrice {
   amountCents: number;
   /** ISO 4217, lower case: "usd". */
   currency: string;
-  /** The Polar product this price checks out. Empty until set in /admin/plans. */
+  /** The Polar product this price checks out (BILLING_PROVIDER=polar). Empty until set in /admin/plans. */
   polarProductId: string | null;
+  /** The Stripe price it checks out (BILLING_PROVIDER=stripe): price_…. */
+  stripePriceId?: string | null;
+  /** The Razorpay plan a recurring price subscribes to (BILLING_PROVIDER=razorpay): plan_…. One-time prices need none. */
+  razorpayPlanId?: string | null;
   /**
    * Charged per seat (OPENSHIPKIT_TENANCY=org): an organisation's checkout buys one seat per
    * member and pending invitation, and invitations stop at the seat count. The Polar product must

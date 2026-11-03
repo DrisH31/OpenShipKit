@@ -78,7 +78,7 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **Auth** | Better Auth: email + password, email verification, password reset, magic links, two-factor (TOTP + backup codes), session management, optional GitHub / Google |
 | **Dashboard** | Home (with a setup checklist for admins), billing, profile, password, 2FA, sessions, delete account, feedback; optional teams (organisations, owner/admin/member roles, email invitations) |
 | **Admin** | Overview, users (roles, bans), content editor, posts, media library (image uploads on your own disk), plans, feedback inbox, subscribers (CSV export), agent keys, audit log (one-click restore for content, posts and plans) |
-| **Billing (optional)** | Polar as merchant of record: checkout, customer portal, signature-verified idempotent webhooks; access granted only from webhooks |
+| **Billing (optional)** | Polar (merchant of record), Stripe, or Razorpay for India: checkout, customer portal (or in-app cancel on Razorpay), signature-verified idempotent webhooks, one shared adapter contract; access granted only from webhooks |
 | **Email** | Resend or any SMTP server (your own included) in production; in development every email prints to the terminal |
 | **MCP server** | 30+ tools over Streamable HTTP, scoped agent keys (read / write / admin), every write audited (reads update the key’s last-used time) |
 | **SEO** | Server-rendered pages, canonical URLs, JSON-LD, sitemap, RSS, `robots.txt` open to search and AI crawlers, `llms.txt` + `llms-full.txt`, generated OG images, optional IndexNow pings |
@@ -510,7 +510,6 @@ Honest limits, so you know what you'd add:
 |---|---|
 | More than one language | Every word is English; there's no locale switch |
 | SSO | Teams are in (`OPENSHIPKIT_TENANCY=org`: organisations, roles, invitations, per-seat billing), but there's no single sign-on (SAML/OIDC) |
-| Payment providers other than Polar | Stripe or Razorpay means a new billing adapter |
 | More than one app replica out of the box | Turn on the Redis module first ([modules/](modules/README.md)) |
 | Someone to look after the server | Updates, backups and restore rehearsals are yours ([deploy/](deploy/README.md)) |
 

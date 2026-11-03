@@ -56,8 +56,20 @@ export function resolveTenancy(env: EnvRecord): Tenancy {
  * a content site sells nothing (the boot check warns when keys are set anyway).
  * A malformed BILLING_PROVIDER still throws, so a typo can't hide behind it.
  */
+/** The key that turns each paid provider on, and its webhook secret: one place for the boot check and setup. */
+export const BILLING_KEYS = {
+  polar: { key: "POLAR_ACCESS_TOKEN", webhookSecret: "POLAR_WEBHOOK_SECRET" },
+  stripe: { key: "STRIPE_SECRET_KEY", webhookSecret: "STRIPE_WEBHOOK_SECRET" },
+  razorpay: { key: "RAZORPAY_KEY_ID", webhookSecret: "RAZORPAY_WEBHOOK_SECRET" },
+} as const;
+
+/**
+ * BILLING_PROVIDER: polar | stripe | razorpay | none. Unset: the first whose key is set (Polar,
+ * then Stripe, then Razorpay), else none. One provider at a time. The site profile is always none.
+ */
 export function resolveBillingProvider(env: EnvRecord): BillingProviderId {
-  const configured = oneOf(env, "BILLING_PROVIDER", ["polar", "none"] as const, readEnv(env, "POLAR_ACCESS_TOKEN") ? "polar" : "none");
+  const fallback = readEnv(env, "POLAR_ACCESS_TOKEN") ? "polar" : readEnv(env, "STRIPE_SECRET_KEY") ? "stripe" : readEnv(env, "RAZORPAY_KEY_ID") ? "razorpay" : "none";
+  const configured = oneOf(env, "BILLING_PROVIDER", ["polar", "stripe", "razorpay", "none"] as const, fallback);
   return resolveProfile(env) === "site" ? "none" : configured;
 }
 

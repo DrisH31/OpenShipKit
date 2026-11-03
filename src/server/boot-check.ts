@@ -21,6 +21,7 @@
 import "server-only";
 import { isLocalHost } from "@/lib/site-url";
 import {
+  BILLING_KEYS,
   demoAdminProblems,
   parseSmtpUrl,
   readEnv,
@@ -84,7 +85,14 @@ export function checkProductionEnv(): void {
   }
   const profile = rule(() => resolveProfile(process.env));
   // A malformed BILLING_PROVIDER throws on every billing read, in either profile: fatal here, like EMAIL_PROVIDER.
-  if (profile) rule(() => resolveBillingProvider(process.env));
+  const paid = profile ? rule(() => resolveBillingProvider(process.env)) : null;
+  // The provider in use needs its key and its webhook secret: without the secret every webhook is
+  // refused, and nobody who pays ever gets access.
+  if (paid && paid !== "none") {
+    for (const name of [BILLING_KEYS[paid].key, BILLING_KEYS[paid].webhookSecret, ...(paid === "razorpay" ? ["RAZORPAY_KEY_SECRET"] : [])]) {
+      if (!env(name)) fatal.push(`BILLING_PROVIDER is ${paid} but ${name} is not set (docs/billing.md).`);
+    }
+  }
   // The read-only demo admin (showcase only): half-configured, or a short password, is refused rather than silently off.
   fatal.push(...demoAdminProblems(process.env));
   if (fatal.length > 0) {
@@ -122,7 +130,10 @@ export function checkProductionEnv(): void {
 
   if (profile === "site") {
     // The profile wins over Polar keys (env-rules.ts); say so, so nobody waits for a webhook that 404s.
-    const polar = [env("BILLING_PROVIDER") === "polar" ? "BILLING_PROVIDER=polar" : "", env("POLAR_ACCESS_TOKEN") ? "POLAR_ACCESS_TOKEN" : ""].filter(Boolean);
+    const polar = [
+      env("BILLING_PROVIDER") && env("BILLING_PROVIDER") !== "none" ? `BILLING_PROVIDER=${env("BILLING_PROVIDER")}` : "",
+      ...Object.values(BILLING_KEYS).map((k) => (env(k.key) ? k.key : "")),
+    ].filter(Boolean);
     if (polar.length) {
       log.warn("openshipkit", `OPENSHIPKIT_PROFILE=site switches billing off, so ${polar.join(" and ")} ${polar.length === 1 ? "is" : "are"} ignored and /api/billing/* answer 404. Unset ${polar.length === 1 ? "it" : "them"}, or set OPENSHIPKIT_PROFILE=saas to sell (docs/site-profile.md).`);
     } else {

@@ -42,8 +42,12 @@ import { formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS } from "@/lib/status";
 import { requireSaasProfile } from "@/server/profile";
 import { requireUser } from "@/server/session";
-import { getCheckoutGuard, getOrgBillingView, isBillingEnabled, paysForAnything, type CheckoutRefusal } from "@/server/services/billing";
+import { billingHasPortal, getCheckoutGuard, getOrgBillingView, isBillingEnabled, listCancellable, paysForAnything, type CheckoutRefusal } from "@/server/services/billing";
+import { ActionForm, FormMessage, SubmitButton } from "@/components/product/action-form";
+import { cancelSubscriptionAction } from "./actions";
 import { teamsEnabled } from "@/server/services/orgs";
+import { billingProvider } from "@/server/env";
+import { priceIdFor, type PaidProviderId } from "@/core/billing";
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
@@ -89,7 +93,7 @@ const ownedOutright = (plan: Plan, refuse: Guard) => {
   return paid.length > 0 && paid.every((p) => refuse(plan.key, p.interval)?.reason === "already_owned");
 };
 
-function PlanOption({ plan, plans, current, billingOn, refuse }: { plan: Plan; plans: Plan[]; current: boolean; billingOn: boolean; refuse: Guard }) {
+function PlanOption({ plan, plans, current, provider, refuse }: { plan: Plan; plans: Plan[]; current: boolean; provider: PaidProviderId | null; refuse: Guard }) {
   const paid = plan.prices.filter((p) => p.amountCents > 0);
   const features = resolveFeatures(plan, plans);
   // What can actually be bought here; anything else gets one line of caption, not a button shape.
@@ -97,7 +101,7 @@ function PlanOption({ plan, plans, current, billingOn, refuse }: { plan: Plan; p
   const refusal = (p: PlanPrice) => refuse(plan.key, p.interval);
   // A second subscription: Polar switches plans (prorated) in its portal, not through a new checkout.
   const viaPortal = (p: PlanPrice) => p.interval !== "one_time" && refusal(p)?.reason === "already_subscribed";
-  const buyable = offered.filter((p) => !refusal(p) && billingOn && p.polarProductId);
+  const buyable = offered.filter((p) => !refusal(p) && provider !== null && priceIdFor(plan, p, provider));
   const switchOnly = offered.some(viaPortal);
   // Any other refusal reads as its own label, once ("Cancel your subscription first").
   const refusedLabels = [...new Set(offered.filter((p) => !viaPortal(p)).flatMap((p) => refusal(p)?.label ?? []))];
@@ -177,6 +181,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
 
   // With teams on, everything below is the organisation's (getOrgBillingView): its plan, seats and payments.
   const teams = teamsEnabled();
+  const configured = billingProvider();
+  const paidProvider: PaidProviderId | null = configured === "none" ? null : configured;
   const orgView = teams ? await getOrgBillingView(user) : null;
   if (teams && !orgView) {
     // In no team, but perhaps still paying for one they've left: Manage billing stays reachable.
@@ -200,6 +206,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   // With teams, Manage billing is the person's own billing: shown when they pay for anything (openPortal
   // opens exactly that). An owner who doesn't pay sees who does in the notice below instead.
   const showPortal = orgView ? await paysForAnything(user) : null;
+
+  // A provider with no portal (Razorpay): the page lists what can be cancelled instead of Manage billing.
+  const [hasPortal, cancellable] = await Promise.all([billingHasPortal(), listCancellable(user)]);
 
   // Every plan, retired ones included, for names; only active plans are offered.
   const [detail, plans, billingOn, personalRefuse] = await Promise.all([
@@ -228,7 +237,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments. Payments are handled by Polar, which issues the receipts.`
             : "Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
         }
-        action={billingOn && (orgView ? showPortal : hasAccount) ? <PortalButton /> : undefined}
+        action={billingOn && hasPortal && (orgView ? showPortal : hasAccount) ? <PortalButton /> : undefined}
       />
       {orgView ? (
         <Notice tone="info" title={orgView.seats.limit === null ? `${orgView.seats.used} in the team` : `${orgView.seats.used} of ${orgView.seats.limit} seats in use`}>
@@ -269,6 +278,30 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         </Notice>
       ) : null}
 
+      {cancellable.length > 0 ? (
+        <section aria-labelledby="cancel-title" className="flex flex-col gap-3 rounded-xl border border-line bg-card p-5">
+          <h2 id="cancel-title" className="font-sans text-body font-semibold text-ink">
+            Your subscriptions
+          </h2>
+          <ul className="flex flex-col gap-3 text-small">
+            {cancellable.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3">
+                <span className="text-ink">
+                  {planName(s.planKey) ?? "Subscription"}
+                  {s.currentPeriodEnd ? <span className="text-ink-3"> · renews {formatDate(s.currentPeriodEnd)}</span> : null}
+                </span>
+                <ActionForm action={cancelSubscriptionAction.bind(null, s.id)} className="inline-flex flex-col items-end gap-1">
+                  <SubmitButton variant="outline" size="sm" aria-label={`Cancel ${planName(s.planKey) ?? "the subscription"} at the end of the period`}>
+                    Cancel at period end
+                  </SubmitButton>
+                  <FormMessage className="max-w-64 text-left whitespace-normal" />
+                </ActionForm>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {/* Your plan across the top, then the plans side by side at the full width: three sit in one row
           on a desktop, and no column is left empty beside a short card. */}
       <PlanCard entitlement={entitlement} plan={plan} showLink={false} />
@@ -284,7 +317,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         ) : (
           <ul className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
             {options.map((p) => (
-              <PlanOption key={p.key} plan={p} plans={plans} current={p.key === entitlement.planKey} billingOn={billingOn} refuse={refuse} />
+              <PlanOption key={p.key} plan={p} plans={plans} current={p.key === entitlement.planKey} provider={billingOn ? paidProvider : null} refuse={refuse} />
             ))}
           </ul>
         )}
