@@ -35,6 +35,7 @@ import { forProfile, type SiteProfile } from "@/core/profile";
 import { docsOn, docsPath, getDocsIndex } from "@/server/docs";
 import { publicDocs, siteProfile } from "@/server/env";
 import { absoluteUrl } from "@/shared/seo";
+import { log } from "@/server/log";
 
 export const dynamic = "force-dynamic";
 
@@ -84,7 +85,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   if (entries.length > MAX_URLS) {
-    console.warn(`[sitemap] ${entries.length} URLs; only the first ${MAX_URLS} are listed. Split the sitemap (see the header comment).`);
+    log.warn("sitemap", `${entries.length} URLs; only the first ${MAX_URLS} are listed. Split the sitemap (see the header comment).`);
     return entries.slice(0, MAX_URLS);
   }
   return entries;

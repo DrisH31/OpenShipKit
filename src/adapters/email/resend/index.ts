@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import { Resend, type CreateEmailOptions, type CreateEmailRequestOptions, type CreateEmailResponse, type ErrorResponse } from "resend";
 import type { EmailMessage, EmailProvider } from "@/core/email";
 import { emailFrom, isProduction, requireEnv } from "@/server/env";
+import { log } from "@/server/log";
 
 /** The subset of the Resend client this adapter uses — what tests fake. */
 export interface ResendClient {
@@ -84,7 +85,7 @@ export function createResendProvider(options: ResendProviderOptions = {}): Email
       const from = emailFrom();
       if (isProduction() && from.includes("@resend.dev") && !warnedDefaultFrom) {
         warnedDefaultFrom = true;
-        console.warn("[email:resend] EMAIL_FROM is a resend.dev address; it only delivers to your own inbox. Verify a domain and set EMAIL_FROM.");
+        log.warn("email:resend", "EMAIL_FROM is a resend.dev address; it only delivers to your own inbox. Verify a domain and set EMAIL_FROM.");
       }
       const payload: CreateEmailOptions = {
         from,

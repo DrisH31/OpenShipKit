@@ -46,6 +46,7 @@ import { Pool, type PoolConfig } from "pg";
 import { isProduction, optionalEnv } from "@/server/env";
 import { acquireDirectoryLock } from "./lock";
 import * as schema from "./schema";
+import { log } from "@/server/log";
 
 export { authTables } from "./schema";
 
@@ -196,7 +197,7 @@ function connect(): Connection {
     application_name: "openshipkit",
   });
   // An idle client losing its connection must not crash the process; the next query reconnects.
-  pool.on("error", (error) => console.error("[postgres] idle client error:", error.message));
+  pool.on("error", (error) => log.error("postgres", "idle client error", error.message));
   return { kind: "server", db: drizzle({ client: pool, schema }), pglite: null, close: () => pool.end() };
 }
 
@@ -235,6 +236,6 @@ export async function closeDrizzle(): Promise<void> {
 export function createDrizzle(url: string, opts: { max?: number } = {}): { db: Db; close: () => Promise<void> } {
   const { connectionString, ssl } = resolveConnection(url, optionalEnv("DATABASE_SSL"), optionalEnv("DATABASE_SSL_CA"));
   const pool = new Pool({ connectionString, ssl, max: opts.max ?? 5 });
-  pool.on("error", (error) => console.error("[postgres] idle client error:", error.message));
+  pool.on("error", (error) => log.error("postgres", "idle client error", error.message));
   return { db: drizzle({ client: pool, schema }), close: () => pool.end() };
 }

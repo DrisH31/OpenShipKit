@@ -15,6 +15,7 @@ import { ServiceError, fromDataError } from "./errors";
 import { assertSafePlanChange, carryPlanRename, validatePlanWrite } from "./plans";
 import { announcePostChange } from "./indexnow";
 import { assertNotFutureDated } from "./posts";
+import { log } from "@/server/log";
 
 export async function recordAudit(
   actor: Actor,
@@ -29,7 +30,7 @@ export async function recordAudit(
     await data.audit.record({ actor, action, entity, entityId, before: before ?? null, after: after ?? null });
   } catch (error) {
     // The write already happened; a lost audit row must not turn it into a 500.
-    console.error("[audit] failed to record", action, entityId, error);
+    log.error("audit", `failed to record ${action} on ${entityId}`, error);
   }
 }
 

@@ -22,6 +22,7 @@ import { getCurrentUser } from "../session";
 import { submitFeedback } from "./community";
 import { getContent } from "./content";
 import { ServiceError } from "./errors";
+import { log } from "@/server/log";
 
 export type ContactResult = { ok: true } | { ok: false; error: ContactFailure; retryAfterSeconds?: number };
 
@@ -67,7 +68,7 @@ async function notify(input: ContactValues): Promise<void> {
     await sendEmail({ to: site.contactEmail, subject, text, html, ...(input.email ? { replyTo: input.email } : {}) });
   } catch (error) {
     // Stored already; a mail outage must not turn a delivered message into an error.
-    console.error("[forms/contact] notification email failed", error);
+    log.error("forms/contact", "notification email failed", error);
   }
 }
 
@@ -76,7 +77,7 @@ export async function deliverContact(fields: Record<string, string | undefined>)
   // A filled honeypot is a bot: answer as if it worked, store nothing. Logged without the
   // message, so a false positive (autofill reaching the field) can be noticed.
   if (fields[HONEYPOT]?.trim()) {
-    console.info("[forms/contact] honeypot filled: message dropped");
+    log.info("forms/contact", "honeypot filled: message dropped");
     return { ok: true };
   }
 
@@ -97,7 +98,7 @@ export async function deliverContact(fields: Record<string, string | undefined>)
     );
   } catch (error) {
     if (error instanceof ServiceError && error.code === "invalid") return { ok: false, error: "invalid" };
-    console.error("[forms/contact] could not store the message", error);
+    log.error("forms/contact", "could not store the message", error);
     return { ok: false, error: "server" };
   }
 

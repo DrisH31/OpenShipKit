@@ -8,7 +8,8 @@
 //
 
 import { refresh } from "next/cache";
-import { attempt, failure, type ActionState } from "@/lib/action-state";
+import { failure, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { nullableText, text } from "@/lib/form-data";
 import { rateLimit } from "@/server/rate-limit";
 import { requireUser } from "@/server/session";

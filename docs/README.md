@@ -22,6 +22,7 @@ them. Start with **getting started**, or hand the setup to an agent with
 | [MCP](mcp.md) | Connecting AI agents to your site |
 | [Modules](modules/README.md) | You need AI, document search, or more than one replica (opt-in: AI, RAG, Redis) |
 | [Security](security.md) | The security model |
+| [Observability](observability.md) | Structured logs, optional self-hosted error tracking, health |
 | [Upgrading](upgrading.md) | Pulling template updates; Next.js and Postgres upgrades |
 | [Releasing](releasing.md) | Branches, versions and tags; starting a site from a release |
 | [Troubleshooting](troubleshooting.md) | Something’s wrong |

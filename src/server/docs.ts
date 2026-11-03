@@ -46,6 +46,7 @@ import { getSiteSeo } from "@/components/seo/site-seo";
 import { isProduction, publicDocs, siteUrl } from "@/server/env";
 import { renderMarkdownHighlighted, type RenderedMarkdown } from "@/server/markdown";
 import { OPENSHIPKIT_NAME, OPENSHIPKIT_REPO, repoPath } from "@/shared/project";
+import { log } from "@/server/log";
 
 /** A page's slug: lowercase words, at most one folder deep ("deployment", "modules/ai"). "" is the index. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,60}(?:\/[a-z0-9][a-z0-9-]{0,60})?$/;
@@ -408,7 +409,7 @@ async function readNav(): Promise<unknown> {
 
 async function load(): Promise<Loaded> {
   const files = (await Promise.all(FOLDERS.map(listFolder))).flat();
-  if (files.length === 0) console.warn("[docs] no Markdown under docs/: /docs answers 404 (is docs/ in the deployment? see next.config.ts)");
+  if (files.length === 0) log.warn("docs", "no Markdown under docs/: /docs answers 404 (is docs/ in the deployment? see next.config.ts)");
   const sources: Loaded["sources"] = new Map();
   const entries: DocEntry[] = [];
   await Promise.all(

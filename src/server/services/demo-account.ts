@@ -30,6 +30,7 @@ import type { Actor } from "@/core/types";
 import { getAuth } from "../auth";
 import { getData } from "../data";
 import { demoAdminLogin } from "../env";
+import { log } from "@/server/log";
 
 /** The audit entity that records which auth identity is the demo admin's. */
 export const DEMO_ACCOUNT_ENTITY = "demo_admin";
@@ -44,7 +45,7 @@ async function ensure(): Promise<DemoAccountState> {
   if (!login) return "off";
   const auth = await getAuth();
   if (!auth.ensurePasswordIdentity) {
-    console.warn("[demo] the auth adapter can't create password accounts; the read-only demo admin is off.");
+    log.warn("demo", "the auth adapter can't create password accounts; the read-only demo admin is off.");
     return "unsupported";
   }
   const data = await getData();
@@ -53,8 +54,9 @@ async function ensure(): Promise<DemoAccountState> {
 
   const result = await auth.ensurePasswordIdentity({ email: login.email, password: login.password, name: DEMO_ACCOUNT_NAME, ownerId });
   if (result.status === "taken") {
-    console.error(
-      `[demo] REFUSED: ${login.email} (DEMO_ADMIN_EMAIL) already belongs to an account the demo didn't create (auth id ${result.providerUserId}). ` +
+    log.error(
+      "demo",
+      `REFUSED: ${login.email} (DEMO_ADMIN_EMAIL) already belongs to an account the demo didn't create (auth id ${result.providerUserId}). ` +
         "It was left untouched and not made an admin. Choose another DEMO_ADMIN_EMAIL, or delete that account in /admin/users.",
     );
     return "taken";
@@ -77,7 +79,7 @@ async function ensure(): Promise<DemoAccountState> {
     if (!before) await data.audit.record({ actor: DEMO_ACTOR, action: "user.create", entity: "user", entityId: user.id, before: null, after: { email: user.email, role: user.role } });
     else if (before.role !== "admin") await data.audit.record({ actor: DEMO_ACTOR, action: "user.promote", entity: "user", entityId: user.id, before: { role: before.role }, after: { role: user.role } });
   }
-  if (result.status !== "unchanged" || !before) console.info(`[demo] read-only demo admin ${identity.email} is ready (${result.status}).`);
+  if (result.status !== "unchanged" || !before) log.info("demo", `read-only demo admin ${identity.email} is ready (${result.status}).`);
   return "ready";
 }
 
@@ -94,7 +96,7 @@ export function ensureDemoAccount(): Promise<DemoAccountState> {
 /** ensureDemoAccount() without waiting, its failure logged (boot). */
 export function ensureDemoAccountInBackground(reason: string): void {
   if (!demoAdminLogin()) return;
-  ensureDemoAccount().catch((error) => console.error(`[demo] could not ready the read-only demo admin (${reason}); the next "Try the demo" retries.`, error));
+  ensureDemoAccount().catch((error) => log.error("demo", `could not ready the read-only demo admin (${reason}); the next "Try the demo" retries.`, error));
 }
 
 export type DemoStart = { ok: true } | { ok: false; reason: "off" | "unavailable" };
@@ -118,7 +120,7 @@ export async function startDemoSession(): Promise<DemoStart> {
       return { ok: true };
     } catch (error) {
       if (attempt === 1) {
-        console.error("[demo] the demo sign-in was refused", error);
+        log.error("demo", "the demo sign-in was refused", error);
         return { ok: false, reason: "unavailable" };
       }
     }

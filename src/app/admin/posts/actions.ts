@@ -15,7 +15,8 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import type { PostKind } from "@/core/types";
-import { attempt, failure, success, type ActionState } from "@/lib/action-state";
+import { failure, success, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { changedDateTimeLocal, dateTimeLocal, list, nullableText, text } from "@/lib/form-data";
 import { siteUrl } from "@/server/env";
 import { renderMarkdown } from "@/server/markdown";

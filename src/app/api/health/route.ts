@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { getData } from "@/server/data";
 import { billingProvider, dataProvider, emailProvider, isDemo, optionalEnv, siteProfile } from "@/server/env";
 import { OPENSHIPKIT_VERSION } from "@/server/mcp/server-info";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +29,7 @@ async function checkData(): Promise<{ ok: boolean; ms: number }> {
     const result = await Promise.race([getData().then((data) => data.health()), timeout]);
     return { ok: result.ok, ms: Date.now() - started };
   } catch (error) {
-    console.error("[health] database check failed", error);
+    log.error("health", "database check failed", error);
     return { ok: false, ms: Date.now() - started };
   } finally {
     clearTimeout(timer);

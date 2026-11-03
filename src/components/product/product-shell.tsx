@@ -24,6 +24,7 @@ import { listFeedback } from "@/server/services/community";
 import { ADMIN_NAV, BADGE_CAP, DASHBOARD_ADMIN_LINK, DASHBOARD_NAV } from "@/lib/app-nav";
 import { AppShell } from "./app-shell";
 import type { CommandAction } from "./command-menu";
+import { log } from "@/server/log";
 
 const ADMIN_ACTIONS: CommandAction[] = [
   { label: "New blog post", href: "/admin/posts/new?kind=post", icon: "posts", keywords: ["write", "article"] },
@@ -41,7 +42,7 @@ async function newFeedbackCount(): Promise<number> {
   try {
     return (await listFeedback({ status: "new", limit: BADGE_CAP + 1 })).items.length;
   } catch (error) {
-    console.error("[shell] could not count new feedback", error);
+    log.error("shell", "could not count new feedback", error);
     return 0;
   }
 }

@@ -29,6 +29,7 @@ import "server-only";
 import { closeSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename } from "node:path";
+import { log } from "@/server/log";
 
 interface LockInfo {
   pid: number;
@@ -138,7 +139,7 @@ export function acquireDirectoryLock(dir: string, opts: { waitMs?: number } = {}
       sleepSync(100);
       continue;
     }
-    if (otherHost) console.warn(`[db] taking over the embedded database lock written on host "${holder.host}" (pid ${holder.pid}).`);
+    if (otherHost) log.warn("db", `taking over the embedded database lock written on host "${holder.host}" (pid ${holder.pid}).`);
     if (ours) break; // re-entrant
     // Stale: remove and retry the exclusive create (another process may win the race; then we wait for it).
     try {

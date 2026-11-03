@@ -29,6 +29,7 @@ import { SERVER_INFO, instructionsFor } from "./server-info";
 import { toJsonSchema } from "./json-schema";
 import { findTool, toolsForScope } from "./tools";
 import type { McpTool, ToolContext } from "./types";
+import { log } from "@/server/log";
 
 /**
  * Protocol revisions this server speaks, newest first. All four are
@@ -133,7 +134,7 @@ export async function callTool(name: string, rawArgs: unknown, ctx: ToolContext)
   } catch (error) {
     const refusal = refusalFor(error);
     if (refusal) return toolResult(refusal, true);
-    console.error(`[mcp] ${tool.name} failed (key ${ctx.key.name})`, error);
+    log.error("mcp", `${tool.name} failed (key ${ctx.key.name})`, error);
     return toolResult({ error: "server_error", message: "The server hit an unexpected error and logged it. Try again later or tell the site owner." }, true);
   }
 }

@@ -6,7 +6,8 @@
 
 import { describe, expect, it } from "vitest";
 import type { AuditEntry } from "@/core/types";
-import { attempt, failureFrom, plainIssue } from "./action-state";
+import { plainIssue } from "./action-state";
+import { attempt, failureFrom } from "@/server/attempt";
 import { createMemoryStore } from "@/adapters/data/memory";
 import { seedDatabase } from "@/server/seed";
 import { actorWords, describeAudit, editedByPeople, isSeedEntry, userIdsWithoutEmail } from "./audit-words";

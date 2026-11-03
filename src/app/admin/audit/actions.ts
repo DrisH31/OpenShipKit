@@ -7,7 +7,8 @@
 //
 
 import { redirect } from "next/navigation";
-import { attempt, type ActionState } from "@/lib/action-state";
+import { type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { actorFor, requireAdmin } from "@/server/session";
 import { restoreAuditEntry } from "@/server/services/audit";
 

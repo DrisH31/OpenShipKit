@@ -19,6 +19,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { ImageResponse } from "next/og";
+import { log } from "@/server/log";
 
 type OgFont = NonNullable<NonNullable<ConstructorParameters<typeof ImageResponse>[1]>["fonts"]>[number];
 
@@ -52,7 +53,7 @@ async function load(): Promise<OgFont[]> {
 /** The faces, read once per process. [] when they can't be read (logged once). */
 export async function ogFonts(): Promise<OgFont[]> {
   loading ??= load().catch((error: unknown) => {
-    console.warn("[og] couldn't read the card fonts; using the default face", error);
+    log.warn("og", "couldn't read the card fonts; using the default face", error);
     return [];
   });
   return loading;

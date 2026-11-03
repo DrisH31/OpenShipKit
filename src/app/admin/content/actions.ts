@@ -10,7 +10,8 @@
 import { refresh } from "next/cache";
 import { DEFAULT_CONTENT } from "@/content/defaults";
 import { isContentKey } from "@/core/content";
-import { attempt, failure, type ActionState } from "@/lib/action-state";
+import { failure, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { json } from "@/lib/form-data";
 import { actorFor, requireAdmin } from "@/server/session";
 import { resetContent, updateContent } from "@/server/services/content";

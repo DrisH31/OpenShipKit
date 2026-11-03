@@ -20,6 +20,7 @@ import { assertNotDemo } from "../demo";
 import { getData } from "../data";
 import { recordAudit } from "./audit";
 import { ServiceError, parseInput } from "./errors";
+import { log } from "@/server/log";
 
 export const AGENT_KEY_PREFIX = "osk_";
 
@@ -99,7 +100,7 @@ export async function authenticateAgentKey(bearer: string | null | undefined): P
   const data = await getData();
   const key = await data.agentKeys.findActiveByHash(hash);
   if (!key) return null;
-  data.agentKeys.touch(key.id).catch((e) => console.error("[agent-keys] touch failed", e));
+  data.agentKeys.touch(key.id).catch((e) => log.error("agent-keys", "touch failed", e));
   return key;
 }
 

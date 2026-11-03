@@ -8,7 +8,8 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { attempt, failure, type ActionState } from "@/lib/action-state";
+import { failure, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { text } from "@/lib/form-data";
 import { actorFor, requireAdmin } from "@/server/session";
 import { deleteUser, setUserBanned, setUserRole } from "@/server/services/users";

@@ -31,6 +31,7 @@ import { rateLimit } from "@/server/rate-limit";
 import { isBillingEnabled, startCheckout } from "@/server/services/billing";
 import { ServiceError } from "@/server/services/errors";
 import { getCurrentUser } from "@/server/session";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -86,7 +87,7 @@ export async function POST(request: Request): Promise<Response> {
       return fail(error.code, error.status, error.message);
     }
     // Anything else is a bug or an outage: logged, never shown.
-    console.error("[billing] checkout failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
+    log.error("billing", "checkout failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
     return fail("error", 500, BILLING_GENERIC_ERROR);
   }
 }

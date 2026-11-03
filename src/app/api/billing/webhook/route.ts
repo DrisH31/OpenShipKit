@@ -21,6 +21,7 @@ import { BILLING_DISABLED_MESSAGE } from "@/components/billing/format";
 import { getBilling } from "@/server/billing";
 import { readCapped } from "@/server/http";
 import { saasOnlyResponse } from "@/server/profile";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export async function POST(request: Request): Promise<Response> {
     return await billing.handleWebhook(new Request(request.url, { method: "POST", headers, body }));
   } catch (error) {
     // Misconfiguration (a missing secret) or an outage: 500 so Polar retries, and the log says why.
-    console.error("[billing] webhook failed", error instanceof Error ? `${error.name}: ${error.message}` : "unknown error");
+    log.error("billing", "webhook failed", error instanceof Error ? `${error.name}: ${error.message}` : "unknown error");
     return Response.json({ error: "webhook_failed" }, { status: 500 });
   }
 }

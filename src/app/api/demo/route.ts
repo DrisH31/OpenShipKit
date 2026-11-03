@@ -23,6 +23,7 @@ import { isSameOrigin, json, seeOther, wantsJson, withParam } from "@/server/htt
 import { clientIp, rateLimit } from "@/server/rate-limit";
 import { startDemoSession } from "@/server/services/demo-account";
 import { getCurrentUser } from "@/server/session";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ export async function POST(request: Request): Promise<Response> {
     const started = await startDemoSession();
     return started.ok ? done() : started.reason === "off" ? json(404, { ok: false, error: "not_found", message: "Not found" }) : fail("unavailable");
   } catch (error) {
-    console.error("[api/demo] the demo sign-in failed", error);
+    log.error("api/demo", "the demo sign-in failed", error);
     return fail("unavailable");
   }
 }

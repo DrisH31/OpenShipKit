@@ -43,6 +43,7 @@ import {
 } from "@/core/types";
 import { getDrizzle, type Db } from "./db";
 import { agentKeys, auditLog, billingCustomers, content, feedback, plans, posts, purchases, subscribers, subscriptions, users, webhookEvents } from "./schema";
+import { log } from "@/server/log";
 
 // ---------------------------------------------------------------- helpers
 
@@ -319,7 +320,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         return { ok: true, detail: `postgres (${Date.now() - started} ms)` };
       } catch (error) {
         const cause = (error as { cause?: { message?: string } }).cause?.message;
-        console.error("[postgres] health check failed:", cause || pgCode(error) || (error instanceof Error ? error.message : error));
+        log.error("postgres", "health check failed", cause || pgCode(error) || (error instanceof Error ? error.message : error));
         return { ok: false, detail: `postgres unreachable${pgCode(error) ? ` (${pgCode(error)})` : ""}` };
       }
     },

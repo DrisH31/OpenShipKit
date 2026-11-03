@@ -42,6 +42,7 @@ import { getData } from "./data";
 import { adminEmails, isProduction } from "./env";
 import { isDemoUser } from "./demo";
 import { recordAudit } from "./services/audit";
+import { log } from "@/server/log";
 
 /** How stale users.lastSeenAt may get before a request refreshes it. */
 export const LAST_SEEN_REFRESH_MS = 5 * 60_000;
@@ -111,7 +112,7 @@ async function endBannedSessions(auth: AuthAdapter, user: User): Promise<void> {
   try {
     await auth.revokeSessions(user.authProviderUserId);
   } catch (error) {
-    console.error("[session] banned user still signed in; revoking sessions failed", user.id, error);
+    log.error("session", `banned user ${user.id} still signed in; revoking their sessions failed`, error);
   }
 }
 

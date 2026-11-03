@@ -35,6 +35,7 @@ import type { Post } from "@/core/types";
 import { readingMinutes } from "@/server/markdown";
 import { getContent } from "@/server/services/content";
 import { listListed } from "@/server/services/posts";
+import { log } from "@/server/log";
 
 /** The newest listed posts, or null when they can't be read (logged; see the header). */
 async function newestPosts(count: number, showcase: boolean): Promise<Post[] | null> {
@@ -43,7 +44,7 @@ async function newestPosts(count: number, showcase: boolean): Promise<Post[] | n
     const page = await listListed("post", { limit: count + 3 });
     return page.items.filter((p) => !isHiddenStarter(p, showcase)).slice(0, count);
   } catch (error) {
-    console.error("[landing] latest posts unavailable; section hidden", error);
+    log.error("landing", "latest posts unavailable; section hidden", error);
     return null;
   }
 }

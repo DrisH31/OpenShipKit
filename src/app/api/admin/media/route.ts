@@ -25,6 +25,7 @@ import { isSameOrigin, json, readCapped, seeOther, wantsJson } from "@/server/ht
 import { actorFor, getCurrentUser } from "@/server/session";
 import { ServiceError, serializeError } from "@/server/services/errors";
 import { mediaRefusalOf, uploadMedia } from "@/server/services/media";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -92,7 +93,7 @@ export async function POST(request: Request): Promise<Response> {
     const reason = mediaRefusalOf(error);
     if (reason) return fail(reason, error instanceof Error ? error.message : MESSAGE[reason]);
     if (error instanceof ServiceError) return asJson ? json(error.status, { ok: false, ...serializeError(error) }) : seeOther(`/admin/media?error=unavailable`);
-    console.error("[api/admin/media] upload failed", error);
+    log.error("api/admin/media", "upload failed", error);
     return fail("error");
   }
 }

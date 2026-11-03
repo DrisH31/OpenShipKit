@@ -15,7 +15,8 @@
 
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
-import { attempt, failure, type ActionState } from "@/lib/action-state";
+import { failure, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { json } from "@/lib/form-data";
 import { requireSaasProfile } from "@/server/profile";
 import { actorFor, requireAdmin } from "@/server/session";

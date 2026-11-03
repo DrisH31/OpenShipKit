@@ -21,6 +21,7 @@ import { json, readCappedText } from "@/server/http";
 import { clientIp, rateLimit } from "@/server/rate-limit";
 import { authBlockedFor, authenticateMcp, bearerToken, noteAuthFailure, originAllowed } from "@/server/mcp/auth";
 import { RPC_ERROR, handleMcpMessage, isSupportedProtocolVersion, rpcError } from "@/server/mcp/protocol";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +57,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     ctx = await authenticateMcp(bearer);
   } catch (error) {
-    console.error("[mcp] key lookup failed", error);
+    log.error("mcp", "key lookup failed", error);
     return json(503, { error: "unavailable", message: "The site's database is unavailable. Try again shortly." }, { ...cors, "Retry-After": "30" });
   }
   if (!ctx) {

@@ -8,7 +8,8 @@
 //
 
 import { refresh } from "next/cache";
-import { attempt, type ActionState } from "@/lib/action-state";
+import { type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { actorFor, requireAdmin } from "@/server/session";
 import { deleteMedia } from "@/server/services/media";
 

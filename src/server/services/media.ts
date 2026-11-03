@@ -24,6 +24,7 @@ import { getData } from "../data";
 import { recordAudit } from "./audit";
 import { ServiceError } from "./errors";
 import { listMediaFiles, removeMediaFile, statMedia, writeMediaFile } from "./media-storage";
+import { log } from "@/server/log";
 
 /** Why an upload was refused, as a fixed code (ServiceError.details.reason): the no-JavaScript form maps it to a sentence. */
 export type MediaRefusal = "empty" | "too_large" | "svg" | "not_image" | "mismatch";
@@ -71,7 +72,7 @@ export async function uploadMedia(input: MediaUploadInput, actor: Actor): Promis
     item = await writeMediaFile(bytes, detected);
   } catch (error) {
     // The path names the server's filesystem: logged, never returned.
-    console.error("[media] write failed:", error instanceof Error ? error.message : error);
+    log.error("media", "write failed", error instanceof Error ? error.message : error);
     throw new ServiceError("unavailable", "The image couldn’t be saved. Check that the uploads folder exists and is writable (UPLOADS_DIR), then try again.");
   }
   await recordAudit(actor, "media.upload", "media", item.path, null, item);

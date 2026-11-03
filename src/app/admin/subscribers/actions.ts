@@ -6,7 +6,8 @@
 //
 
 import { refresh } from "next/cache";
-import { attempt, type ActionState } from "@/lib/action-state";
+import { type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { text } from "@/lib/form-data";
 import { actorFor, requireAdmin } from "@/server/session";
 import { unsubscribe } from "@/server/services/community";

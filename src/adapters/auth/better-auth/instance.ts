@@ -121,6 +121,7 @@ import {
   type Throttle,
   type ThrottleAdapter,
 } from "./throttle";
+import { log } from "@/server/log";
 
 /** Social providers Better Auth supports here, in the order their buttons appear. */
 export type SocialProviderId = "github" | "google";
@@ -207,7 +208,7 @@ export function loadOrCreateDevSecret(file: string): string {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, `${value}\n`, { mode: 0o600 });
     } catch (error) {
-      console.warn(`[auth] could not save a development secret to ${file}; sessions end when the server restarts.`, error);
+      log.warn("auth", `could not save a development secret to ${file}; sessions end when the server restarts.`, error);
     }
   }
   return value;
@@ -225,7 +226,7 @@ function secret(): string {
   if (isProduction()) {
     throw new Error("Missing environment variable BETTER_AUTH_SECRET (signs Better Auth sessions). Generate one with `openssl rand -base64 32`.");
   }
-  console.warn(`[auth] BETTER_AUTH_SECRET is not set; using a generated development secret (${DEV_SECRET_FILE}). Set it before deploying.`);
+  log.warn("auth", `BETTER_AUTH_SECRET is not set; using a generated development secret (${DEV_SECRET_FILE}). Set it before deploying.`);
   return devSecret();
 }
 
@@ -256,7 +257,7 @@ async function deliver(kind: string, send: () => Promise<unknown>): Promise<void
   try {
     await send();
   } catch (error) {
-    console.error(`[auth] could not send the ${kind} email`, error);
+    log.error("auth", `could not send the ${kind} email`, error);
   }
 }
 
@@ -695,10 +696,10 @@ function build({ database, rateLimitStorage, twoFactor: withTwoFactor, appName }
       try {
         allowed = await throttle.take(throttleKey("email", to), EMAILS_PER_ADDRESS);
       } catch (error) {
-        console.error("[auth] could not check the per-address email limit; sending anyway", error);
+        log.error("auth", "could not check the per-address email limit; sending anyway", error);
       }
       if (!allowed) {
-        console.warn(`[auth] ${kind} email not sent: the address has had ${EMAILS_PER_ADDRESS.max} in the last hour`);
+        log.warn("auth", `${kind} email not sent: the address has had ${EMAILS_PER_ADDRESS.max} in the last hour`);
         return;
       }
     }
@@ -734,7 +735,7 @@ function build({ database, rateLimitStorage, twoFactor: withTwoFactor, appName }
       },
       onPasswordReset: async ({ user }) => {
         // Proving the inbox ends a wrong-password lockout: the owner can sign in now.
-        if (limits) await throttle.clear(throttleKey("password", user.email)).catch((error) => console.error("[auth] could not clear the password lockout", error));
+        if (limits) await throttle.clear(throttleKey("password", user.email)).catch((error) => log.error("auth", "could not clear the password lockout", error));
         await deliver("password changed", async () =>
           sendEmail({ to: user.email, ...(await securityNoticeTemplate({ kind: "password-reset", name: user.name, url: `${base}/auth/forgot-password` })) }),
         );
@@ -867,7 +868,7 @@ async function defaultStorage(): Promise<AuthStorage> {
     ]);
     const tables: Record<string, unknown> = authTables;
     const twoFactor = schemaSupportsTwoFactor(tables);
-    if (!twoFactor) console.warn("[auth] two-factor is off: the auth schema has no auth_two_factor table yet (run the latest migrations).");
+    if (!twoFactor) log.warn("auth", "two-factor is off: the auth schema has no auth_two_factor table yet (run the latest migrations).");
     return { database: drizzleAdapter(getDrizzle(), { provider: "pg", schema: tables }), rateLimitStorage: "database", twoFactor };
   }
   return { database: memoryAdapter(memoryDb()), rateLimitStorage: "memory", twoFactor: true };

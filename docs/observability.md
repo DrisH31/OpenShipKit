@@ -1,0 +1,108 @@
+# Observability
+
+What the server tells you when something goes wrong: one structured log
+line per event, and, if you want it, every server error sent to an error
+tracker you can host yourself. Nothing leaves the server until you set
+`ERROR_TRACKING_DSN`.
+
+## Logs
+
+Server code writes through one logger, `log` in `src/server/log.ts`, never
+straight to `console`. `npm run lint` refuses a bare `console.*` in server
+code.
+
+```ts
+import { log } from "@/server/log";
+
+log.info("billing", "webhook recorded", { event: id });
+log.warn("indexnow", "403 for 3 URL(s)");
+log.error("billing", "checkout failed", error); // also reported, when tracking is on
+```
+
+In production each line is one JSON object, which Docker, Dokploy, Coolify,
+journald and any log shipper read as it is:
+
+```json
+{"time":"2026-11-03T09:12:44.120Z","level":"error","scope":"billing","msg":"checkout failed","error":{"name":"Error","message":"connect ECONNREFUSED","stack":"…"}}
+```
+
+In development the same call prints `[billing] checkout failed` with the
+error beside it.
+
+| Variable | Values | Default |
+|---|---|---|
+| `LOG_FORMAT` | `json`, `pretty` | `json` in production, `pretty` otherwise |
+| `LOG_LEVEL` | `debug`, `info`, `warn`, `error` | `info` |
+
+Reading them on a server:
+
+```bash
+docker compose logs app --since 1h | grep '"level":"error"'
+docker compose logs app --since 1h | jq -R 'fromjson? | select(.level=="error") | {time, scope, msg, error: .error.message}'
+```
+
+**What never goes in a log line:** request bodies, cookies, tokens,
+passwords, or anything a webhook carried. A person's id is fine, and so is an
+email address when the line is about that address (a send that failed).
+
+## Error tracking
+
+Set `ERROR_TRACKING_DSN` to a DSN from any service that speaks Sentry's
+protocol, and every server error is sent there with its stack, grouped and
+counted, with an email when a new one appears. OpenShipKit sends the events
+itself over HTTPS (`src/server/error-reporting.ts`), without a vendor SDK.
+
+```bash
+ERROR_TRACKING_DSN=https://<key>@errors.example.com/<project id>
+ERROR_TRACKING_ENVIRONMENT=production   # optional; default NODE_ENV
+```
+
+Two paths report:
+
+- **`log.error()`**: everything the code catches and logs as an error: a
+  failed checkout, an email that couldn't be sent, a server action's
+  unexpected failure.
+- **Next.js's `onRequestError`** (`src/instrumentation.ts`): anything nothing
+  caught, in a page, route handler, server action or the proxy, with the
+  route it happened on.
+
+### What an event carries, and what it doesn't
+
+| Sent | Never sent |
+|---|---|
+| The scope and message | Request headers and cookies |
+| The error's type, message and stack frames | Request or webhook bodies |
+| The route (`/dashboard/billing`), method and path | The query string (reset and verification tokens travel there) |
+| The environment | Who was signed in, their email, their IP address |
+
+A message holds whatever the code wrote into it. That's why the rule above
+keeps secrets out of log lines.
+
+### It can't take the site down with it
+
+- Reporting runs in the background for `log.error` and gives up after three
+  seconds. A slow or unreachable tracker never delays a response.
+- At most 30 events a minute per process. An outage that fails every request
+  would otherwise spend the tracker's quota in minutes. The log still has
+  every line.
+- A failure to report is one line in the log, never a report about a report.
+
+### Running your own tracker
+
+[GlitchTip](https://glitchtip.com) is open source, accepts Sentry DSNs and
+runs on the same kind of server as OpenShipKit (it needs its own Postgres
+database). Install it with its own guide, ideally on a different machine
+from the app, because a tracker on the same machine goes down with it. Then:
+
+1. Create an organisation and a project (platform: Node.js).
+2. Copy the project's DSN into `ERROR_TRACKING_DSN` in the app's environment.
+3. Restart the app, then check one arrives: request a page that throws on a
+   staging copy, or watch the next real error.
+
+Sentry's hosted service works the same way with its DSN. That adds a third
+party, so the privacy page should say so (AGENTS.md, rule 15).
+
+## Health
+
+`/api/health` answers 200 with the database reachable and 503 without it.
+Point an uptime monitor at it ([deployment](deployment.md)).

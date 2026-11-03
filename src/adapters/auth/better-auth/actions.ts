@@ -52,6 +52,7 @@ import {
   sessionIsFresh,
   twoFactorAvailable,
 } from "./instance";
+import { log } from "@/server/log";
 
 const email = z.email("Enter a valid email address.").max(254).transform((e) => e.trim().toLowerCase());
 const password = z.string().min(PASSWORD_MIN, `Use at least ${PASSWORD_MIN} characters.`).max(PASSWORD_MAX, `Use ${PASSWORD_MAX} characters or fewer.`);
@@ -99,7 +100,7 @@ async function notify(to: string, kind: SecurityNoticeKind, name: string | null 
   try {
     await sendEmail({ to, ...(await securityNoticeTemplate({ kind, name, url: `${siteUrl()}/auth/forgot-password` })) });
   } catch (error) {
-    console.error(`[auth] could not send the ${kind} notice`, error);
+    log.error("auth", `could not send the ${kind} notice`, error);
   }
 }
 
@@ -184,7 +185,7 @@ export async function socialSignInAction(formData: FormData): Promise<void> {
     });
     url = result.url;
   } catch (error) {
-    console.error("[auth] social sign-in could not start", error);
+    log.error("auth", "social sign-in could not start", error);
   }
   redirect(url ?? failed);
 }
@@ -227,7 +228,7 @@ export async function forgotPasswordAction(_state: AuthFormState, formData: Form
   } catch (error) {
     // The per-address limit is counted for every address, so saying so reveals nothing.
     if (errorCode(error) === "TOO_MANY_EMAILS") return { status: "error", message: messageFor(error), values: { email: rawEmail } };
-    console.error("[auth] password reset request failed", error);
+    log.error("auth", "password reset request failed", error);
   }
   return { status: "sent", message: `If an account uses ${address}, we’ve sent it a link to choose a new password. It expires in one hour.`, values: { email: rawEmail } };
 }
@@ -308,7 +309,7 @@ export async function signOutAction(formData?: FormData): Promise<void> {
   try {
     await auth.api.signOut({ headers: await headers() });
   } catch (error) {
-    console.error("[auth] sign-out failed", error);
+    log.error("auth", "sign-out failed", error);
   }
   redirect(formData ? safeRedirect(field(formData, "redirectTo"), "/") : "/");
 }

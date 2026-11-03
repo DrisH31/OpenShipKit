@@ -37,6 +37,7 @@ import "server-only";
 
 import type { Post, PostKind } from "@/core/types";
 import { optionalEnv, siteUrl } from "../env";
+import { log } from "@/server/log";
 
 /** Submits once to every participating engine (they share submissions). */
 export const INDEXNOW_ENDPOINT = "https://api.indexnow.org/indexnow";
@@ -60,7 +61,7 @@ export function indexNowKey(): string | null {
   const key = optionalEnv("INDEXNOW_KEY")?.trim();
   if (!key) return null;
   if (!KEY_PATTERN.test(key)) {
-    console.warn("[indexnow] INDEXNOW_KEY must be 8–128 characters of A–Z, a–z, 0–9 or '-'; IndexNow is off.");
+    log.warn("indexnow", "INDEXNOW_KEY must be 8–128 characters of A–Z, a–z, 0–9 or '-'; IndexNow is off.");
     return null;
   }
   return key;
@@ -104,10 +105,10 @@ export async function pingIndexNow(paths: readonly string[]): Promise<void> {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     // 200 accepted, 202 accepted pending key verification. 403 = the key file doesn't match INDEXNOW_KEY.
-    if (response.ok) console.info(`[indexnow] announced ${urlList.length} URL(s) (${response.status})`);
-    else console.warn(`[indexnow] ${response.status} ${response.statusText} for ${urlList.length} URL(s)${response.status === 403 ? `: /${key}.txt doesn't serve the key` : ""}`);
+    if (response.ok) log.info("indexnow", `announced ${urlList.length} URL(s) (${response.status})`);
+    else log.warn("indexnow", `${response.status} ${response.statusText} for ${urlList.length} URL(s)${response.status === 403 ? `: /${key}.txt doesn't serve the key` : ""}`);
   } catch (error) {
-    console.warn("[indexnow] submission failed:", error instanceof Error ? error.message : error);
+    log.warn("indexnow", "submission failed", error instanceof Error ? error.message : error);
   }
 }
 

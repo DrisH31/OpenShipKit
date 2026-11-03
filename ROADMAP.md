@@ -26,7 +26,7 @@ A kit can score 9 on completeness and 5 on confidence. Confidence comes first.
 |---|---|---|
 | 1.1 | **Security scanning in CI**: CodeQL, `npm audit` (high and above fails), secret scanning (gitleaks), dependency review on PRs | `security.yml` runs on every PR and every week |
 | 1.2 | **Enforced authorization**: a test fails when an admin page, action or route skips `requireAdmin()`, or a dashboard page or action skips `requireUser()` | `tests/authz.test.ts`; a new unguarded file turns CI red |
-| 1.3 | **Structured logging**: one `log` with levels, JSON lines in production and readable lines in development, plus a request id | No bare `console.*` in `src/server` or `src/app` outside the logger |
+| 1.3 | **Structured logging**: one `log` with levels, JSON lines in production and readable lines in development | No bare `console.*` in `src/server` or `src/app` outside the logger |
 | 1.4 | **Optional error tracking**: any Sentry-protocol DSN (GlitchTip self-hosted, or Sentry) via `ERROR_TRACKING_DSN`, without the SDK | Off by default; unhandled server errors are reported when it is set |
 | 1.5 | **Email without Resend**: an SMTP adapter (`SMTP_URL`), so mail can go through your own server or any provider | `EMAIL_PROVIDER=smtp`; contract tests for each adapter |
 | 1.6 | **Background jobs in Postgres**: a `jobs` table with `SKIP LOCKED`, retries with backoff, run in-process. No Redis needed | Email moves to the queue; a failed send retries |

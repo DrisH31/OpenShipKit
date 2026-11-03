@@ -20,6 +20,7 @@
 import "server-only";
 import { isLocalHost } from "@/lib/site-url";
 import { demoAdminProblems, readEnv, resolveBillingProvider, resolveDataMode, resolveEmailProvider, resolveProfile, weakAuthSecretReason } from "@/server/env-rules";
+import { log } from "@/server/log";
 
 /** Exits the process when production is missing something every request needs; warns about the rest. */
 export function checkProductionEnv(): void {
@@ -54,7 +55,7 @@ export function checkProductionEnv(): void {
     if (!env("BETTER_AUTH_SECRET")) {
       fatal.push("BETTER_AUTH_SECRET is not set. Keep it during a rotation: it decrypts the two-factor secrets stored before the first one.");
     } else if (weakAuthSecretReason(env("BETTER_AUTH_SECRET"))) {
-      console.warn("[openshipkit] BETTER_AUTH_SECRET is weak. It now only decrypts older two-factor secrets; retire it once every user has set up 2FA again (docs/auth.md).");
+      log.warn("openshipkit", "BETTER_AUTH_SECRET is weak. It now only decrypts older two-factor secrets; retire it once every user has set up 2FA again (docs/auth.md).");
     }
   } else {
     const weak = weakAuthSecretReason(env("BETTER_AUTH_SECRET"));
@@ -70,15 +71,16 @@ export function checkProductionEnv(): void {
   // The read-only demo admin (showcase only): half-configured, or a short password, is refused rather than silently off.
   fatal.push(...demoAdminProblems(process.env));
   if (fatal.length > 0) {
-    for (const line of fatal) console.error(`[openshipkit] ${line}`);
-    console.error("[openshipkit] Refusing to start. Every variable is described in .env.example.");
+    for (const line of fatal) log.error("openshipkit", line);
+    log.error("openshipkit", "Refusing to start. Every variable is described in .env.example.");
     process.exit(1);
   }
 
   const site = env("NEXT_PUBLIC_SITE_URL");
   if (!site) {
-    console.error(
-      "[openshipkit] NEXT_PUBLIC_SITE_URL is not set: canonicals, the sitemap, robots.txt, Open Graph tags and email links will all point at http://localhost:3000. Set it to your public https:// origin.",
+    log.error(
+      "openshipkit",
+      "NEXT_PUBLIC_SITE_URL is not set: canonicals, the sitemap, robots.txt, Open Graph tags and email links will all point at http://localhost:3000. Set it to your public https:// origin.",
     );
   } else {
     let host = "";
@@ -86,16 +88,17 @@ export function checkProductionEnv(): void {
     try {
       ({ hostname: host, protocol } = new URL(site));
     } catch {
-      console.error(`[openshipkit] NEXT_PUBLIC_SITE_URL="${site}" is not a URL. Set it to your public https:// origin.`);
+      log.error("openshipkit", `NEXT_PUBLIC_SITE_URL="${site}" is not a URL. Set it to your public https:// origin.`);
     }
     if (host && env("OPENSHIPKIT_ALLOW_LOCALHOST_URL") !== "true") {
       // The same host list as the dashboard's setup checklist (src/lib/site-url.ts).
       if (isLocalHost(host)) {
-        console.warn(
-          `[openshipkit] NEXT_PUBLIC_SITE_URL is ${site}: search engines and emails will get local links. Fine for a local production test (OPENSHIPKIT_ALLOW_LOCALHOST_URL=true silences this); set your public origin before going live.`,
+        log.warn(
+          "openshipkit",
+          `NEXT_PUBLIC_SITE_URL is ${site}: search engines and emails will get local links. Fine for a local production test (OPENSHIPKIT_ALLOW_LOCALHOST_URL=true silences this); set your public origin before going live.`,
         );
       } else if (protocol !== "https:") {
-        console.warn(`[openshipkit] NEXT_PUBLIC_SITE_URL is ${site}, not https://. Serve the site over HTTPS and use that origin.`);
+        log.warn("openshipkit", `NEXT_PUBLIC_SITE_URL is ${site}, not https://. Serve the site over HTTPS and use that origin.`);
       }
     }
   }
@@ -104,17 +107,18 @@ export function checkProductionEnv(): void {
     // The profile wins over Polar keys (env-rules.ts); say so, so nobody waits for a webhook that 404s.
     const polar = [env("BILLING_PROVIDER") === "polar" ? "BILLING_PROVIDER=polar" : "", env("POLAR_ACCESS_TOKEN") ? "POLAR_ACCESS_TOKEN" : ""].filter(Boolean);
     if (polar.length) {
-      console.warn(`[openshipkit] OPENSHIPKIT_PROFILE=site switches billing off, so ${polar.join(" and ")} ${polar.length === 1 ? "is" : "are"} ignored and /api/billing/* answer 404. Unset ${polar.length === 1 ? "it" : "them"}, or set OPENSHIPKIT_PROFILE=saas to sell (docs/site-profile.md).`);
+      log.warn("openshipkit", `OPENSHIPKIT_PROFILE=site switches billing off, so ${polar.join(" and ")} ${polar.length === 1 ? "is" : "are"} ignored and /api/billing/* answer 404. Unset ${polar.length === 1 ? "it" : "them"}, or set OPENSHIPKIT_PROFILE=saas to sell (docs/site-profile.md).`);
     } else {
-      console.info("[openshipkit] OPENSHIPKIT_PROFILE=site: a landing page + blog with no pricing, billing or plans (docs/site-profile.md).");
+      log.info("openshipkit", "OPENSHIPKIT_PROFILE=site: a landing page + blog with no pricing, billing or plans (docs/site-profile.md).");
     }
   }
 
   if (email === "console") {
-    console.warn(
+    log.warn(
+      "openshipkit",
       env("RESEND_API_KEY")
-        ? "[openshipkit] EMAIL_PROVIDER=console although RESEND_API_KEY is set: messages go to the server log (To and Subject only) and are not sent. Unset EMAIL_PROVIDER to send with Resend."
-        : "[openshipkit] No email provider: messages go to the server log (To and Subject only) and are not sent. Set RESEND_API_KEY so people can verify their email and reset passwords.",
+        ? "EMAIL_PROVIDER=console although RESEND_API_KEY is set: messages go to the server log (To and Subject only) and are not sent. Unset EMAIL_PROVIDER to send with Resend."
+        : "No email provider: messages go to the server log (To and Subject only) and are not sent. Set RESEND_API_KEY so people can verify their email and reset passwords.",
     );
   }
 }

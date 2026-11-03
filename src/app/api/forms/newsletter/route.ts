@@ -19,6 +19,7 @@ import { subscribe } from "@/server/services/community";
 import { ServiceError } from "@/server/services/errors";
 import { isSameOrigin, json, readFields, refererPath, safeReturnPath, seeOther, wantsJson, withParam } from "@/server/http";
 import { HONEYPOT } from "@/components/site/form-fields";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,7 +47,7 @@ export async function POST(request: Request): Promise<Response> {
   back = safeReturnPath(fields.redirect, back);
   if (fields[HONEYPOT]?.trim()) {
     // A bot: say yes, store nothing. Logged (without the address), so a false positive can be seen.
-    console.info("[forms/newsletter] honeypot filled: signup dropped");
+    log.info("forms/newsletter", "honeypot filled: signup dropped");
     return answer("ok");
   }
 
@@ -57,13 +58,13 @@ export async function POST(request: Request): Promise<Response> {
       // through a flow the app trusts (an emailed, signed link; not built yet). The answer is the
       // same as for anyone else, so the form never reveals who once opted out. Logged without the
       // address, so the owner can see it happen.
-      console.info("[forms/newsletter] signup for an unsubscribed address: left unsubscribed");
+      log.info("forms/newsletter", "signup for an unsubscribed address: left unsubscribed");
     }
     // No `created` either: whether an address was already on the list is not the caller's business.
     return answer("ok");
   } catch (error) {
     if (error instanceof ServiceError && error.code === "invalid") return answer("invalid");
-    console.error("[forms/newsletter] could not subscribe", error);
+    log.error("forms/newsletter", "could not subscribe", error);
     return answer("error");
   }
 }

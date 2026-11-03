@@ -9,7 +9,8 @@
 //
 
 import { refresh } from "next/cache";
-import { attempt, failure, success, type ActionState } from "@/lib/action-state";
+import { failure, success, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { text } from "@/lib/form-data";
 import { FRESH_SIGN_IN_MINUTES, signedInRecently } from "@/lib/reauth";
 import type { AuthFormState } from "@/components/auth/form-state";

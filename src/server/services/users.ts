@@ -27,6 +27,7 @@ import { revokeKeysMintedBy } from "./agent-keys";
 import { recordAudit } from "./audit";
 import { getEntitlement } from "./billing";
 import { ServiceError } from "./errors";
+import { log } from "@/server/log";
 
 export async function listUsers(query: { search?: string; role?: Role; limit?: number; cursor?: string | null }): Promise<Page<User>> {
   return (await getData()).users.list(query);
@@ -146,7 +147,7 @@ async function endSessions(user: User): Promise<void> {
     await auth.revokeSessions(user.authProviderUserId);
   } catch (error) {
     // The ban stands either way: getCurrentUser() refuses a banned user on every request.
-    console.error("[users] banned, but revoking sessions failed", user.id, error);
+    log.error("users", `banned ${user.id}, but revoking their sessions failed`, error);
   }
 }
 
@@ -165,7 +166,7 @@ export async function updateOwnProfile(user: User, patch: { name?: string | null
     try {
       await auth.updateProfile(user.authProviderUserId, { name });
     } catch (error) {
-      console.error("[users] updating the auth provider's name failed", user.id, error);
+      log.error("users", `updating the auth provider's name for ${user.id} failed`, error);
       throw new ServiceError("unavailable", "Your name couldn’t be saved just now. Try again in a moment.");
     }
   }

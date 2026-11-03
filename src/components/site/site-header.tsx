@@ -50,6 +50,7 @@ import { getContent } from "@/server/services/content";
 import { withoutDocsLinks } from "./docs-links";
 import { Logo } from "./logo";
 import { MobileMenu, NavLinks } from "./site-nav";
+import { log } from "@/server/log";
 
 /** Who is signed in, or null. A failing auth provider must not take the marketing site down with it. */
 async function viewer(): Promise<{ user: User | null; signInHref: string }> {
@@ -57,7 +58,7 @@ async function viewer(): Promise<{ user: User | null; signInHref: string }> {
     const [user, auth] = await Promise.all([getCurrentUser(), getAuth()]);
     return { user, signInHref: auth.urls.signIn };
   } catch (error) {
-    console.error("[site-header] auth unavailable; rendering the signed-out header", error);
+    log.error("site-header", "auth unavailable; rendering the signed-out header", error);
     return { user: null, signInHref: "/sign-in" };
   }
 }

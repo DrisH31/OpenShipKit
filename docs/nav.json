@@ -25,6 +25,7 @@
     "items": [
       "deployment",
       "security",
+      "observability",
       "seo",
       "scaling",
       "releasing",

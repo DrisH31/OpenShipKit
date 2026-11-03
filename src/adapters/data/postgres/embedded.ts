@@ -32,6 +32,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import { closeDrizzle, getEmbeddedClient, isEmbeddedDatabase, pgliteDir } from "./db";
 import { createPostgresStore } from "./index";
 import { seedDatabase } from "@/server/seed";
+import { log } from "@/server/log";
 
 const g = globalThis as unknown as { __openshipkitEmbeddedReady?: Promise<void>; __openshipkitEmbeddedMigrations?: string };
 
@@ -93,8 +94,9 @@ function boot(): Promise<void> {
     const store = createPostgresStore();
     const fresh = (await store.plans.list()).length === 0 && (await store.posts.list({ limit: 1 })).items.length === 0;
     if (fresh) await seedDatabase(store);
-    console.info(
-      `[db] embedded Postgres ready at ${pgliteDir()} in ${Date.now() - started} ms${fresh ? " (seeded)" : ""}. Set DATABASE_URL to use a Postgres server.`,
+    log.info(
+      "db",
+      `embedded Postgres ready at ${pgliteDir()} in ${Date.now() - started} ms${fresh ? " (seeded)" : ""}. Set DATABASE_URL to use a Postgres server.`,
     );
   })().catch(async (error: unknown) => {
     g.__openshipkitEmbeddedReady = undefined;

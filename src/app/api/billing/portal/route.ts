@@ -16,6 +16,7 @@ import { rateLimit } from "@/server/rate-limit";
 import { isBillingEnabled, openPortal } from "@/server/services/billing";
 import { ServiceError } from "@/server/services/errors";
 import { getCurrentUser } from "@/server/session";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,7 +54,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     // A ServiceError (no customer yet → not_found) keeps its code and status; anything else is logged, never shown.
     if (error instanceof ServiceError) return fail(error.code, error.status, error.message);
-    console.error("[billing] portal failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
+    log.error("billing", "portal failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
     return fail("error", 500, BILLING_GENERIC_ERROR);
   }
 }

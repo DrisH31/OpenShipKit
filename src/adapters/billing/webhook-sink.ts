@@ -25,6 +25,7 @@ import "server-only";
 import type { PaidProvider } from "@/core/data";
 import type { Actor, Plan, PriceInterval, PurchaseInput, SubscriptionUpsert } from "@/core/types";
 import { getData } from "@/server/data";
+import { log as appLog } from "@/server/log";
 import { recordAudit } from "@/server/services/audit";
 import type { BillingWebhookSink, ProviderOrderState, ProviderSubscriptionState, WebhookApplyResult } from "./shared";
 
@@ -34,9 +35,8 @@ export function webhookActor(provider: PaidProvider): Actor {
 
 /** Ids and outcomes only — never payloads, emails or secrets. */
 function log(provider: PaidProvider, message: string, loud = false): void {
-  const line = `[billing:${provider}] ${message}`;
-  if (loud) console.error(line);
-  else console.info(line);
+  if (loud) appLog.error(`billing:${provider}`, message);
+  else appLog.info(`billing:${provider}`, message);
 }
 
 /**

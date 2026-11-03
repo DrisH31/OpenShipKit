@@ -28,6 +28,7 @@ import "server-only";
 
 import type { PaidProvider } from "@/core/data";
 import type { PriceInterval, SubscriptionStatus } from "@/core/types";
+import { log } from "@/server/log";
 
 export function jsonResponse(status: number, body: Record<string, unknown>): Response {
   return new Response(JSON.stringify(body), {
@@ -38,9 +39,9 @@ export function jsonResponse(status: number, body: Record<string, unknown>): Res
 
 /** Log a line about a webhook. Ids and event types only — never payloads, emails or secrets. */
 export function logWebhook(provider: PaidProvider, message: string, error?: unknown): void {
-  const line = `[billing:${provider}] ${message}`;
-  if (error === undefined) console.info(line);
-  else console.error(line, error instanceof Error ? `${error.name}: ${error.message}` : "unknown error");
+  // The error's name and message only: a provider SDK's error can carry the request it failed on.
+  if (error === undefined) log.info(`billing:${provider}`, message);
+  else log.error(`billing:${provider}`, message, error instanceof Error ? `${error.name}: ${error.message}` : "unknown error");
 }
 
 /** Provider statuses → the app's. Anything unknown is treated as not entitled. */

@@ -12,7 +12,8 @@
 //
 
 import { refresh } from "next/cache";
-import { attempt, failure, type ActionState } from "@/lib/action-state";
+import { failure, type ActionState } from "@/lib/action-state";
+import { attempt } from "@/server/attempt";
 import { text } from "@/lib/form-data";
 import { FRESH_SIGN_IN_MINUTES } from "@/lib/reauth";
 import { hasFreshSignIn, signInAgainTo } from "@/components/dashboard/fresh-sign-in";

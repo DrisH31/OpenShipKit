@@ -19,6 +19,7 @@
 // the Edge bundle never sees process.exit or the database driver.
 //
 
+import type { Instrumentation } from "next";
 import { demoAdminProblems, resolveDataMode } from "@/server/env-rules";
 
 export async function register() {
@@ -43,3 +44,15 @@ export async function register() {
     ensureDemoAccountInBackground("boot");
   }
 }
+
+/**
+ * Every server error Next.js caught (a page, route handler, server action or
+ * the proxy) is logged as one line and, when ERROR_TRACKING_DSN is set,
+ * reported (src/server/error-reporting.ts). Node only: the Edge bundle must not
+ * load the reporter's node:crypto.
+ */
+export const onRequestError: Instrumentation.onRequestError = async (error, request, context) => {
+  if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  const { logRequestError } = await import("@/server/request-error");
+  await logRequestError(error, request, context);
+};
