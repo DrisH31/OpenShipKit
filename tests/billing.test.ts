@@ -283,6 +283,7 @@ function fakePolar() {
       }),
     },
     events: { ingest: vi.fn(async (body: { events: unknown[] }) => ({ inserted: body.events.length })) },
+    products: { get: vi.fn() },
   } satisfies PolarClient;
   return { state, client };
 }
@@ -848,5 +849,62 @@ describe("billing routes with Polar on", () => {
     const forged = await webhookRoute(polarRequest("subscription.active", { id: "psub_1" }, { secret: `whsec_${randomBytes(24).toString("base64")}` }));
     expect(forged.status).toBe(403);
     expect(await subsOf()).toHaveLength(1);
+  });
+});
+
+describe("switching billing providers", () => {
+  beforeEach(setup);
+
+  it("counts subscriptions still renewing at a provider the site no longer listens to", async () => {
+    const { strandedSubscriptions } = await import("@/server/services/billing");
+    const sub = (id: string, provider: "polar" | "stripe", over: Partial<{ status: "active" | "canceled"; cancelAtPeriodEnd: boolean }> = {}) =>
+      store.billing.upsertSubscription({
+        userId: user.id,
+        provider,
+        providerSubscriptionId: id,
+        providerCustomerId: null,
+        planKey: "pro",
+        interval: "month",
+        status: over.status ?? "active",
+        currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+        cancelAtPeriodEnd: over.cancelAtPeriodEnd ?? false,
+      });
+    await sub("p1", "polar");
+    await sub("p2", "polar", { cancelAtPeriodEnd: true }); // ends on its own: not stranded
+    await sub("p3", "polar", { status: "canceled" });
+    await sub("s1", "stripe");
+    h.billing = { id: "stripe" } as BillingProvider;
+    expect(await strandedSubscriptions()).toEqual({ polar: 1 });
+    h.billing = null; // billing off: everyone still renewing is stranded
+    expect(await strandedSubscriptions()).toEqual({ polar: 1, stripe: 1 });
+  });
+});
+
+describe("checking a plan's prices against the provider", () => {
+  beforeEach(setup);
+
+  it("names each price whose amount, currency or interval differs, or that the provider doesn't have", async () => {
+    const { checkPlanPrices } = await import("@/server/services/billing");
+    const at: Record<string, { amountCents: number; currency: string; interval: "month" | "year" | "one_time" } | null> = {
+      price_m: { amountCents: 1900, currency: "usd", interval: "month" },
+      price_y: { amountCents: 20000, currency: "usd", interval: "year" },
+      price_x: null,
+    };
+    h.billing = { id: "stripe", label: "Stripe", describePrice: async (id: string) => at[id] ?? null } as unknown as BillingProvider;
+    const plan = {
+      key: "pro",
+      prices: [
+        { interval: "month", amountCents: 1900, currency: "usd", polarProductId: null, stripePriceId: "price_m" },
+        { interval: "year", amountCents: 19000, currency: "usd", polarProductId: null, stripePriceId: "price_y" },
+        { interval: "one_time", amountCents: 29900, currency: "usd", polarProductId: null, stripePriceId: "price_x" },
+      ],
+    } as unknown as Plan;
+    const check = await checkPlanPrices(plan);
+    expect(check).toEqual({
+      provider: "Stripe",
+      problems: ["Yearly (price_y): Stripe charges $200, the plan shows $190.", "One-time (price_x): Stripe has no such price."],
+    });
+    h.billing = { id: "stripe", label: "Stripe", describePrice: async () => { throw new Error("down"); } } as unknown as BillingProvider;
+    expect(await checkPlanPrices(plan)).toEqual({ provider: "Stripe", unavailable: true });
   });
 });

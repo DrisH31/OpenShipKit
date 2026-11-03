@@ -121,7 +121,9 @@ whether the database has every migration this build expects (the newest entry in
 `drizzle/meta/_journal.json`). **Behind** is a 503: a deploy skipped
 `npm run db:migrate`, and queries for new columns would fail, so a load balancer
 should hold traffic until it runs. **Ahead** (older code on a newer database,
-during a rollback) is reported but serves.
+during a rollback) is reported but serves. **Unknown** is a 503 too: the database
+answers but its migrations table can't be read (a missing grant, a half-made
+database), so nobody can say the schema is current.
 
 It also reports `"jobs": {"ok": false}` when a due background job
 has waited more than five minutes, because the runner is stopped, stuck or

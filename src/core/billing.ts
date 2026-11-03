@@ -9,7 +9,7 @@
 // checkout redirect, a query string, or the client.
 //
 
-import type { BillingProviderId, Plan, PlanPrice, User } from "./types";
+import type { Actor, BillingProviderId, Plan, PlanPrice, PriceInterval, User } from "./types";
 
 export type PaidProviderId = Exclude<BillingProviderId, "none">;
 export const PAID_PROVIDERS: readonly PaidProviderId[] = ["polar", "stripe", "razorpay"];
@@ -58,6 +58,9 @@ export interface CheckoutInput {
   cancelUrl: string;
 }
 
+/** What a provider charges for one of its prices: compared with the plan's price in /admin/plans. null = it doesn't say. */
+export type ProviderPrice = { amountCents: number | null; currency: string | null; interval: PriceInterval | null };
+
 /** One usage event as a provider receives it (BillingProvider.reportUsage). */
 export type UsageReport = { id: string; customerId: string; metric: string; quantity: number; occurredAt: string };
 
@@ -74,15 +77,21 @@ export interface BillingProvider {
   createPortal(input: { user: User; customerId: string; returnUrl: string }): Promise<{ url: string }>;
   /**
    * For a provider with no portal: stop a subscription renewing (it runs to the end of the period),
-   * then hand its new state to the webhook sink, the same write path as a webhook.
+   * then hand its new state to the webhook sink, the same write path as a webhook, audited as
+   * `actor`. Safe to call again after a failure part-way: one already set to end is a success.
    */
-  cancelAtPeriodEnd?(providerSubscriptionId: string): Promise<void>;
+  cancelAtPeriodEnd?(providerSubscriptionId: string, actor: Actor): Promise<void>;
   /**
    * For a provider with metered prices (Polar meters, Stripe meters): send one usage event for a
    * customer. `id` is ours and stable across retries, so the provider drops a repeat. The meter on
    * the provider's side must be named after (Stripe) or filter on (Polar) the metric.
    */
   reportUsage?(event: UsageReport): Promise<void>;
+  /**
+   * What the provider charges for a price id (a Polar product, a Stripe price, a Razorpay plan), so
+   * /admin/plans can warn when the plan advertises something else. null: no such price.
+   */
+  describePrice?(id: string): Promise<ProviderPrice | null>;
   /**
    * Verify the signature, then apply the event through the DataStore
    * (idempotent via billing.claimWebhookEvent). Returns the HTTP response the

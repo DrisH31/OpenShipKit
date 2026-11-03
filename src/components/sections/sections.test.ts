@@ -106,7 +106,9 @@ describe("plan cards", () => {
       createElement(PricingPlans, { plans, id: "t", current: { planKey: "pro", source: "subscription" } }),
     );
     expect(html).toContain("Your plan");
-    expect(html).toContain('action="/api/billing/portal"');
+    // The Billing page, which offers the portal or Cancel per provider: a direct portal post fails on Razorpay.
+    expect(html).toMatch(/href="\/dashboard\/billing"[^>]*>Manage billing</);
+    expect(html).not.toContain('action="/api/billing/portal"');
     expect(html).not.toContain('name="planKey" value="pro"');
     expect(html).toContain('name="planKey" value="lifetime"'); // other plans still check out
   });

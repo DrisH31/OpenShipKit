@@ -56,6 +56,8 @@ export function parseListing(xml: string): { items: { key: string; size: number;
   });
   const truncated = tag(xml, "IsTruncated") === "true";
   const token = tag(xml, "NextContinuationToken");
+  // Truncated with no token to continue from: listing on would silently drop the rest of the library.
+  if (truncated && !token) throw new Error("S3 listing is truncated but has no NextContinuationToken");
   return { items, next: truncated && token ? unescape(token) : null };
 }
 

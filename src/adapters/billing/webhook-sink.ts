@@ -82,6 +82,15 @@ export async function findPlanByProductId(productId: string | null | undefined, 
   return null;
 }
 
+/** Whether the plan our checkout sold (by key) charges per seat at `interval`, or at its only recurring price. */
+async function checkoutPlanPerSeat(planKey: string | null, interval: PriceInterval | null): Promise<boolean> {
+  if (!planKey) return false;
+  const plan = await (await getData()).plans.getByKey(planKey);
+  const recurring = plan?.prices.filter((p) => p.interval !== "one_time") ?? [];
+  const price = recurring.find((p) => p.interval === interval) ?? (recurring.length === 1 ? recurring[0] : undefined);
+  return price?.perSeat === true;
+}
+
 /**
  * The app user a provider object belongs to, trying each hint in order, then
  * the stored customer mapping. Only ids of users that exist count — a write
@@ -131,7 +140,7 @@ const SUBSCRIPTION_FIELDS = [
 ] as const satisfies readonly (keyof SubscriptionUpsert)[];
 
 /** Upsert the canonical subscription state; audit only a real change. Returns whether anything changed. */
-export async function upsertSubscription(input: SubscriptionUpsert): Promise<boolean> {
+export async function upsertSubscription(input: SubscriptionUpsert, actor?: Actor): Promise<boolean> {
   const data = await getData();
   const normalized: SubscriptionUpsert = { ...input, orgId: input.orgId ?? null, seats: input.seats ?? null, currentPeriodEnd: normalizeInstant(input.currentPeriodEnd) };
   const before = await data.billing.getSubscription(normalized.provider, normalized.providerSubscriptionId);
@@ -142,7 +151,7 @@ export async function upsertSubscription(input: SubscriptionUpsert): Promise<boo
   if (!changed) return false;
   const after = await data.billing.upsertSubscription(normalized);
   await recordAudit(
-    webhookActor(normalized.provider),
+    actor ?? webhookActor(normalized.provider),
     before ? "subscription.update" : "subscription.create",
     "subscription",
     after.id,
@@ -159,6 +168,10 @@ export async function upsertPurchase(input: PurchaseInput): Promise<boolean> {
   const existing = (await data.billing.listPurchases({ userId: input.userId, limit: 200 })).items.find(
     (p) => p.provider === input.provider && p.providerOrderId === input.providerOrderId,
   );
+  // Revoked stays revoked: neither a full refund nor a lost chargeback can be undone, and a later
+  // re-sync (a refund event for a disputed payment re-fetches a charge that says "not refunded")
+  // must not hand the access back.
+  if (existing?.refunded) input = { ...input, refunded: true };
   const changed =
     !existing ||
     existing.refunded !== input.refunded ||
@@ -205,7 +218,7 @@ function warnUnmatched(provider: PaidProvider, what: string, productId: string |
   );
 }
 
-async function applySubscription(state: ProviderSubscriptionState): Promise<WebhookApplyResult> {
+async function applySubscription(state: ProviderSubscriptionState, opts: { actor?: Actor } = {}): Promise<WebhookApplyResult> {
   const { provider } = state;
   const userId = await resolveUserId(provider, { candidates: state.userIdHints, customerId: state.providerCustomerId });
   if (!userId) {
@@ -237,9 +250,11 @@ async function applySubscription(state: ProviderSubscriptionState): Promise<Webh
     // Bound to the organisation our checkout named, whether or not it still exists: a deleted
     // organisation's subscription must grant nothing, never become the buyer's personal plan.
     orgId: state.orgIdHint && UUID.test(state.orgIdHint) ? state.orgIdHint : null,
-    // A quantity is a seat count only on a per-seat price (Stripe and Razorpay report a quantity for every subscription).
-    seats: plan?.perSeat ? (state.seats ?? null) : plan ? null : (state.seats ?? null),
-  });
+    // A quantity is a seat count only on a per-seat price (Stripe and Razorpay report a quantity for every
+    // subscription). Matched by product: that price says. Kept by checkout's plan key (the product id was
+    // edited since): that plan's recurring price for this interval says. Neither: no seats.
+    seats: (plan ? plan.perSeat : await checkoutPlanPerSeat(planKey, state.interval)) ? (state.seats ?? null) : null,
+  }, opts.actor);
   return changed ? "applied" : "unchanged";
 }
 

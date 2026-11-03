@@ -20,6 +20,7 @@ import { withDefaults } from "@/lib/schema-form";
 import { fieldNodeFor } from "@/lib/schema-node";
 import { requireAdmin } from "@/server/session";
 import { getPlan } from "@/server/services/plans";
+import { checkPlanPrices } from "@/server/services/billing";
 import { deletePlanAction, savePlan } from "../actions";
 
 export const metadata: Metadata = { title: "Edit plan" };
@@ -30,6 +31,8 @@ export default async function EditPlanPage({ params, searchParams }: { params: P
   const plan = await getPlan(key);
   if (!plan) notFound();
   const node = fieldNodeFor(planSchema);
+  // What the provider really charges, against what the pricing page shows (never blocks the editor).
+  const priceCheck = await checkPlanPrices(plan);
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { id, updatedAt, ...value } = plan;
 
@@ -60,7 +63,7 @@ export default async function EditPlanPage({ params, searchParams }: { params: P
                 </>
               }
               title={`Delete the ${plan.name} plan?`}
-              description="It disappears from the pricing page and checkout. People who already pay keep their subscription at Polar. You can bring the plan back from the audit log. To hide it without deleting, turn off “Active” instead."
+              description="It disappears from the pricing page and checkout. People who already pay keep their subscription with the payment provider. You can bring the plan back from the audit log. To hide it without deleting, turn off “Active” instead."
               confirmLabel="Delete plan"
             />
           </>
@@ -68,8 +71,23 @@ export default async function EditPlanPage({ params, searchParams }: { params: P
       />
       {sp.created ? (
         <p role="status" className="text-small text-positive">
-          Plan created. Add its Polar product ids when you turn payments on.
+          Plan created. Add its payment provider&apos;s price ids when you turn payments on.
         </p>
+      ) : null}
+      {priceCheck && "unavailable" in priceCheck ? (
+        <p role="status" className="max-w-3xl text-small text-ink-3">
+          Couldn&apos;t reach {priceCheck.provider} to compare its prices with this plan&apos;s. Try again in a moment.
+        </p>
+      ) : priceCheck && priceCheck.problems.length > 0 ? (
+        <div role="alert" className="max-w-3xl rounded-xl border border-line-strong bg-card p-4">
+          <p className="text-small font-semibold text-ink">The pricing page and {priceCheck.provider} disagree</p>
+          <p className="text-small text-ink-2">Customers see this plan&apos;s amounts but pay {priceCheck.provider}&apos;s. Change one to match the other.</p>
+          <ul className="mt-2 list-disc pl-5 text-small text-ink-2">
+            {priceCheck.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </div>
       ) : null}
       <div className="max-w-3xl rounded-xl border border-line bg-card px-5 pt-5 sm:px-6 sm:pt-6">
         <SchemaEditor

@@ -46,6 +46,7 @@ export interface PolarClient {
   subscriptions: { get(id: string): Promise<models.Subscription> };
   orders: { get(id: string): Promise<models.Order> };
   events: { ingest(body: models.EventsIngest): Promise<models.EventsIngestResponse> };
+  products: { get(id: string): Promise<models.Product> };
 }
 
 export interface PolarProviderOptions {
@@ -178,6 +179,21 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
     // makes a retried job a duplicate Polar skips, not a second charge.
     async reportUsage({ id, customerId, metric, quantity, occurredAt }) {
       await polar().events.ingest({ events: [{ name: metric, customer_id: customerId, external_id: id, timestamp: occurredAt, metadata: { quantity } }] });
+    },
+
+    async describePrice(id: string) {
+      const product = await polar().products.get(id).catch((error: { statusCode?: number }) => {
+        if (error?.statusCode === 404) return null;
+        throw error;
+      });
+      if (!product) return null;
+      const fixed = product.prices.find((p) => !p.is_archived && "amount_type" in p && p.amount_type === "fixed") as { price_amount: number; price_currency: string } | undefined;
+      const r = product.recurring_interval;
+      return {
+        amountCents: fixed?.price_amount ?? null,
+        currency: fixed?.price_currency ?? null,
+        interval: !product.is_recurring ? "one_time" : (r === "month" || r === "year") && (product.recurring_interval_count ?? 1) === 1 ? r : null,
+      };
     },
 
     async handleWebhook(request: Request) {

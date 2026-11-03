@@ -105,6 +105,17 @@ describe("media in an S3-compatible bucket", () => {
     expect(await media.readMedia(item.path)).toBeNull();
   });
 
+  it("S3_PREFIX names a folder however it's written", async () => {
+    for (const [prefix, folder] of [["/media/", "media/"], ["media", "media/"], ["/", ""]] as const) {
+      objects.clear();
+      vi.resetModules();
+      vi.stubEnv("S3_PREFIX", prefix);
+      const media = await s3Facade();
+      const item = await media.writeMediaFile(PNG, "image/png");
+      expect([...objects.keys()], prefix).toEqual([`${folder}${item.path}`]);
+    }
+  });
+
   it("signs every request with SigV4 for the configured region", async () => {
     const media = await s3Facade();
     await media.writeMediaFile(PNG, "image/png");
@@ -149,5 +160,11 @@ describe("media in an S3-compatible bucket", () => {
         "<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>t&amp;1</NextContinuationToken><Contents><Key>uploads/a&amp;b</Key><Size>3</Size><LastModified>2026-11-03T00:00:00.000Z</LastModified></Contents></ListBucketResult>",
       ),
     ).toEqual({ items: [{ key: "uploads/a&b", size: 3, modified: new Date("2026-11-03T00:00:00.000Z") }], next: "t&1" });
+  });
+});
+
+describe("listing edge cases", () => {
+  it("refuses a truncated listing with no continuation token rather than silently dropping the rest", () => {
+    expect(() => parseListing("<ListBucketResult><IsTruncated>true</IsTruncated></ListBucketResult>")).toThrow(/truncated/);
   });
 });

@@ -23,7 +23,7 @@ import "server-only";
 // CTAs: free → sign up; contactSales → /contact?topic=sales; paid → checkout.
 // For a signed-in viewer (pass `current`, from viewerPlan()), the plan they
 // already have says so instead: their subscription → Manage billing (the
-// provider's portal), a one-time purchase → owned, the free plan → dashboard.
+// Billing page), a one-time purchase → owned, the free plan → dashboard.
 // Any other paid price asks `current.refuse` (getCheckoutGuard, the rule
 // startCheckout enforces) first, and a checkout bound to be refused shows the
 // refusal's label instead: a Lifetime owner sees "Included in your Lifetime
@@ -42,7 +42,6 @@ import Link from "next/link";
 import { CheckIcon } from "lucide-react";
 import type { Entitlement, Plan, PlanPrice, PriceInterval } from "@/core/types";
 import { CheckoutButton } from "@/components/billing/checkout-button";
-import { PortalButton } from "@/components/billing/portal-button";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getCheckoutGuard, getEntitlement, type CheckoutRefusal } from "@/server/services/billing";
@@ -126,7 +125,13 @@ function PlanAction({
   const cls = cn(buttonVariants({ variant, size: "lg" }), "w-full");
   if (isCurrentPlan(plan, current)) {
     if (current?.source === "subscription") {
-      return <PortalButton label="Manage billing" variant="outline" size="lg" className="w-full" />;
+      // The Billing page, not the portal itself: it shows Manage billing where the provider has a
+      // portal (Polar, Stripe) and Cancel where it doesn't (Razorpay).
+      return (
+        <Link href="/dashboard/billing" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}>
+          Manage billing
+        </Link>
+      );
     }
     return (
       <Link href="/dashboard" className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}>

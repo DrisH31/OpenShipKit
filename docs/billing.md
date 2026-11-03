@@ -116,9 +116,9 @@ Call these on the server — in a page, action or route — after `requireUser()
 
 | Route | Does |
 |---|---|
-| `POST /api/billing/checkout` | `{ planKey, interval }` (form or JSON) → 303 to Polar’s checkout. Signed out → sign-in first. Refuses a second subscription. |
-| `POST /api/billing/portal` | → 303 to Polar’s customer portal |
-| `POST /api/billing/webhook` | Polar → OpenShipKit. 404 when billing is off |
+| `POST /api/billing/checkout` | `{ planKey, interval }` (form or JSON) → 303 to the provider’s checkout. Signed out → sign-in first. Refuses a second subscription. |
+| `POST /api/billing/portal` | → 303 to the provider’s customer portal (Polar, Stripe; Razorpay has none) |
+| `POST /api/billing/webhook` | The provider → OpenShipKit. 404 when billing is off |
 
 `CheckoutButton` and `PortalButton` (`src/components/billing`) are plain
 forms that post to these and work without JavaScript. Both routes check the
@@ -140,15 +140,21 @@ receipts in your Stripe dashboard.
    `customer.subscription.created`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `customer.subscription.paused`,
    `customer.subscription.resumed`, `checkout.session.completed`,
-   `checkout.session.async_payment_succeeded` and `charge.refunded`. Put its
-   signing secret in `STRIPE_WEBHOOK_SECRET`.
+   `checkout.session.async_payment_succeeded`, `charge.refunded` and
+   `charge.dispute.closed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
 3. **The customer portal.** Settings → Billing → Customer portal: turn on
-   cancelling and updating payment methods. **Manage billing** opens it.
+   cancelling, updating payment methods, and **switching plans** (add each
+   plan's products, so a subscriber can move between them). **Manage billing**
+   opens it; without plan switching a subscriber has no way to change plan,
+   because the app refuses a second subscription.
 
 Test with `sk_test_…` keys and Stripe's test cards. The rules don't change:
 access comes only from a signature-verified webhook, the subscription is
-re-fetched from Stripe before anything is written, and each event is handled
-once.
+re-fetched from Stripe before anything is written, and a redelivered event is
+applied again with the same result (it re-fetches, so it can't grant twice).
+Promotion codes are on at checkout: a one-time price made free by a 100% code
+is granted from the completed checkout session, since Stripe makes no payment
+for it.
 
 ## Razorpay instead (India)
 
@@ -165,7 +171,7 @@ UPI, cards and netbanking. GST invoices are set up in its dashboard.
    `subscription.activated`, `subscription.charged`, `subscription.pending`,
    `subscription.halted`, `subscription.cancelled`, `subscription.completed`,
    `subscription.paused`, `subscription.resumed`, `subscription.updated`,
-   `payment_link.paid` and `refund.processed`.
+   `payment_link.paid`, `refund.processed` and `payment.dispute.lost`.
 3. **Keys.** `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`
    (`rzp_test_…` while testing).
 
@@ -174,6 +180,11 @@ What's different about Razorpay:
 - **No customer portal.** The billing page lists the person's renewing
   subscriptions with a **Cancel at period end** button instead of Manage
   billing. Updating a card goes through Razorpay's own emails and links.
+  Changing plan is cancel, then buy the new plan once the old one ends; the
+  billing page says so.
+- **Pressing Cancel again finishes a cancellation that failed part-way** (it
+  reached Razorpay, then the app couldn't record it): Razorpay's "already
+  cancelled" counts as done.
 - **A cancellation is remembered by the app.** Razorpay keeps a subscription
   cancelled "at the end of the cycle" as `active`, with no field saying it will
   end. The app records the cancellation when you press the button and keeps it
@@ -184,11 +195,38 @@ What's different about Razorpay:
 - **Refunds of one-time purchases** are recognised because the app copies its
   notes onto the payment when the link is paid.
 
+## Chargebacks
+
+A one-time purchase whose chargeback you **lose** loses its access, like a full
+refund: Stripe `charge.dispute.closed` and Razorpay `payment.dispute.lost`, each
+re-fetched before anything changes. With Polar, disputes go to Polar as the
+merchant of record; access ends when Polar reports the order refunded.
+Revoked stays revoked: a later event for the same payment can't hand it back.
+A disputed subscription payment is left to the subscription's own status at
+the provider.
+
+## Checking prices
+
+The pricing page shows each plan's amount; the customer pays the provider's.
+`/admin/plans/<key>` compares the two for every paid price (amount, currency,
+interval) and lists any difference, or a price id the provider doesn't have.
+It only reads: nothing is changed on either side.
+
+## Switching providers
+
+One provider at a time. After `BILLING_PROVIDER` changes, the old provider's
+webhooks are refused (they can't be verified), so its subscribers **keep being
+charged** while their access runs out at the period end. The server logs how
+many there are at startup (`… still renew, but billing is now …`). Before
+switching, cancel those subscriptions at the old provider (or let them run
+out), and ask the people to subscribe again. Their past purchases and history
+stay in the database.
+
 ## Variables
 
 | Variable | |
 |---|---|
-| `BILLING_PROVIDER` | `polar` \| `none` (default: `polar` when the token is set) |
+| `BILLING_PROVIDER` | `polar` \| `stripe` \| `razorpay` \| `none` (default: the first whose key is set: Polar, Stripe, then Razorpay) |
 | `POLAR_ACCESS_TOKEN` | organization access token (sandbox and production differ) |
 | `POLAR_WEBHOOK_SECRET` | the webhook endpoint’s secret |
 | `POLAR_SERVER` | `sandbox` \| `production` |

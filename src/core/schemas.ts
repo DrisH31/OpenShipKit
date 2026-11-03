@@ -106,8 +106,22 @@ export const priceSchema = z.object({
   currency: z.string().length(3).toLowerCase().default("usd"),
   polarProductId: z.string().max(100).nullable().default(null).describe("The Polar product this price checks out"),
   stripePriceId: z.string().max(100).nullable().optional().describe("The Stripe price this price checks out (price_…)"),
-  razorpayPlanId: z.string().max(100).nullable().optional().describe("The Razorpay plan a recurring price subscribes to (plan_…)"),
+  // Letters, digits and underscores, as Razorpay's ids are: never the "<plan>:one_time" id the app makes
+  // up for a one-time Razorpay price (priceIdFor), so a stored id can't collide with one.
+  razorpayPlanId: z
+    .string()
+    .max(100)
+    .regex(/^[A-Za-z0-9_]+$/, "A Razorpay plan id, like plan_ABC123")
+    .nullable()
+    .optional()
+    .describe("The Razorpay plan a recurring price subscribes to (plan_…). Not for a one-time price"),
   perSeat: z.boolean().optional().describe("Charged per seat (teams): the provider's product or price is seat- or unit-based. Recurring prices only"),
+}).superRefine((price, ctx) => {
+  // A one-time Razorpay price is a payment link for the plan's own amount (priceIdFor): a stored plan id
+  // there would never be used, and storedPriceIds would disagree with what checkout sells.
+  if (price.interval === "one_time" && price.razorpayPlanId) {
+    ctx.addIssue({ code: "custom", path: ["razorpayPlanId"], message: "A one-time price needs no Razorpay plan: leave it empty." });
+  }
 });
 
 export const planSchema = z.object({

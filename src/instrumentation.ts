@@ -30,6 +30,8 @@ export async function register() {
       checkProductionEnv();
       // The background job runner (src/server/jobs; JOBS_RUNNER=off skips it). Imported here, inside the
       // nodejs branch: a helper outside it put the database driver into the Edge bundle.
+      // Customers still paying a provider this site no longer listens to (a BILLING_PROVIDER switch): logged, never fatal.
+      void import("@/server/services/billing").then((m) => m.warnStrandedSubscriptions());
       const { startJobRunner } = await import("@/server/jobs");
       return startJobRunner();
     }

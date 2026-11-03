@@ -20,7 +20,8 @@ vi.spyOn(console, "info").mockImplementation(() => {});
 vi.spyOn(console, "error").mockImplementation(() => {});
 vi.spyOn(console, "warn").mockImplementation(() => {});
 
-const { createRazorpayProvider } = await import("@/adapters/billing/razorpay");
+const { createRazorpayProvider, razorpaySubscriptionState } = await import("@/adapters/billing/razorpay");
+import type { RazorpaySubscription } from "@/adapters/billing/razorpay";
 const { createStripeProvider } = await import("@/adapters/billing/stripe");
 const { billingWebhookSink } = await import("@/adapters/billing/webhook-sink");
 type RazorpayClient = import("@/adapters/billing/razorpay").RazorpayClient;
@@ -58,7 +59,10 @@ beforeEach(async () => {
 function razorpayFake() {
   const sub = { id: "sub_1", status: "active", plan_id: "plan_pro_month", quantity: 1, customer_id: "cust_1", notes: { userId: "", planKey: "pro", productId: "plan_pro_month" }, current_end: future, ended_at: null as number | null };
   const payment = { id: "pay_1", status: "captured", amount: 299900, currency: "INR", customer_id: "cust_1", notes: {} as Record<string, string>, refund_status: null as string | null };
+  const dispute = { id: "disp_1", payment_id: "pay_1", status: "open" };
   const client: RazorpayClient = {
+    disputes: { fetch: vi.fn(async () => ({ ...dispute })) },
+    plans: { fetch: vi.fn() },
     subscriptions: { create: vi.fn(), fetch: vi.fn(async () => ({ ...sub })), cancel: vi.fn(async () => ({ ...sub })) },
     paymentLink: { create: vi.fn(), fetch: vi.fn(async () => ({ id: "plink_1", short_url: "x", status: "paid", payments: [{ payment_id: "pay_1", status: "captured" }] })) },
     payments: {
@@ -68,7 +72,7 @@ function razorpayFake() {
       }),
     },
   };
-  return { client, sub, payment };
+  return { client, sub, payment, dispute };
 }
 
 const rzpRequest = (event: Record<string, unknown>, id: string) => {
@@ -88,9 +92,12 @@ describe("Razorpay", () => {
     await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "e1"));
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(false);
 
-    await rzp.cancelAtPeriodEnd!("sub_1");
+    await rzp.cancelAtPeriodEnd!("sub_1", { type: "user", id: user.id, label: user.email });
     expect(client.subscriptions.cancel).toHaveBeenCalledWith("sub_1", true);
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+    // Audited once, as the person who pressed it.
+    const audit = (await store.audit.list({ entity: "subscription", limit: 10 })).items.filter((e) => e.action === "subscription.update");
+    expect(audit.map((e) => e.actor.label)).toEqual([user.email]);
 
     // A later charge event re-fetches "active" with no word of the cancellation: it must stay cancelled.
     await rzp.handleWebhook(rzpRequest({ event: "subscription.charged", payload: { subscription: { entity: { id: "sub_1" } } } }, "e2"));
@@ -101,6 +108,38 @@ describe("Razorpay", () => {
     sub.ended_at = future;
     await rzp.handleWebhook(rzpRequest({ event: "subscription.cancelled", payload: { subscription: { entity: { id: "sub_1" } } } }, "e3"));
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("canceled");
+  });
+
+  it("a cancel that reached Razorpay but failed to write is finished by pressing it again", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "f1"));
+    const me = { type: "user" as const, id: user.id, label: user.email };
+
+    // Razorpay cancels; the re-fetch that follows fails. The row still says renewing.
+    const fetch = client.subscriptions.fetch as ReturnType<typeof vi.fn>;
+    fetch.mockImplementationOnce(async () => ({ ...sub })).mockRejectedValueOnce(new Error("network"));
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toThrow("network");
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(false);
+
+    // Pressed again: Razorpay says it's already cancelled, which is what we wanted.
+    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce({ statusCode: 400, error: { code: "BAD_REQUEST_ERROR", description: "Subscription is already cancelled" } });
+    await rzp.cancelAtPeriodEnd!("sub_1", me);
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+
+    // Any other refusal still fails.
+    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce({ statusCode: 400, error: { description: "Subscription cannot be cancelled in created state" } });
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toMatchObject({ statusCode: 400 });
+  });
+
+  it("authenticated without a later start is not a trial: no access until the first charge", () => {
+    const base = { id: "sub_x", status: "authenticated", plan_id: "plan_1", customer_id: "c", notes: {}, quantity: 1, current_end: null, ended_at: null } as unknown as RazorpaySubscription;
+    const now = Date.parse("2026-11-03T00:00:00Z");
+    expect(razorpaySubscriptionState({ ...base, start_at: null } as unknown as RazorpaySubscription, now).status).toBe("incomplete");
+    expect(razorpaySubscriptionState({ ...base, start_at: now / 1000 - 60 } as unknown as RazorpaySubscription, now).status).toBe("incomplete");
+    const trial = razorpaySubscriptionState({ ...base, start_at: now / 1000 + 14 * 86_400 } as unknown as RazorpaySubscription, now);
+    expect(trial).toMatchObject({ status: "trialing", currentPeriodEnd: new Date(now + 14 * 86_400_000).toISOString() });
   });
 
   it("grants a paid payment link, and a full refund (which names only the payment) revokes it", async () => {
@@ -118,6 +157,26 @@ describe("Razorpay", () => {
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
   });
 
+  it("a lost chargeback revokes a purchase, a dispute still open doesn't, and a later re-sync can't hand it back", async () => {
+    const { client, payment, dispute } = razorpayFake();
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    const notes = { userId: user.id, planKey: "pro", productId: "pro:one_time", interval: "one_time" };
+    await rzp.handleWebhook(rzpRequest({ event: "payment_link.paid", payload: { payment_link: { entity: { id: "plink_1", notes } } } }, "d1"));
+    const lost = (id: string) => rzpRequest({ event: "payment.dispute.lost", payload: { dispute: { entity: { id: "disp_1" } } } }, id);
+
+    await rzp.handleWebhook(lost("d2")); // the re-fetch says it's still open: the event decides nothing
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(false);
+
+    dispute.status = "lost";
+    await rzp.handleWebhook(lost("d3"));
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+
+    // A partial refund event later re-fetches a payment that says nothing of the dispute: still revoked.
+    payment.refund_status = "partial";
+    await rzp.handleWebhook(rzpRequest({ event: "refund.processed", payload: { refund: { entity: { id: "rfnd_2", payment_id: "pay_1" } } } }, "d4"));
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+  });
+
   it("has no portal: the provider says so, and checkout makes a payment link for a one-time price", async () => {
     const { client } = razorpayFake();
     client.paymentLink.create = vi.fn(async () => ({ id: "plink_new", short_url: "https://rzp.io/l/x" }));
@@ -127,6 +186,44 @@ describe("Razorpay", () => {
     const { url } = await rzp.createCheckout({ user, plan, price: plan.prices[1], customerId: null, successUrl: "https://example.com/ok", cancelUrl: "https://example.com/no" });
     expect(url).toBe("https://rzp.io/l/x");
     expect(client.paymentLink.create).toHaveBeenCalledWith(expect.objectContaining({ amount: 299900, currency: "INR", notes: expect.objectContaining({ productId: "pro:one_time", userId: user.id }) }));
+  });
+});
+
+describe("seats", () => {
+  it("a quantity is stored as seats only on a per-seat price, matched by product or kept by checkout's plan key", async () => {
+    const subs: Record<string, unknown> = {};
+    const client = {
+      subscriptions: { retrieve: vi.fn(async (id: string) => subs[id]) },
+      webhooks: { constructEventAsync: vi.fn(async (payload: string) => JSON.parse(payload)) },
+    } as unknown as StripeClient;
+    const stripe = createStripeProvider({ client, webhookSecret: "whsec_x", sink: billingWebhookSink });
+    const put = (id: string, price: string) => {
+      subs[id] = {
+        id,
+        status: "active",
+        customer: "cus_1",
+        cancel_at_period_end: false,
+        cancel_at: null,
+        ended_at: null,
+        metadata: { userId: user.id, planKey: "pro", productId: price },
+        items: { data: [{ quantity: 3, current_period_end: 4102444800, price: { id: price, recurring: { interval: "month" } } }] },
+      };
+      return stripe.handleWebhook(
+        new Request("http://localhost/x", { method: "POST", headers: { "stripe-signature": "t=1,v1=ok" }, body: JSON.stringify({ id: `evt_${id}`, type: "customer.subscription.updated", data: { object: { id } } }) }),
+      );
+    };
+    await put("sub_a", "price_pro_month"); // matched, not per seat
+    await put("sub_b", "price_retired"); // matches no plan now; checkout's plan key keeps it on pro, still not per seat
+    expect((await store.billing.getSubscription("stripe", "sub_a"))).toMatchObject({ planKey: "pro", seats: null });
+    expect((await store.billing.getSubscription("stripe", "sub_b"))).toMatchObject({ planKey: "pro", seats: null });
+
+    // The same plan sold per seat: the quantity is the seat count.
+    const plan = (await store.plans.getByKey("pro"))!;
+    await store.plans.upsert({ ...plan, prices: plan.prices.map((p) => (p.interval === "month" ? { ...p, perSeat: true } : p)) });
+    await put("sub_c", "price_pro_month");
+    await put("sub_d", "price_retired");
+    expect((await store.billing.getSubscription("stripe", "sub_c"))?.seats).toBe(3);
+    expect((await store.billing.getSubscription("stripe", "sub_d"))?.seats).toBe(3);
   });
 });
 
@@ -159,5 +256,71 @@ describe("Stripe one-time purchases", () => {
     pi.latest_charge.refunded = true;
     await deliver({ id: "evt_2", type: "charge.refunded", data: { object: { id: "ch_1", payment_intent: "pi_1" } } });
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+  });
+  it("a lost chargeback (re-fetched) revokes a purchase; a won one doesn't", async () => {
+    const pi = {
+      id: "pi_2",
+      status: "succeeded",
+      amount_received: 299900,
+      currency: "inr",
+      customer: "cus_1",
+      metadata: { userId: user.id, planKey: "pro", productId: "price_pro_once" },
+      latest_charge: { id: "ch_2", refunded: false },
+    };
+    const dispute = { id: "dp_1", status: "won", payment_intent: "pi_2" };
+    const client = {
+      paymentIntents: { retrieve: vi.fn(async () => structuredClone(pi)) },
+      disputes: { retrieve: vi.fn(async () => ({ ...dispute })) },
+      webhooks: { constructEventAsync: vi.fn(async (payload: string) => JSON.parse(payload)) },
+    } as unknown as StripeClient;
+    const stripe = createStripeProvider({ client, webhookSecret: "whsec_x", sink: billingWebhookSink });
+    const deliver = (event: Record<string, unknown>) =>
+      stripe.handleWebhook(new Request("http://localhost/x", { method: "POST", headers: { "stripe-signature": "t=1,v1=ok" }, body: JSON.stringify(event) }));
+    await deliver({ id: "evt_a", type: "checkout.session.completed", data: { object: { mode: "payment", payment_intent: "pi_2" } } });
+    const closed = (id: string) => deliver({ id, type: "charge.dispute.closed", data: { object: { id: "dp_1", status: "lost", payment_intent: "pi_2" } } });
+
+    await closed("evt_b"); // the event says lost; Stripe says won
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(false);
+    dispute.status = "lost";
+    await closed("evt_c");
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+  });
+
+  it("a one-time checkout made free by a promotion code (no payment intent) is granted from the re-fetched session", async () => {
+    const session = {
+      id: "cs_free",
+      mode: "payment",
+      status: "complete",
+      payment_status: "no_payment_required",
+      payment_intent: null,
+      customer: "cus_1",
+      client_reference_id: user.id,
+      amount_total: 0,
+      currency: "inr",
+      metadata: { userId: user.id, planKey: "pro", productId: "price_pro_once", interval: "one_time" },
+    };
+    const retrieve = vi.fn(async () => ({ ...session }));
+    const client = {
+      checkout: { sessions: { create: vi.fn(), retrieve } },
+      webhooks: { constructEventAsync: async (body: string) => JSON.parse(body) },
+    } as unknown as StripeClient;
+    const stripe = createStripeProvider({ client, webhookSecret: "whsec_x", sink: billingWebhookSink });
+    const deliver = (id: string, sessionId: string) =>
+      stripe.handleWebhook(
+        new Request("http://localhost/x", {
+          method: "POST",
+          headers: { "stripe-signature": "t=1,v1=ok" },
+          // The event's own copy claims nothing we trust: the state comes from the retrieve.
+          body: JSON.stringify({ id, type: "checkout.session.completed", data: { object: { id: sessionId, mode: "payment", payment_status: "no_payment_required" } } }),
+        }),
+      );
+    expect((await deliver("evt_free", "cs_free")).status).toBe(200);
+    expect(retrieve).toHaveBeenCalledWith("cs_free");
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0]).toMatchObject({ planKey: "pro", providerOrderId: "cs_free", amountCents: 0, refunded: false });
+
+    // Not complete at Stripe: nothing.
+    retrieve.mockResolvedValueOnce({ ...session, id: "cs_open", status: "open" });
+    await deliver("evt_open", "cs_open");
+    expect((await store.billing.listPurchases({ userId: user.id })).items).toHaveLength(1);
   });
 });

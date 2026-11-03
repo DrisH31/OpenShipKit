@@ -35,10 +35,17 @@ import { type BillingWebhookSink, type ProviderOrderState, type ProviderSubscrip
 
 /** The subset of the Stripe client this adapter uses: what tests fake. */
 export interface StripeClient {
-  checkout: { sessions: { create(params: Stripe.Checkout.SessionCreateParams): Promise<{ url: string | null }> } };
+  checkout: {
+    sessions: {
+      create(params: Stripe.Checkout.SessionCreateParams): Promise<{ url: string | null }>;
+      retrieve(id: string): Promise<Stripe.Checkout.Session>;
+    };
+  };
   billingPortal: { sessions: { create(params: Stripe.BillingPortal.SessionCreateParams): Promise<{ url: string }> } };
   subscriptions: { retrieve(id: string): Promise<Stripe.Subscription> };
   paymentIntents: { retrieve(id: string, params?: Stripe.PaymentIntentRetrieveParams): Promise<Stripe.PaymentIntent> };
+  disputes: { retrieve(id: string): Promise<Stripe.Dispute> };
+  prices: { retrieve(id: string): Promise<Stripe.Price> };
   billing: { meterEvents: { create(params: Stripe.Billing.MeterEventCreateParams, options?: Stripe.RequestOptions): Promise<unknown> } };
   webhooks: { constructEventAsync(payload: string, header: string, secret: string): Promise<Stripe.Event> };
 }
@@ -88,7 +95,7 @@ export function subscriptionState(sub: Stripe.Subscription): ProviderSubscriptio
 }
 
 /** A paid one-time payment intent as the sink's order state. Exported for the tests. */
-export function orderState(pi: Stripe.PaymentIntent): ProviderOrderState {
+export function orderState(pi: Stripe.PaymentIntent, disputeLost = false): ProviderOrderState {
   const charge = typeof pi.latest_charge === "object" && pi.latest_charge !== null ? pi.latest_charge : null;
   return {
     provider: "stripe",
@@ -101,8 +108,27 @@ export function orderState(pi: Stripe.PaymentIntent): ProviderOrderState {
     checkoutProductId: meta(pi.metadata, "productId"),
     amountCents: pi.amount_received,
     currency: pi.currency.toLowerCase(),
-    // A FULL refund ends access; a partial one keeps it.
-    refunded: charge?.refunded === true,
+    // A FULL refund ends access, and so does a lost chargeback; a partial refund keeps it.
+    refunded: charge?.refunded === true || disputeLost,
+  };
+}
+
+/**
+ * A one-time checkout that cost nothing (a 100%-off promotion code): Stripe makes no payment intent,
+ * so the session is the order. Exported for the tests.
+ */
+export function freeOrderState(session: Stripe.Checkout.Session): ProviderOrderState {
+  return {
+    provider: "stripe",
+    providerOrderId: session.id,
+    providerCustomerId: idOf(session.customer as string | { id: string } | null),
+    userIdHints: [meta(session.metadata, "userId"), session.client_reference_id ?? null],
+    productId: meta(session.metadata, "productId"),
+    planKeyHint: meta(session.metadata, "planKey"),
+    checkoutProductId: meta(session.metadata, "productId"),
+    amountCents: session.amount_total ?? 0,
+    currency: (session.currency ?? "usd").toLowerCase(),
+    refunded: false,
   };
 }
 
@@ -127,12 +153,20 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
     return (await sink()).applySubscription(subscriptionState(await stripe().subscriptions.retrieve(id)));
   }
 
-  async function syncPayment(paymentIntentId: string): Promise<WebhookApplyResult | "not_paid"> {
+  /** A $0 one-time checkout: re-fetched like everything else, granted only when Stripe says it's complete and free. */
+  async function syncFreeCheckout(sessionId: string): Promise<WebhookApplyResult | "not_paid"> {
+    const session = await stripe().checkout.sessions.retrieve(sessionId);
+    if (session.mode !== "payment" || session.status !== "complete" || session.payment_status !== "no_payment_required") return "not_paid";
+    if (!meta(session.metadata, "planKey")) return "not_paid";
+    return (await sink()).applyOrder(freeOrderState(session));
+  }
+
+  async function syncPayment(paymentIntentId: string, disputeLost = false): Promise<WebhookApplyResult | "not_paid"> {
     const pi = await stripe().paymentIntents.retrieve(paymentIntentId, { expand: ["latest_charge"] });
     if (pi.status !== "succeeded") return "not_paid";
     // A subscription's invoice payments are the subscription's business, not a one-time purchase.
     if (!meta(pi.metadata, "planKey")) return "not_paid";
-    return (await sink()).applyOrder(orderState(pi));
+    return (await sink()).applyOrder(orderState(pi, disputeLost));
   }
 
   return {
@@ -185,6 +219,17 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
       );
     },
 
+    async describePrice(id: string) {
+      const price = await stripe().prices.retrieve(id).catch((error: { statusCode?: number }) => {
+        if (error?.statusCode === 404) return null;
+        throw error;
+      });
+      if (!price) return null;
+      const r: string | undefined = price.recurring?.interval;
+      const interval = !r ? ("one_time" as const) : r === "month" || r === "year" ? r : null;
+      return { amountCents: price.unit_amount ?? null, currency: price.currency, interval };
+    },
+
     async handleWebhook(request: Request) {
       // The exact bytes Stripe signed, never parsed before verifying.
       const body = await request.text();
@@ -207,7 +252,16 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
           const session = event.data.object as Stripe.Checkout.Session;
           if (session.mode === "subscription" && session.subscription) result = await syncSubscription(idOf(session.subscription)!);
           else if (session.mode === "payment" && session.payment_intent) result = await syncPayment(idOf(session.payment_intent)!);
+          else if (session.mode === "payment" && session.payment_status === "no_payment_required") result = await syncFreeCheckout(session.id);
           else return jsonResponse(202, { ignored: true });
+        } else if (event.type === "charge.dispute.closed") {
+          // A lost chargeback revokes a one-time purchase (the sink keeps it revoked). The dispute is
+          // re-fetched: the event's copy decides nothing. A subscription's disputed invoice is left to
+          // the subscription's own status.
+          const dispute = await stripe().disputes.retrieve((event.data.object as Stripe.Dispute).id);
+          const pi = idOf(dispute.payment_intent);
+          if (dispute.status !== "lost" || !pi) return jsonResponse(202, { ignored: true });
+          result = await syncPayment(pi, true);
         } else if (event.type === "charge.refunded") {
           const pi = idOf((event.data.object as Stripe.Charge).payment_intent);
           if (!pi) return jsonResponse(202, { ignored: true });

@@ -2,12 +2,15 @@
 // /dashboard/billing — what you pay for and how to change it.
 //
 //   - The plan and its status come from getEntitlement(): rows written by the
-//     verified Polar webhook. `?checkout=success` only changes the message on
+//     verified provider webhook. `?checkout=success` only changes the message on
 //     this page; it never grants anything (SPEC invariant 4).
 //   - With billing off (no POLAR_ACCESS_TOKEN) the page says so and shows the
 //     plans without buttons.
 //   - Upgrades post to /api/billing/checkout (CheckoutButton: works without JS);
-//     "Manage billing" opens Polar's customer portal.
+//     "Manage billing" opens the provider's portal (Polar, Stripe). Razorpay has
+//     none: the page lists what can be cancelled instead, and a plan change is
+//     cancel, then buy again. Every provider word comes from the provider in
+//     use (PROVIDER_LABEL, hasPortal), never a hard-coded "Polar".
 //   - The list shows only what can be bought or asked about: a plan with no
 //     paid price and no "contact sales" (the free plan) has nothing to offer
 //     here. Features read exactly as on /pricing ("Everything in Pro" expanded).
@@ -50,7 +53,7 @@ import { ActionForm, FormMessage, SubmitButton } from "@/components/product/acti
 import { cancelSubscriptionAction } from "./actions";
 import { teamsEnabled } from "@/server/services/orgs";
 import { billingProvider } from "@/server/env";
-import { priceIdFor, type PaidProviderId } from "@/core/billing";
+import { PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing";
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
@@ -98,13 +101,13 @@ const ownedOutright = (plan: Plan, refuse: Guard) => {
   return paid.length > 0 && paid.every((p) => refuse(plan.key, p.interval)?.reason === "already_owned");
 };
 
-function PlanOption({ plan, plans, current, provider, refuse }: { plan: Plan; plans: Plan[]; current: boolean; provider: PaidProviderId | null; refuse: Guard }) {
+function PlanOption({ plan, plans, current, provider, refuse, hasPortal }: { plan: Plan; plans: Plan[]; current: boolean; provider: PaidProviderId | null; refuse: Guard; hasPortal: boolean }) {
   const paid = plan.prices.filter((p) => p.amountCents > 0);
   const features = resolveFeatures(plan, plans);
   // What can actually be bought here; anything else gets one line of caption, not a button shape.
   const offered = plan.contactSales || current ? [] : paid;
   const refusal = (p: PlanPrice) => refuse(plan.key, p.interval);
-  // A second subscription: Polar switches plans (prorated) in its portal, not through a new checkout.
+  // A second subscription: the provider's portal switches plans, not a new checkout (with no portal: cancel first).
   const viaPortal = (p: PlanPrice) => p.interval !== "one_time" && refusal(p)?.reason === "already_subscribed";
   const buyable = offered.filter((p) => !refusal(p) && provider !== null && priceIdFor(plan, p, provider));
   const switchOnly = offered.some(viaPortal);
@@ -163,7 +166,11 @@ function PlanOption({ plan, plans, current, provider, refuse }: { plan: Plan; pl
               ))}
             </div>
           ) : null}
-          {switchOnly ? <p className="text-caption text-ink-3">To move to {plan.name}, switch in Manage billing.</p> : null}
+          {switchOnly ? (
+            <p className="text-caption text-ink-3">
+              {hasPortal ? `To move to ${plan.name}, switch in Manage billing.` : `To move to ${plan.name}, cancel your current plan above; once it ends, buy ${plan.name} here.`}
+            </p>
+          ) : null}
           {refusedLabels.map((label) => (
             <p key={label} className="text-caption text-ink-3">
               {label}.
@@ -259,6 +266,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const purchases = orgView ? [] : detail!.purchases;
   const refuse = orgView ? orgView.refuse : personalRefuse!;
   const plan = plans.find((p) => p.key === entitlement.planKey) ?? null;
+  const providerLabel = paidProvider ? PROVIDER_LABEL[paidProvider] : null;
+  const handledBy = providerLabel && billingOn ? ` Payments are handled by ${providerLabel}, which issues the receipts.` : "";
   const planName = (key: string | null) => plans.find((p) => p.key === key)?.name ?? key;
   const hasAccount = subscriptions.length > 0 || purchases.length > 0;
   const subscribed = entitlement.source === "subscription";
@@ -271,8 +280,8 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         title={orgView ? `Billing · ${orgView.org.name}` : "Billing"}
         answer={
           orgView
-            ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments. Payments are handled by Polar, which issues the receipts.`
-            : "Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
+            ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments.${handledBy}`
+            : `Your plan, what it costs, and your payment history.${handledBy}`
         }
         action={billingOn && hasPortal && (orgView ? showPortal : hasAccount) ? <PortalButton /> : undefined}
       />
@@ -280,7 +289,9 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
         <Notice tone="info" title={orgView.seats.limit === null ? `${orgView.seats.used} in the team` : `${orgView.seats.used} of ${orgView.seats.limit} seats in use`}>
           {orgView.seats.limit === null
             ? "Members and open invitations. Your plan doesn't limit seats."
-            : "Members and open invitations. To add seats, change the subscription in Manage billing."}
+            : hasPortal
+              ? "Members and open invitations. To add seats, change the subscription in Manage billing."
+              : "Members and open invitations. Seats are set when the subscription is bought."}
           {orgView.payerEmail ? ` Payment is managed by ${orgView.payerEmail}.` : null}
         </Notice>
       ) : null}
@@ -288,7 +299,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       {checkout === "success" ? (
         entitlement.source === "free" ? (
           <Notice tone="info" title="Payment received. Activating your plan…">
-            Polar confirms the payment to us in the background, usually within a few seconds. Refresh this page in a moment. If nothing changes after a few
+            {providerLabel ?? "The payment provider"} confirms the payment to us in the background, usually within a few seconds. Refresh this page in a moment. If nothing changes after a few
             minutes, <Link href="/dashboard/feedback" className="font-semibold text-ink underline underline-offset-4">tell us</Link> and we’ll sort it out.
           </Notice>
         ) : (
@@ -364,14 +375,16 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
           {subscribed ? "Plans" : "Upgrade"}
         </h2>
         {subscribed && billingOn ? (
-          <p className="text-small text-ink-2">To switch plans or cancel, use Manage billing. Changes are prorated by Polar.</p>
+          <p className="text-small text-ink-2">
+            {hasPortal ? "To switch plans or cancel, use Manage billing." : "To switch plans, cancel your subscription above; once it ends, buy the new plan here."}
+          </p>
         ) : null}
         {options.length === 0 ? (
           <EmptyState title="Nothing to upgrade to" body="There are no paid plans on sale right now." />
         ) : (
           <ul className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(16rem,1fr))]">
             {options.map((p) => (
-              <PlanOption key={p.key} plan={p} plans={plans} current={p.key === entitlement.planKey} provider={billingOn ? paidProvider : null} refuse={refuse} />
+              <PlanOption key={p.key} plan={p} plans={plans} current={p.key === entitlement.planKey} provider={billingOn ? paidProvider : null} refuse={refuse} hasPortal={hasPortal} />
             ))}
           </ul>
         )}

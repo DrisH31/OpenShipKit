@@ -27,7 +27,7 @@ import "server-only";
 //
 
 import type { PaidProvider } from "@/core/data";
-import type { PriceInterval, SubscriptionStatus } from "@/core/types";
+import type { Actor, PriceInterval, SubscriptionStatus } from "@/core/types";
 import { log } from "@/server/log";
 
 export function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -120,7 +120,7 @@ export interface ProviderOrderState {
   checkoutProductId: string | null;
   amountCents: number;
   currency: string;
-  /** A FULL refund; a partial refund keeps access. */
+  /** Access revoked: a FULL refund, or a chargeback the merchant lost. A partial refund keeps access. */
   refunded: boolean;
 }
 
@@ -130,7 +130,8 @@ export interface ProviderOrderState {
  * src/server/services/billing-webhooks.ts); tests may pass their own.
  */
 export interface BillingWebhookSink {
-  applySubscription(state: ProviderSubscriptionState): Promise<WebhookApplyResult>;
+  /** `actor`: who caused it, when it isn't a webhook (a person cancelling in the app). Default webhook:<provider>. */
+  applySubscription(state: ProviderSubscriptionState, opts?: { actor?: Actor }): Promise<WebhookApplyResult>;
   applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult>;
   /** Claim the event id — call LAST, after the write succeeded. False when it was already claimed. */
   markEventProcessed(provider: PaidProvider, eventId: string): Promise<boolean>;

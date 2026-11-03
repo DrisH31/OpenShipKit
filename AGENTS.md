@@ -6,7 +6,7 @@ working summary. Where a file’s header comment is more specific, it wins.
 
 **What this is:** one Next.js 16 App Router app, self-hosted. Postgres via
 Drizzle, auth via Better Auth (in the app, tables in the same Postgres).
-Optional Polar billing and Resend email, both off until their keys are set.
+Optional billing (Polar, Stripe or Razorpay) and email (Resend or SMTP), both off until their keys are set.
 A built-in MCP server at `/api/mcp`. No other services, and none to add — the
 one exception is an opt-in module's AI or embeddings provider, off until you
 enable the module and set its key (invariant 8).
@@ -40,7 +40,7 @@ need no database.
 | `src/server/` | `env.ts`, registries (`data`, `auth`, `billing`, `email`), `session.ts`, `rate-limit.ts` | `import "server-only"` |
 | `src/server/services/` | **The write path**: validate (zod) → DataStore → `recordAudit` | Admin, forms and MCP all call these |
 | `src/server/mcp/` | MCP protocol + tools (`tools/*.ts`) | Tools call services, never the DataStore |
-| `src/adapters/` | `auth/better-auth`, `data/postgres` (+ `memory` for tests), `billing/polar`, `email/{resend,smtp,console}` | The ONLY place a driver/SDK is imported |
+| `src/adapters/` | `auth/better-auth`, `data/postgres` (+ `memory` for tests), `billing/{polar,stripe,razorpay}`, `media/s3`, `email/{resend,smtp,console}` | The ONLY place a driver/SDK is imported |
 | `src/components/` | `ui/` (shadcn on Base UI), `marketing/`, `sections/`, `product/`, `blog/`, `seo/`, … | Client components never import `src/server` or `src/adapters` |
 | `src/content/` | `defaults.ts` (default copy), `seed.ts`, `seed-posts.ts` | |
 | `src/styles/` | `tokens.css` (palette), `brand.css` (accent), `theme.css`, `prose.css` | Use tokens, never raw colours |
@@ -64,11 +64,11 @@ leaves the machine: a push, a deploy, a DNS record, a provider change.
 1. **Content in the first byte.** Public pages are Server Components rendered at request time. No content behind `useEffect`, nothing at `opacity: 0` on first paint, JSON-LD as a plain `<script>`. Never `revalidate` a page that reads data.
 2. **The build needs no secrets and no database.** Read env lazily through `src/server/env.ts` (`requireEnv`, `optionalEnv`), never at module scope.
 3. **Every write goes through a service** and is audited with before/after. Pages, route handlers and tools never write through `getData()` directly.
-4. **Access comes only from verified webhooks.** Entitlements are computed from `subscriptions`/`purchases` rows that a signature-verified, idempotent Polar webhook wrote. Never from a redirect, query string or the client.
+4. **Access comes only from verified webhooks.** Entitlements are computed from `subscriptions`/`purchases` rows that a signature-verified webhook wrote, after re-fetching the object from the provider (Polar, Stripe or Razorpay); a redelivery re-applies the same state. Never from a redirect, query string or the client.
 5. **The proxy is optimistic.** `src/proxy.ts` checks cookie presence only. `requireUser()` / `requireAdmin()` in every page and action is the real check. `requireAdmin()` 404s. `tests/authz.test.ts` fails when one is missing or runs after other work, and on any handler it can't read (define handlers in the file, don't re-export or wrap them); a new route handler goes in its `ROUTES` map with its guard (or, if public, the reason).
 6. **A failed read throws — content too.** A section shows its default only when nothing is stored (or the stored value fails its schema). When the database is down, content, posts, users and billing reads all throw: the error page (500, `noindex`), never a renamed site serving the template's copy with a 200. `/api/health` (503) is what monitors watch. The landing page's latest-posts band is the one part that hides itself instead (SPEC invariant 3).
 7. **Never invent real-world identifiers** — domains, product ids, handles, testimonials, numbers. URLs come from `NEXT_PUBLIC_SITE_URL` (`siteUrl()`); unknown means empty and visibly TODO.
-8. **Independent by default.** No hosted auth, database, analytics or tracking. Polar and Resend stay optional. An opt-in module may add an optional third party (an AI provider, an embeddings endpoint): off until its key is set, and replaceable by a self-hosted OpenAI-compatible endpoint (`AI_BASE_URL`, `EMBEDDING_BASE_URL`).
+8. **Independent by default.** No hosted auth, database, analytics or tracking. The billing provider and Resend stay optional. An opt-in module may add an optional third party (an AI provider, an embeddings endpoint): off until its key is set, and replaceable by a self-hosted OpenAI-compatible endpoint (`AI_BASE_URL`, `EMBEDDING_BASE_URL`).
 9. **Accessible**: WCAG 2.2 AA in light and dark, keyboard-complete, labels, visible focus, 44 px targets, `prefers-reduced-motion`. Forms on public pages work without JavaScript.
 
 ## Rules that cost traffic
@@ -200,7 +200,7 @@ a throwaway one).
 - Don’t hand-edit an applied migration; generate a new one.
 - Don’t build a filesystem path from env or user input without `/*turbopackIgnore: true*/` on the `resolve`/`join` and the `fs` call (see `src/server/services/media-storage.ts`): the build tracer would copy the whole repo — and a local `.data` database — into `.next/standalone`. CI fails the build if it does.
 - Don’t use `drizzle-kit push` against a real database; generate + migrate.
-- Don’t hard-code a domain, a Polar product id, a price or a social handle.
+- Don’t hard-code a domain, a provider price or product id, a price or a social handle.
 - Don’t run two processes on the embedded database.
 - Don’t guess Next.js 16 or library APIs — read `node_modules/next/dist/docs/` and the library’s types.
 - Don’t hand-edit a synced design-system file (`src/styles/{tokens,theme,base,motion,overlays}.css`, `src/components/ui/**`) without upstreaming it or wrapping it in a `ds-sync:keep` block.

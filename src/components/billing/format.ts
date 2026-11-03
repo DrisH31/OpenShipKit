@@ -106,7 +106,7 @@ export function billingErrorMessage(code: string | null | undefined): string | n
     case "invalid":
       return "That plan can’t be bought this way. Pick another option or contact us.";
     case "already_subscribed":
-      return "You already have a subscription. Change or cancel it from Manage billing.";
+      return "You already have a subscription. Change or cancel it on this page first.";
     case "already_owned":
       return "You already own this plan. Nothing more to pay.";
     case "too_large":

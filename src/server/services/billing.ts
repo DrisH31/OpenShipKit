@@ -34,7 +34,6 @@ import { currentOrg } from "../orgs";
 import { ServiceError } from "./errors";
 import { orgSeats, requireOrgPermission, teamsEnabled } from "./orgs";
 import { PRICE_ID_LABEL, priceIdFor } from "@/core/billing";
-import { recordAudit } from "./audit";
 
 /** Live subscriptions that grant a plan: an entitled status in its period, and a plan to grant. */
 function liveSubscriptions(subscriptions: Subscription[], now: number): (Subscription & { planKey: string })[] {
@@ -345,13 +344,13 @@ export async function startOrgCheckout(user: User, orgId: string, planKey: strin
   // the old one being resumed in Polar, would charge the team twice.
   const subs = (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items;
   if (subs.some(isRenewing)) {
-    throw new ServiceError("conflict", `${org.name} already has a subscription. Change or cancel it in Manage billing.`, { reason: "already_subscribed" });
+    throw new ServiceError("conflict", `${org.name} already has a subscription. Change or cancel it on the Billing page.`, { reason: "already_subscribed" });
   }
   const running = subs.find((s) => s.planKey !== null && grantsAccess(s));
   if (running) {
     throw new ServiceError(
       "conflict",
-      `${org.name}'s current plan runs until ${running.currentPeriodEnd?.slice(0, 10) ?? "the end of its period"}. Choose a new one after that, or ask whoever pays to resume it in Manage billing.`,
+      `${org.name}'s current plan runs until ${running.currentPeriodEnd?.slice(0, 10) ?? "the end of its period"}. Choose a new one after that, or ask whoever pays to resume it.`,
       { reason: "already_subscribed" },
     );
   }
@@ -419,7 +418,7 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
   const refuse = (planKey: string, interval: PriceInterval): CheckoutRefusal | null => {
     if (role !== "owner") return { reason: "not_owner", message: "Only an owner can choose the organisation's plan.", label: "Only an owner can buy a plan" };
     if (interval === "one_time") return { reason: "org_one_time", message: "An organisation's plan is a subscription.", label: "Organisations subscribe monthly or yearly" };
-    if (renewing) return { reason: "already_subscribed", message: `${org.name} already has a subscription.`, label: "Switch in Manage billing" };
+    if (renewing) return { reason: "already_subscribed", message: `${org.name} already has a subscription.`, label: "Switch plans from Billing" };
     void planKey;
     return null;
   };
@@ -451,8 +450,9 @@ export async function listCancellable(user: User): Promise<Subscription[]> {
 
 /**
  * Stop a subscription this person pays for from renewing, through the provider's API (for a provider
- * with no portal). It runs to the end of the period. Only its payer may; audited. The provider hands
- * the new state to the webhook sink, so the row changes the same way a webhook would change it.
+ * with no portal). It runs to the end of the period. Only its payer may. The provider hands the new
+ * state to the webhook sink, so the row changes (and is audited, as this person) the same way a
+ * webhook would change it. Pressing it again after a failure part-way finishes the job.
  */
 export async function cancelSubscription(user: User, subscriptionId: string): Promise<void> {
   assertNotDemo(user);
@@ -462,11 +462,81 @@ export async function cancelSubscription(user: User, subscriptionId: string): Pr
   const sub = (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 })).items.find((s) => s.id === subscriptionId);
   if (!sub) throw new ServiceError("not_found", "No such subscription of yours.");
   if (!isRenewing(sub)) throw new ServiceError("conflict", "It's already set to end, or has ended.");
-  await billing.cancelAtPeriodEnd(sub.providerSubscriptionId);
-  await recordAudit({ type: "user", id: user.id, label: user.email }, "subscription.cancel", "subscription", sub.id, { cancelAtPeriodEnd: false }, { cancelAtPeriodEnd: true });
+  // Audited once, by the sink, as this person (subscription.update with the real before and after).
+  await billing.cancelAtPeriodEnd(sub.providerSubscriptionId, { type: "user", id: user.id, label: user.email });
 }
 
 /** Whether Manage billing can open a portal (Polar, Stripe) or the page offers Cancel instead (Razorpay). */
 export async function billingHasPortal(): Promise<boolean> {
   return (await getBilling())?.hasPortal ?? false;
+}
+
+/**
+ * Subscriptions that still renew at a provider other than the one configured, by provider: after
+ * BILLING_PROVIDER changes, that provider's webhooks are refused (they can't be verified), so these
+ * customers keep being charged while their access runs out at the period end. Logged at startup
+ * (warnStrandedSubscriptions) and described in docs/billing.md#switching-providers.
+ */
+export async function strandedSubscriptions(): Promise<Record<string, number>> {
+  const current = (await getBilling())?.id ?? "none";
+  const data = await getData();
+  const out: Record<string, number> = {};
+  for (const status of ["trialing", "active", "past_due"] as const) {
+    let cursor: string | undefined;
+    do {
+      const page = await data.billing.listSubscriptions({ status, limit: 200, cursor });
+      for (const s of page.items) if (s.provider !== current && isRenewing(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+  }
+  return out;
+}
+
+/** Startup: say loudly when people still pay a provider this site no longer listens to. Never throws. */
+export async function warnStrandedSubscriptions(): Promise<void> {
+  try {
+    const stranded = Object.entries(await strandedSubscriptions());
+    if (!stranded.length) return;
+    const { log } = await import("../log");
+    const what = stranded.map(([p, n]) => `${n} with ${p}`).join(", ");
+    log.error("billing", `${what} still renew, but billing is now ${(await getBilling())?.id ?? "off"}: their webhooks are refused, so they keep paying and lose access at the period end. Cancel them at the old provider or switch back (docs/billing.md#switching-providers).`);
+  } catch {
+    // A database that isn't ready yet: the health check reports that, not this.
+  }
+}
+
+export type PriceCheck = { provider: string; problems: string[] } | { provider: string; unavailable: true };
+
+/**
+ * For /admin/plans/<key>: whether what the plan shows matches what the provider charges for each of its
+ * prices (amount, currency, interval). The pricing page shows the plan's amount; the customer pays the
+ * provider's. null when billing is off or the provider can't say. Admin pages only: it calls the provider.
+ */
+export async function checkPlanPrices(plan: Plan): Promise<PriceCheck | null> {
+  const billing = await getBilling();
+  if (!billing?.describePrice) return null;
+  const { formatPrice } = await import("@/shared/money");
+  const word = { month: "monthly", year: "yearly", one_time: "one-time" } as const;
+  try {
+    const problems = await Promise.all(
+      plan.prices
+        .filter((p) => p.amountCents > 0)
+        .map(async (price) => {
+          const id = priceIdFor(plan, price, billing.id);
+          if (!id) return [];
+          const at = await billing.describePrice!(id);
+          const name = `${word[price.interval][0].toUpperCase()}${word[price.interval].slice(1)} (${id})`;
+          if (!at) return [`${name}: ${billing.label} has no such price.`];
+          const out: string[] = [];
+          if (at.interval && at.interval !== price.interval) out.push(`${name}: ${billing.label} bills it ${word[at.interval]}.`);
+          if (at.currency && at.currency.toLowerCase() !== price.currency.toLowerCase()) out.push(`${name}: ${billing.label} charges in ${at.currency.toUpperCase()}, the plan shows ${price.currency.toUpperCase()}.`);
+          else if (at.amountCents !== null && at.amountCents !== price.amountCents)
+            out.push(`${name}: ${billing.label} charges ${formatPrice(at.amountCents, price.currency)}${price.perSeat ? " per seat" : ""}, the plan shows ${formatPrice(price.amountCents, price.currency)}.`);
+          return out;
+        }),
+    );
+    return { provider: billing.label, problems: problems.flat() };
+  } catch {
+    return { provider: billing.label, unavailable: true };
+  }
 }

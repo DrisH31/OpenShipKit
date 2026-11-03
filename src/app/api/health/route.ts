@@ -55,14 +55,16 @@ async function checkData(): Promise<{ ok: boolean; ms: number }> {
  * skipped `npm run db:migrate`: queries for new columns would fail); "ahead" (older code on a newer
  * database, during a rollback) is reported but serves. Null for the in-memory store, which has none.
  */
-async function checkSchema(): Promise<{ ok: boolean; state: SchemaState } | null> {
+async function checkSchema(): Promise<{ ok: boolean; state: SchemaState | "unknown" } | null> {
+  const data = await getData();
+  if (data.id === "memory") return null;
   try {
-    const data = await getData();
-    if (data.id === "memory") return null;
     const state = schemaState(await data.appliedMigration());
     return { ok: state !== "behind", state };
   } catch {
-    return null; // the database check above says why
+    // The database answered (this runs only after it did) but the migrations table couldn't be read:
+    // a permissions problem or a half-made database. Not healthy: we can't say the schema is current.
+    return { ok: false, state: "unknown" };
   }
 }
 

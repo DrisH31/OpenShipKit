@@ -1,6 +1,6 @@
 //
 // <PortalButton /> — "Manage billing": a plain <form method="post"> to
-// /api/billing/portal, which redirects to Polar's customer portal
+// /api/billing/portal, which redirects to the billing provider's portal (Polar, Stripe)
 // (cancel, change card, invoices). Works with JavaScript off; safe in server
 // and client components.
 //
@@ -14,7 +14,7 @@ export interface PortalButtonProps {
   className?: string;
 }
 
-/** Opens Polar's customer portal for the signed-in user. */
+/** Opens the billing provider's portal for the signed-in user. Only where the provider has one (hasPortal). */
 export function PortalButton({ label = "Manage billing", variant = "outline", size, className }: PortalButtonProps) {
   return (
     <form method="post" action="/api/billing/portal" className="contents">

@@ -93,6 +93,14 @@ describe("default content and seed", () => {
     expect(result.success, JSON.stringify(!result.success && result.error.issues)).toBe(true);
   });
 
+  it("a Razorpay plan id is Razorpay-shaped and never on a one-time price (it can't collide with the app's <plan>:one_time id)", () => {
+    const plan = (price: Record<string, unknown>) => planSchema.safeParse({ key: "team", name: "Team", prices: [{ amountCents: 900, currency: "inr", ...price }] }).success;
+    expect(plan({ interval: "month", razorpayPlanId: "plan_ABC123" })).toBe(true);
+    expect(plan({ interval: "month", razorpayPlanId: "pro:one_time" })).toBe(false);
+    expect(plan({ interval: "one_time", razorpayPlanId: "plan_ABC123" })).toBe(false);
+    expect(plan({ interval: "one_time", razorpayPlanId: null })).toBe(true);
+  });
+
   it("every seed plan and post is valid input", () => {
     for (const plan of SEED.plans) expect(planSchema.safeParse(plan).success, plan.key).toBe(true);
     for (const post of SEED.posts) expect(postCreateSchema.safeParse(post).success, post.slug).toBe(true);

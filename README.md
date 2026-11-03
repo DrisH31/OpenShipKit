@@ -454,7 +454,7 @@ the site is still named OpenShipKit.
 | [Scaling](docs/scaling.md) | What breaks first past one server, and what to do first |
 | [Auth](docs/auth.md) | Better Auth features, OAuth, admins, sessions |
 | [Data](docs/data.md) | Postgres, Drizzle, migrations, the embedded database, backups |
-| [Billing](docs/billing.md) | Optional Polar: products, webhooks, sandbox testing |
+| [Billing](docs/billing.md) | Optional Polar, Stripe or Razorpay: products, webhooks, sandbox testing, chargebacks, switching |
 | [Email](docs/email.md) | Resend, domain verification (SPF, DKIM, DMARC) |
 | [Content](docs/content.md) | Editable sections, posts (draft, unlisted), the media library, legal pages |
 | [Customization](docs/customization.md) | Brand colour, copy, pages, sections, design-system sync |
@@ -491,7 +491,7 @@ flowchart TD
 | **The idea** | Own everything: one app on your own server | Rent the hard parts: hosted auth and a hosted database |
 | **Auth** | Better Auth inside the app; users in your Postgres | Clerk (hosted) |
 | **Database** | Your own Postgres 18 (embedded Postgres in development) | Supabase (hosted Postgres) |
-| **Payments** | Polar (optional) | Polar |
+| **Payments** | Polar, Stripe or Razorpay (optional) | Polar |
 | **Email** | Resend (needed at launch: sign-up verification and password resets) | Sign-in emails sent by Clerk |
 | **Where it runs** | Your VPS: Docker Compose + Caddy, Dokploy or Coolify | Vercel or any Node.js host |
 | **To run it locally** | Nothing: no accounts, no env, `npm run dev` | Clerk and Supabase accounts and keys first |
