@@ -6,7 +6,9 @@
 // a guard someone forgot gives no error and no failing test: the page just
 // works for whoever finds it. This test reads every such file with the
 // TypeScript parser and FAILS CLOSED: what it can't analyse is a failure,
-// never a pass.
+// never a pass. It is a static check of the shapes below, not a proof: its
+// self-tests include every way round it that review has found, and a new way
+// round belongs there before the fix.
 //
 // It fails when:
 //  - an admin page or action (anything under app/admin or app/api/admin, route
@@ -223,26 +225,54 @@ function callsInOrder(root: ts.Node): Call[] {
   return calls;
 }
 
-/** Awaited, or returned (an expression body counts): an unawaited guard's rejection is never seen. */
-function awaitedOrReturned(call: ts.CallExpression, fn: FnNode): boolean {
+/**
+ * How a guard call sits in its statement. It counts only when nothing between
+ * the call and the statement can skip it or swallow its result: await,
+ * parentheses, a declaration, `return`, or an argument of another call
+ * (`privacyLens(await requireAdmin())`). Not `a || guard()`, `f ? x : guard()`
+ * or `x ?? guard()`. Unawaited, its refusal is never seen.
+ */
+function guardPlacement(call: ts.CallExpression, statement: ts.Node, fn: FnNode): "ok" | "conditional" | "unawaited" {
+  let awaited = false;
   let n: ts.Node = call;
-  while (ts.isParenthesizedExpression(n.parent)) n = n.parent;
-  return ts.isAwaitExpression(n.parent) || ts.isReturnStatement(n.parent) || n.parent === fn;
+  while (n !== statement && n !== fn) {
+    const parent: ts.Node = n.parent;
+    if (ts.isAwaitExpression(parent)) awaited = true;
+    else if (ts.isReturnStatement(parent) || parent === fn) awaited = true; // returned: the caller awaits it
+    else if (ts.isCallExpression(parent)) {
+      if (parent.expression === n || parent.questionDotToken) return "conditional";
+      if (!awaited) return "unawaited"; // an argument that isn't awaited is a floating promise
+    } else if (!(ts.isParenthesizedExpression(parent) || ts.isVariableDeclaration(parent) || ts.isVariableDeclarationList(parent) || ts.isExpressionStatement(parent) || ts.isVariableStatement(parent))) {
+      return "conditional";
+    }
+    n = parent;
+  }
+  return awaited ? "ok" : "unawaited";
+}
+
+/** A statement that leaves the function: `return …`, `throw …`, or a block ending in one. */
+function exits(node: ts.Statement): boolean {
+  if (ts.isReturnStatement(node) || ts.isThrowStatement(node)) return true;
+  if (ts.isBlock(node)) {
+    const last = node.statements[node.statements.length - 1];
+    return !!last && exits(last);
+  }
+  return false;
 }
 
 /**
- * A session read that counts as a guard only with its result checked in the same function:
- * getCurrentUser() then a null check (and for admin, the role); apiUser() (modules/shared/api.ts)
- * then `instanceof Response`.
+ * Whether a session read's result is checked by an `if` that leaves the function.
+ * getCurrentUser(): `if (!u …) return|throw`, and for admin a role check that leaves
+ * too (in the same if or its own); apiUser() (modules/shared/api.ts): `if (u instanceof
+ * Response) return …`. `statements` are those the read sits in, so the check can't hide in a callback.
  */
-function checksSession(fn: FnNode, name: "getCurrentUser" | "apiUser", guard: Exclude<Guard, "public">): boolean {
-  const text = fn.body?.getText() ?? "";
-  const m = new RegExp(`(?:const|let)\\s+(\\w+)\\s*=\\s*await\\s+${name}\\(`).exec(text);
-  if (!m) return false;
-  const v = m[1];
-  if (name === "apiUser") return guard === "user" && new RegExp(`\\b${v}\\s+instanceof\\s+Response\\b`).test(text);
-  const nullCheck = new RegExp(`!\\s*${v}\\b|\\b${v}\\s*[=!]==?\\s*null`).test(text);
-  return guard === "admin" ? nullCheck && new RegExp(`\\b${v}\\.role\\s*!==\\s*"admin"`).test(text) : nullCheck;
+function checksSession(name: "getCurrentUser" | "apiUser", variable: string, statements: readonly ts.Statement[], guard: Exclude<Guard, "public">): boolean {
+  const exitingConditions = statements.filter((st): st is ts.IfStatement => ts.isIfStatement(st) && exits(st.thenStatement)).map((st) => st.expression.getText());
+  const v = variable;
+  if (name === "apiUser") return guard === "user" && exitingConditions.some((c) => new RegExp(`^${v}\\s+instanceof\\s+Response$`).test(c.trim()));
+  const nullCheck = exitingConditions.some((c) => new RegExp(`(^|\\|\\|)\\s*!\\s*${v}\\b`).test(c) || new RegExp(`^${v}\\s*[=!]==?\\s*null$`).test(c.trim()));
+  if (guard === "user") return nullCheck;
+  return nullCheck && exitingConditions.some((c) => new RegExp(`\\b${v}\\.role\\s*!==\\s*"admin"`).test(c));
 }
 
 /** A call that can't write: on the safe list, or a local helper whose own calls are all safe. */
@@ -258,8 +288,11 @@ const SESSION_READS = new Set(["getCurrentUser", "apiUser"]);
 
 /**
  * Null when `fn` guards before anything else; otherwise why not. The guard must
- * be awaited (or returned) in a top-level statement of the function: one
- * inside an if, a try or a loop may not run, or may have its refusal swallowed.
+ * be a bare call, awaited (or returned), in a top-level statement of the
+ * function or of a top-level try block: one inside an if, a loop or a
+ * short-circuit may not run. A throwing guard inside a try can have its refusal
+ * swallowed by the catch; a session read there counts only when the catch leaves
+ * the function too (an error reading the session mustn't fall through to the work).
  */
 function guardProblem(fn: FnNode, guard: Exclude<Guard, "public">, fileScope: Scope, seen = new Set<FnNode>()): string | null {
   const body = fn.body;
@@ -269,28 +302,41 @@ function guardProblem(fn: FnNode, guard: Exclude<Guard, "public">, fileScope: Sc
   const scope: Scope = new Map([...fileScope, ...(ts.isBlock(body) ? functionsIn(body.statements) : [])]);
   const guards = guard === "admin" ? ADMIN_GUARDS : USER_GUARDS;
   const want = guard === "admin" ? "requireAdmin()" : "requireUser()";
-  // A try block's statements run in order like the function's own; its catch is where a refusal could vanish.
-  const statements: { node: ts.Node; inTry: boolean }[] = [];
-  for (const st of ts.isBlock(body) ? body.statements : [body]) {
-    if (ts.isTryStatement(st)) {
-      for (const inner of st.tryBlock.statements) statements.push({ node: inner, inTry: true });
-      if (st.catchClause) statements.push({ node: st.catchClause, inTry: false });
-      if (st.finallyBlock) statements.push({ node: st.finallyBlock, inTry: false });
-    } else statements.push({ node: st, inTry: false });
+
+  type Entry = { node: ts.Node; siblings: readonly ts.Statement[]; tryStatement?: ts.TryStatement };
+  const entries: Entry[] = [];
+  if (!ts.isBlock(body)) entries.push({ node: body, siblings: [] });
+  else {
+    for (const st of body.statements) {
+      if (ts.isTryStatement(st)) {
+        for (const inner of st.tryBlock.statements) entries.push({ node: inner, siblings: st.tryBlock.statements, tryStatement: st });
+        if (st.catchClause) entries.push({ node: st.catchClause, siblings: [] });
+        if (st.finallyBlock) entries.push({ node: st.finallyBlock, siblings: [] });
+      } else entries.push({ node: st, siblings: body.statements });
+    }
   }
-  for (const { node: statement, inTry } of statements) {
-    const plain = !ts.isBlock(body) || ts.isVariableStatement(statement) || ts.isExpressionStatement(statement) || ts.isReturnStatement(statement);
+
+  for (const { node: statement, siblings, tryStatement } of entries) {
+    const topLevel = !ts.isBlock(body) || ts.isVariableStatement(statement) || ts.isExpressionStatement(statement) || ts.isReturnStatement(statement);
     for (const { name, node } of callsInOrder(statement)) {
-      const helper = scope.get(name);
-      const isGuard = guards.has(name) || SESSION_READS.has(name) || (helper !== undefined && guardProblem(helper, guard, fileScope, seen) === null);
+      const bare = ts.isIdentifier(node.expression); // o.requireAdmin() or o?.requireAdmin() is someone else's method
+      const helper = bare ? scope.get(name) : undefined;
+      const isGuard = bare && (guards.has(name) || SESSION_READS.has(name) || (helper !== undefined && guardProblem(helper, guard, fileScope, seen) === null));
       if (isGuard) {
-        if (!plain) return `calls ${name}() only inside a condition or loop, so it may not run`;
-        // requireAdmin() refuses by throwing (notFound, redirect): a catch around it can swallow that.
-        // A session read returns null instead, and its check (below) is what refuses.
-        if (inTry && !SESSION_READS.has(name)) return `calls ${name}() inside a try, whose catch can swallow its refusal`;
-        if (!awaitedOrReturned(node, fn)) return `calls ${name}() without awaiting it, so its refusal is never seen`;
-        if (SESSION_READS.has(name) && !checksSession(fn, name as "getCurrentUser" | "apiUser", guard)) {
-          return `reads the session with ${name}() but doesn't check it${guard === "admin" ? " (and its role)" : ""}`;
+        const placement = topLevel ? guardPlacement(node, statement, fn) : "conditional";
+        if (placement === "conditional") return `calls ${name}() only conditionally (inside an if, a loop or a short-circuit), so it may not run`;
+        if (placement === "unawaited") return `calls ${name}() without awaiting it, so its refusal is never seen`;
+        if (!SESSION_READS.has(name)) {
+          return tryStatement?.catchClause ? `calls ${name}() inside a try, whose catch can swallow its refusal` : null;
+        }
+        const decl = ts.isVariableStatement(statement) ? statement.declarationList.declarations.find((d) => d.initializer && d.getText().includes(`${name}(`)) : undefined;
+        const variable = decl && ts.isIdentifier(decl.name) ? decl.name.text : null;
+        const after = siblings.slice(siblings.indexOf(statement as ts.Statement) + 1);
+        if (!variable || !checksSession(name as "getCurrentUser" | "apiUser", variable, after, guard)) {
+          return `reads the session with ${name}() but doesn't refuse with an if that returns or throws${guard === "admin" ? " (for a missing user and for a role other than admin)" : ""}`;
+        }
+        if (tryStatement?.catchClause && !exits(tryStatement.catchClause.block)) {
+          return `reads the session with ${name}() inside a try whose catch doesn't return or throw, so an error there falls through to the work`;
         }
         return null;
       }
@@ -474,13 +520,35 @@ describe("authorization", () => {
         "src/app/admin/x/actions.ts: server action a() calls requireAdmin() without awaiting it, so its refusal is never seen",
       ]);
       expect(check("src/app/admin/x/actions.ts", `"use server"; export async function a(f: boolean) { if (f) await requireAdmin(); await wipe(); }`)).toEqual([
-        "src/app/admin/x/actions.ts: server action a() calls requireAdmin() only inside a condition or loop, so it may not run",
+        "src/app/admin/x/actions.ts: server action a() calls requireAdmin() only conditionally (inside an if, a loop or a short-circuit), so it may not run",
       ]);
       expect(check("src/app/admin/x/actions.ts", `"use server"; export async function a() { try { await requireAdmin(); } catch {} await wipe(); }`)).toEqual([
         "src/app/admin/x/actions.ts: server action a() calls requireAdmin() inside a try, whose catch can swallow its refusal",
       ]);
       // A checked session read inside a try is fine: it returns null rather than throwing.
       expect(check("src/app/api/billing/portal/route.ts", `export async function POST() { try { const u = await getCurrentUser(); if (!u) return no(); await go(u); } catch { return err(); } }`)).toEqual([]);
+    });
+
+    it("refuses the ways round a guard that review found (each probe was a pass before)", () => {
+      const A = "src/app/admin/x/actions.ts";
+      const D = "src/app/dashboard/x/actions.ts";
+      const probes: Record<string, [string, string]> = {
+        shortCircuit: [A, `"use server"; export async function a(f: boolean) { f || await requireAdmin(); await wipe(); }`],
+        ternary: [A, `"use server"; export async function a(f: boolean) { const x = f ? null : await requireAdmin(); await wipe(); }`],
+        nullish: [A, `"use server"; export async function a(f: unknown) { const x = f ?? await requireAdmin(); await wipe(); }`],
+        optionalCall: [A, `"use server"; export async function a(o: any) { await o?.requireAdmin(); await wipe(); }`],
+        someonesMethod: [A, `"use server"; export async function a(o: any) { await o.requireAdmin(); await wipe(); }`],
+        nullCheckThatDoesntStop: [D, `"use server"; export async function a() { const u = await getCurrentUser(); if (!u) log("x"); await wipe(u); }`],
+        responseCheckThatDoesntStop: ["src/app/api/billing/checkout/route.ts", `export async function POST(r: Request) { const u = await apiUser(r); if (u instanceof Response) log(u); await wipe(); }`],
+        apiUserForAdmin: ["src/app/api/admin/media/route.ts", `export async function POST(r: Request) { const u = await apiUser(r); if (u instanceof Response) return u; await wipe(); }`],
+        catchSwallows: [D, `"use server"; export async function a() { try { const u = await getCurrentUser(); if (!u) throw new Error("no"); } catch {} await wipe(); }`],
+        checkInACallback: [D, `"use server"; export async function a() { const u = await getCurrentUser(); const later = () => { if (!u) return; }; await wipe(u); }`],
+      };
+      for (const [label, [path, source]] of Object.entries(probes)) expect(check(path, source), label).toHaveLength(1);
+      // The real shapes still pass.
+      expect(check(A, `"use server"; export async function a() { await requireAdmin(); }`)).toEqual([]);
+      expect(check(D, `"use server"; export async function a() { const u = await getCurrentUser(); if (!u) { log("x"); return; } await wipe(u); }`)).toEqual([]);
+      expect(check(D, `"use server"; export async function a() { try { const u = await getCurrentUser(); if (!u) return no(); await go(u); } catch (e) { log(e); return err(); } }`)).toEqual([]);
     });
 
     it("follows a re-export into the module file, and checks apiUser() and its Response check there", () => {
@@ -492,7 +560,7 @@ describe("authorization", () => {
       ]);
       // apiUser() without its instanceof Response check isn't a guard.
       expect(check(at, `export async function POST(r: Request) { const u = await apiUser(r); await go(u); }`)).toEqual([
-        `${at}: POST reads the session with apiUser() but doesn't check it`,
+        `${at}: POST reads the session with apiUser() but doesn't refuse with an if that returns or throws`,
       ]);
     });
 

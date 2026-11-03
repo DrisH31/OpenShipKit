@@ -196,7 +196,8 @@ export interface AuditRepo {
  * job's payload, and nothing else does.
  */
 /** What JobsRepo.failAbandoned() records as the job's lastError. */
-export const ABANDONED_ERROR = "The worker running its last attempt stopped before it finished (the lease ran out).";
+export const ABANDONED_ERROR =
+  "The lease on its last attempt ran out: the worker stopped, or was still running it. A late success is no longer recorded.";
 
 export interface JobsRepo {
   /** With a `key`, a queued or running job with the same key comes back instead (`created: false`). */

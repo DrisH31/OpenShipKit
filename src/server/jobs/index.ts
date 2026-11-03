@@ -96,6 +96,9 @@ async function within(work: Promise<void>, ms: number): Promise<{ error: unknown
   }
 }
 
+/** Attempts past their timeout that are still running in this process. */
+let slowInFlight = 0;
+
 export type RunSummary = { claimed: number; succeeded: number; retrying: number; failed: number; stale: number; slow: number; abandoned: number };
 
 /**
@@ -118,10 +121,13 @@ export async function runDueJobs(
 
   for (const job of await store.failAbandoned()) {
     summary.abandoned += 1;
-    log.error("jobs", `${job.kind} ${job.id} failed for good: its worker stopped during the last attempt (${job.attempts} of ${job.maxAttempts})`);
+    log.error("jobs", `${job.kind} ${job.id} failed for good: the lease on its last attempt (${job.attempts} of ${job.maxAttempts}) ran out, so its worker stopped or is still running it`);
   }
 
-  const claimed = await store.claim({ limit: options.limit ?? BATCH, leaseMs: LEASE_MS });
+  // Slow attempts still running in this process count against the batch, so a provider that hangs
+  // can't pile up more work here every tick.
+  const room = (options.limit ?? BATCH) - slowInFlight;
+  const claimed = room > 0 ? await store.claim({ limit: room, leaseMs: LEASE_MS }) : [];
   summary.claimed = claimed.length;
 
   /** Records how an attempt ended. Fenced: a stale claim changes nothing. */
@@ -155,11 +161,17 @@ export async function runDueJobs(
       const outcome = await within(work, options.timeoutMs ?? JOB_TIMEOUT_MS);
       if (outcome === null) {
         summary.slow += 1;
+        slowInFlight += 1;
         log.warn("jobs", `${job.kind} ${job.id} is still running after ${Math.round((options.timeoutMs ?? JOB_TIMEOUT_MS) / 1000)} s; it keeps its claim until it finishes or the lease ends`);
-        void work.then(
-          () => record(job, undefined),
-          (error: unknown) => record(job, error),
-        ).catch((error: unknown) => log.warn("jobs", `couldn't record the outcome of ${job.kind} ${job.id}`, error instanceof Error ? error.message : error));
+        void work
+          .then(
+            () => record(job, undefined),
+            (error: unknown) => record(job, error),
+          )
+          .catch((error: unknown) => log.warn("jobs", `couldn't record the outcome of ${job.kind} ${job.id}`, error instanceof Error ? error.message : error))
+          .finally(() => {
+            slowInFlight -= 1;
+          });
         return;
       }
       summary[await record(job, outcome.error)] += 1;

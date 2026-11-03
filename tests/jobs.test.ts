@@ -112,6 +112,16 @@ describe("job runner", () => {
     await vi.waitFor(async () => expect((await store.jobs.get(job.id))?.status).toBe("succeeded"), { timeout: 2_000 });
   });
 
+  it("doesn't claim more while slow attempts fill the batch", async () => {
+    for (let i = 0; i < 2; i++) await enqueueJob(slow, {}, { runAt: new Date(Date.now() - 10_000 + i) });
+    await enqueueJob(echo, { n: 1 }); // due after both, so the first batch is the two slow ones
+    expect(await runDueJobs({ definitions: ALL, limit: 2, timeoutMs: 10 })).toMatchObject({ claimed: 2, slow: 2 });
+    expect(await runDueJobs({ definitions: ALL, limit: 2 })).toMatchObject({ claimed: 0 }); // both still running here
+    await vi.waitFor(async () => expect((await store.jobs.counts()).succeeded).toBe(2), { timeout: 2_000 });
+    await new Promise((resolve) => setTimeout(resolve, 10)); // the slots free after the outcome is recorded
+    expect(await runDueJobs({ definitions: ALL, limit: 2 })).toMatchObject({ claimed: 1, succeeded: 1 });
+  });
+
   it("fails a job whose last attempt died with its worker, and reports it", async () => {
     const errors = vi.spyOn(console, "error");
     const { job } = await store.jobs.enqueue({ kind: "test.echo", payload: { n: 1 }, maxAttempts: 1 });
@@ -119,7 +129,7 @@ describe("job runner", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(await runDueJobs({ definitions: ALL })).toMatchObject({ abandoned: 1, claimed: 0 });
     expect((await store.jobs.get(job.id))?.status).toBe("failed");
-    expect(errors.mock.calls.some((c) => String(c[0]).includes("its worker stopped during the last attempt"))).toBe(true);
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("the lease on its last attempt"))).toBe(true);
   });
 
   it("stores the last error scrubbed of a failed query's parameters", async () => {
