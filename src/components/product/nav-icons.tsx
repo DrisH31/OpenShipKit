@@ -21,6 +21,7 @@ import {
   ShieldIcon,
   TagIcon,
   UsersIcon,
+  UsersRoundIcon,
   type LucideIcon,
 } from "lucide-react";
 import type { NavIcon } from "@/lib/app-nav";
@@ -29,6 +30,7 @@ export const NAV_ICONS: Record<NavIcon, LucideIcon> = {
   home: HouseIcon,
   billing: CreditCardIcon,
   feedback: MessageSquareIcon,
+  team: UsersRoundIcon,
   settings: SettingsIcon,
   admin: ShieldIcon,
   overview: LayoutGridIcon,

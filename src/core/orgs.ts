@@ -124,6 +124,15 @@ export function canManage(actor: OrgRole, target: OrgRole, newRole?: OrgRole): b
   return false;
 }
 
+/** Paths (and everything under them) that exist only with teams on. */
+export const TEAM_ONLY_PATHS: readonly string[] = ["/dashboard/team", "/invite"];
+
+/** Keep the items the tenancy serves: everything with teams on, no team-only path without them. */
+export function forTenancy<T extends { href: string }>(tenancy: Tenancy, items: readonly T[]): T[] {
+  if (tenancy === "org") return [...items];
+  return items.filter((i) => !TEAM_ONLY_PATHS.some((p) => i.href === p || i.href.startsWith(`${p}/`)));
+}
+
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SLUG_MAX = 48;
 export const ORG_NAME_MAX = 80;

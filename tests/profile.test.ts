@@ -17,6 +17,7 @@ import { createMemoryStore } from "@/adapters/data/memory";
 import { forProfile, isSaasOnlyPath, navigationForProfile } from "@/core/profile";
 import { resolveBillingProvider, resolveProfile } from "@/server/env-rules";
 import { ADMIN_NAV, DASHBOARD_ADMIN_LINK, DASHBOARD_NAV } from "@/lib/app-nav";
+import { forTenancy } from "@/core/orgs";
 import { articleJsonLd } from "@/shared/jsonld";
 
 let store: DataStore;
@@ -103,7 +104,9 @@ describe("SaaS-only paths", () => {
   it("leave the dashboard and admin sidebars", () => {
     const hrefs = (items: { href: string }[]) => items.map((i) => i.href);
     expect(hrefs(forProfile("saas", DASHBOARD_NAV))).toContain("/dashboard/billing");
-    expect(hrefs(forProfile("site", [...DASHBOARD_NAV, DASHBOARD_ADMIN_LINK]))).toEqual(["/dashboard", "/dashboard/feedback", "/dashboard/settings", "/admin"]);
+    // The shell also drops Team unless teams are on (forTenancy, OPENSHIPKIT_TENANCY), so the default sidebar is as before teams.
+    expect(hrefs(forTenancy("personal", forProfile("site", [...DASHBOARD_NAV, DASHBOARD_ADMIN_LINK])))).toEqual(["/dashboard", "/dashboard/feedback", "/dashboard/settings", "/admin"]);
+    expect(hrefs(forTenancy("org", forProfile("site", DASHBOARD_NAV)))).toContain("/dashboard/team");
     expect(hrefs(forProfile("saas", ADMIN_NAV))).toContain("/admin/plans");
     expect(hrefs(forProfile("site", ADMIN_NAV))).not.toContain("/admin/plans");
     expect(forProfile("site", ADMIN_NAV)).toHaveLength(ADMIN_NAV.length - 1);

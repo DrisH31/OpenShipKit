@@ -15,10 +15,11 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { forProfile } from "@/core/profile";
+import { forTenancy } from "@/core/orgs";
 import type { User } from "@/core/types";
 import { getAuthUI } from "@/server/auth-ui";
 import { isDemoUser } from "@/server/demo";
-import { isDemo, siteProfile } from "@/server/env";
+import { isDemo, siteProfile, tenancy } from "@/server/env";
 import { getContent } from "@/server/services/content";
 import { listFeedback } from "@/server/services/community";
 import { ADMIN_NAV, BADGE_CAP, DASHBOARD_ADMIN_LINK, DASHBOARD_NAV } from "@/lib/app-nav";
@@ -57,7 +58,7 @@ export async function ProductShell({ kind, user, children }: { kind: "dashboard"
   ]);
   const { SignOutButton } = authUI;
   const profile = siteProfile();
-  const nav = forProfile(profile, kind === "admin" ? ADMIN_NAV : isAdmin ? [...DASHBOARD_NAV, DASHBOARD_ADMIN_LINK] : DASHBOARD_NAV);
+  const nav = forTenancy(tenancy(), forProfile(profile, kind === "admin" ? ADMIN_NAV : isAdmin ? [...DASHBOARD_NAV, DASHBOARD_ADMIN_LINK] : DASHBOARD_NAV));
   const badges = fresh ? { "/admin/feedback": fresh, ...(kind === "dashboard" ? { "/admin": fresh } : {}) } : undefined;
   const actions = isAdmin ? forProfile(profile, ADMIN_ACTIONS) : [];
   return (

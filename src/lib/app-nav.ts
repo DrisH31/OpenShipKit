@@ -15,6 +15,7 @@ export type NavIcon =
   | "home"
   | "billing"
   | "feedback"
+  | "team"
   | "settings"
   | "admin"
   | "overview"
@@ -43,6 +44,7 @@ export const DASHBOARD_NAV: readonly NavItem[] = [
   { group: "Product", href: "/dashboard", label: "Home", icon: "home", exact: true },
   { group: "Product", href: "/dashboard/billing", label: "Billing", icon: "billing" },
   { group: "Product", href: "/dashboard/feedback", label: "Feedback", icon: "feedback" },
+  { group: "Account", href: "/dashboard/team", label: "Team", icon: "team" },
   { group: "Account", href: "/dashboard/settings", label: "Settings", icon: "settings" },
 ];
 

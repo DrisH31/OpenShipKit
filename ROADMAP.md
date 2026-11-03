@@ -40,9 +40,14 @@ without the fix.
 
 ## Phase 2: Teams and organisations
 
+Status: 2.1, 2.2, 2.3, 2.5 and 2.7 done. Organisations are app-owned tables
+behind the DataStore, not Better Auth's plugin, so they get the contract tests,
+the audit log and MCP like everything else. Next: 2.4 (billing per organisation,
+per seat), then 2.6.
+
 | # | Item |
 |---|---|
-| 2.1 | Organisations through Better Auth's organization plugin: create, switch, rename, delete |
+| 2.1 | Organisations as app-owned DataStore tables: create, switch, rename, delete |
 | 2.2 | Invitations by email: accept, expire, revoke |
 | 2.3 | Org roles (owner, admin, member) and a permission map in `src/core`, checked by `requireOrgRole()` |
 | 2.4 | Org-scoped billing: a subscription belongs to an org, with seats |

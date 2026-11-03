@@ -76,7 +76,7 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **Marketing site** | Landing page (hero, features, steps, stats, testimonials, pricing, FAQ, latest posts, CTA), pricing page, contact form, newsletter sign-up, legal pages — every section editable in the admin |
 | **Blog + changelog** | Markdown posts with tags, cover images, table of contents, RSS feeds, per-post Open Graph images; drafts, and unlisted posts (live at their URL and in the sitemap, off the lists) |
 | **Auth** | Better Auth: email + password, email verification, password reset, magic links, two-factor (TOTP + backup codes), session management, optional GitHub / Google |
-| **Dashboard** | Home (with a setup checklist for admins), billing, profile, password, 2FA, sessions, delete account, feedback |
+| **Dashboard** | Home (with a setup checklist for admins), billing, profile, password, 2FA, sessions, delete account, feedback; optional teams (organisations, owner/admin/member roles, email invitations) |
 | **Admin** | Overview, users (roles, bans), content editor, posts, media library (image uploads on your own disk), plans, feedback inbox, subscribers (CSV export), agent keys, audit log (one-click restore for content, posts and plans) |
 | **Billing (optional)** | Polar as merchant of record: checkout, customer portal, signature-verified idempotent webhooks; access granted only from webhooks |
 | **Email** | Resend or any SMTP server (your own included) in production; in development every email prints to the terminal |
@@ -463,6 +463,7 @@ the site is still named OpenShipKit.
 | [MCP](docs/mcp.md) | Agent keys, clients, tools |
 | [Modules](docs/modules/README.md) | Opt-in AI, document search (RAG) and Redis, off until enabled |
 | [Security](docs/security.md) | The security model |
+| [Teams](docs/teams.md) | Organisations, roles, invitations (OPENSHIPKIT_TENANCY=org) |
 | [Background jobs](docs/jobs.md) | The Postgres job queue: retries, email retries, adding a job |
 | [Observability](docs/observability.md) | Structured logs, optional self-hosted error tracking, health |
 | [Upgrading](docs/upgrading.md) | Pulling template updates, Next.js patches, Postgres majors |
@@ -508,7 +509,7 @@ Honest limits, so you know what you'd add:
 | Not included | What that means for you |
 |---|---|
 | More than one language | Every word is English; there's no locale switch |
-| Teams and organisations | Accounts are single people: no organisations, seats or SSO (roles are admin and user) |
+| Billing per organisation, and SSO | Teams are in (`OPENSHIPKIT_TENANCY=org`: organisations, roles, invitations), but subscriptions still belong to a person, and there's no SSO |
 | Payment providers other than Polar | Stripe or Razorpay means a new billing adapter |
 | More than one app replica out of the box | Turn on the Redis module first ([modules/](modules/README.md)) |
 | Someone to look after the server | Updates, backups and restore rehearsals are yours ([deploy/](deploy/README.md)) |
