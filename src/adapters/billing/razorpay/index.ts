@@ -113,17 +113,6 @@ export function mapRazorpayStatus(status: string): SubscriptionStatus {
   }
 }
 
-/**
- * Razorpay's refusal to cancel a subscription that is already set to end. The SDK rejects with
- * { statusCode: 400, error: { description } }; the exact wording isn't documented, so this matches
- * "already" with "cancel" and nothing broader (a refusal for any other reason still throws).
- */
-export function alreadyCancelled(error: unknown): boolean {
-  const e = error as { statusCode?: number; error?: { description?: string } } | null;
-  const text = e?.error?.description ?? (error instanceof Error ? error.message : "");
-  return e?.statusCode === 400 && /already/i.test(text) && /cancel/i.test(text);
-}
-
 const note = (notes: Notes, key: string): string | null => (notes?.[key] !== undefined && notes?.[key] !== "" ? String(notes[key]) : null);
 const iso = (unixSeconds: number | null | undefined): string | null => (typeof unixSeconds === "number" && unixSeconds > 0 ? new Date(unixSeconds * 1000).toISOString() : null);
 
@@ -165,8 +154,9 @@ export function razorpayOrderState(payment: RazorpayPayment, disputeLost = false
     checkoutProductId: note(payment.notes, "productId"),
     amountCents: payment.amount,
     currency: payment.currency.toLowerCase(),
-    // A full refund ends access, and so does a lost chargeback; a partial refund keeps it.
-    refunded: payment.refund_status === "full" || disputeLost,
+    // A full refund ends access; a partial one keeps it. A lost chargeback ends it for good.
+    refunded: payment.refund_status === "full",
+    chargedBack: disputeLost,
   };
 }
 
@@ -269,31 +259,45 @@ export function createRazorpayProvider(options: RazorpayProviderOptions = {}): B
       throw new Error("Razorpay has no customer portal: cancel from the billing page instead.");
     },
 
-    // Safe to repeat: if an earlier attempt cancelled at Razorpay and then failed to write (the
-    // re-fetch or the database), Razorpay refuses a second cancel as "already cancelled", which is
-    // the outcome we wanted, so the write is simply done again. Ended already: just record it.
+    // The intent is written first: the row says "won't renew" before Razorpay is asked, so a failure
+    // after Razorpay accepted (the re-fetch, the database) can't leave a row that still offers Cancel,
+    // which Razorpay would then refuse. A definite refusal (a 4xx) puts the row back as Razorpay has
+    // it; a timeout or 5xx leaves the intent, since Razorpay may have accepted, and the next webhook
+    // re-fetch settles it. No reliance on the wording of Razorpay's errors.
+    //
+    // A subscription with no billing cycle yet (authenticated: a trial or a mandate before its first
+    // charge; created: never paid) can't be cancelled "at cycle end"; Razorpay refuses with "no billing
+    // cycle is going on". It is cancelled now instead: nothing has been charged, and nothing will be.
     async cancelAtPeriodEnd(providerSubscriptionId: string, actor: Actor) {
+      const out = await sink();
       const before = await razorpay().subscriptions.fetch(providerSubscriptionId);
-      if (mapRazorpayStatus(before.status) !== "canceled") {
-        try {
-          await razorpay().subscriptions.cancel(providerSubscriptionId, true);
-        } catch (error) {
-          if (!alreadyCancelled(error)) throw error;
+      if (mapRazorpayStatus(before.status) === "canceled") {
+        await out.applySubscription({ ...razorpaySubscriptionState(before), cancelAtPeriodEndKnown: true }, { actor });
+        return;
+      }
+      const inCycle = before.status !== "authenticated" && before.status !== "created";
+      await out.applySubscription({ ...razorpaySubscriptionState(before), cancelAtPeriodEnd: true, cancelAtPeriodEndKnown: true }, { actor });
+      try {
+        await razorpay().subscriptions.cancel(providerSubscriptionId, inCycle);
+      } catch (error) {
+        const e = error as { statusCode?: number; error?: { description?: string } } | null;
+        logWebhook("razorpay", `cancel ${providerSubscriptionId} refused: ${e?.statusCode ?? "?"} ${e?.error?.description ?? (error instanceof Error ? error.message : "")}`);
+        if (typeof e?.statusCode === "number" && e.statusCode >= 400 && e.statusCode < 500) {
+          await out.applySubscription({ ...razorpaySubscriptionState(before), cancelAtPeriodEnd: false, cancelAtPeriodEndKnown: true }, { actor });
         }
+        throw error;
       }
       const state = razorpaySubscriptionState(await razorpay().subscriptions.fetch(providerSubscriptionId));
-      // We asked for it, so here (unlike a webhook's re-fetch) we know it's set to end.
-      await (await sink()).applySubscription({ ...state, cancelAtPeriodEnd: state.status !== "canceled", cancelAtPeriodEndKnown: true }, { actor });
+      await out.applySubscription({ ...state, cancelAtPeriodEnd: state.status !== "canceled", cancelAtPeriodEndKnown: true }, { actor });
     },
 
     async describePrice(id: string) {
-      if (id.endsWith(":one_time")) return null; // a payment link for the plan's own amount: nothing to compare
       const plan = await razorpay().plans.fetch(id).catch((error: { statusCode?: number }) => {
         if (error?.statusCode === 400 || error?.statusCode === 404) return null; // Razorpay answers an unknown id with 400
         throw error;
       });
       if (!plan) return null;
-      const interval = plan.interval === 1 && plan.period === "monthly" ? "month" : plan.interval === 1 && plan.period === "yearly" ? "year" : null;
+      const interval = plan.interval === 1 && plan.period === "monthly" ? "month" : plan.interval === 1 && plan.period === "yearly" ? "year" : "other";
       return { amountCents: Number(plan.item.amount), currency: plan.item.currency, interval };
     },
 

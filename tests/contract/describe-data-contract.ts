@@ -546,6 +546,9 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect(again.id).toBe(p.id);
         expect(again.createdAt).toBe(p.createdAt);
         expect(again.refunded).toBe(true);
+        expect(again.chargedBack).toBe(false);
+        const back = await store.billing.recordPurchase({ userId: u.id, provider: "polar", providerOrderId: order, planKey: "lifetime", amountCents: 29900, currency: "usd", refunded: true, chargedBack: true });
+        expect(back.chargedBack).toBe(true);
 
         await tick();
         const second = await store.billing.recordPurchase({ userId: u.id, provider: "polar", providerOrderId: uniq("ord_"), planKey: null, amountCents: 100, currency: "eur", refunded: false });

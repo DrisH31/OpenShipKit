@@ -17,6 +17,7 @@ import "server-only";
 // minted (revokeKeysMintedBy), so their admin access can't outlive them there.
 //
 
+import { PROVIDER_LABEL } from "@/core/billing";
 import { MAX_LIMIT } from "@/core/data";
 import { grantsAccess, isRenewing, type Actor, type Page, type Role, type User } from "@/core/types";
 import { getAuth } from "../auth";
@@ -209,7 +210,7 @@ async function assertNothingRenews(user: User, self: boolean): Promise<void> {
       ? renewing.orgId
         ? "You pay for an organisation's plan that would keep renewing. Cancel it in Billing first (or let it lapse), then delete your account."
         : "You have a paid plan that would keep renewing. Cancel it in Billing first, then delete your account."
-      : `${user.email} has a ${renewing.planKey ?? "paid"} subscription${renewing.orgId ? " for an organisation" : ""} that would keep renewing. Cancel it in your Polar dashboard first, then delete the account.`,
+      : `${user.email} has a ${renewing.planKey ?? "paid"} subscription${renewing.orgId ? " for an organisation" : ""} that would keep renewing. Cancel it in your ${PROVIDER_LABEL[renewing.provider]} dashboard first, then delete the account.`,
   );
 }
 

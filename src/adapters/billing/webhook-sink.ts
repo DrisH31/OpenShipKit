@@ -87,8 +87,10 @@ async function checkoutPlanPerSeat(planKey: string | null, interval: PriceInterv
   if (!planKey) return false;
   const plan = await (await getData()).plans.getByKey(planKey);
   const recurring = plan?.prices.filter((p) => p.interval !== "one_time") ?? [];
-  const price = recurring.find((p) => p.interval === interval) ?? (recurring.length === 1 ? recurring[0] : undefined);
-  return price?.perSeat === true;
+  // The interval, where the provider says (Razorpay doesn't): that price. Otherwise per seat only if
+  // every recurring price is, so the answer doesn't depend on which one was bought.
+  const price = interval ? recurring.find((p) => p.interval === interval) : undefined;
+  return price ? price.perSeat === true : recurring.length > 0 && recurring.every((p) => p.perSeat === true);
 }
 
 /**
@@ -169,13 +171,15 @@ export async function upsertPurchase(input: PurchaseInput): Promise<boolean> {
   const existing = (await data.billing.listPurchases({ userId: input.userId, limit: 200 })).items.find(
     (p) => p.provider === input.provider && p.providerOrderId === input.providerOrderId,
   );
-  // Revoked stays revoked: neither a full refund nor a lost chargeback can be undone, and a later
-  // re-sync (a refund event for a disputed payment re-fetches a charge that says "not refunded")
-  // must not hand the access back.
-  if (existing?.refunded) input = { ...input, refunded: true };
+  // A lost chargeback is final: a later re-sync (a partial refund event re-fetches a charge that says
+  // nothing of the dispute) must not hand the access back. A refund isn't latched: it follows the
+  // provider, so a refund that failed gives the access back.
+  const chargedBack = input.chargedBack === true || existing?.chargedBack === true;
+  input = { ...input, chargedBack, refunded: input.refunded || chargedBack };
   const changed =
     !existing ||
     existing.refunded !== input.refunded ||
+    (existing.chargedBack ?? false) !== input.chargedBack ||
     existing.planKey !== input.planKey ||
     existing.amountCents !== input.amountCents ||
     existing.currency !== input.currency;
@@ -279,6 +283,7 @@ async function applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult
     amountCents: state.amountCents,
     currency: state.currency.toLowerCase(),
     refunded: state.refunded,
+    chargedBack: state.chargedBack === true,
   });
   return changed ? "applied" : "unchanged";
 }

@@ -88,7 +88,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
                   </>
                 }
                 title={`Delete ${email}?`}
-                description="Their account, sign-in methods, sessions and billing records are removed now, and they’re signed out everywhere. Feedback they sent stays, without their name. This can’t be undone. Cancel any paid subscription at Polar first."
+                description="Their account, sign-in methods, sessions and billing records are removed now, and they’re signed out everywhere. Feedback they sent stays, without their name. This can’t be undone. Cancel any paid subscription at the payment provider first."
                 confirmLabel="Delete user"
               />
             )}
@@ -138,7 +138,7 @@ export default async function UserPage({ params }: { params: Promise<{ id: strin
               ))}
               {purchases.map((p) => (
                 <li key={p.id} className="flex flex-wrap items-center gap-2">
-                  <StatusBadge label={p.refunded ? "Refunded" : "Paid"} tone={p.refunded ? "neutral" : "positive"} />
+                  <StatusBadge label={p.chargedBack ? "Charged back" : p.refunded ? "Refunded" : "Paid"} tone={p.refunded ? "neutral" : "positive"} />
                   <span className="text-ink">
                     {planName(p.planKey) ?? "Purchase"} · {formatPrice(p.amountCents, p.currency)}
                   </span>

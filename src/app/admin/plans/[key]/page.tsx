@@ -74,13 +74,9 @@ export default async function EditPlanPage({ params, searchParams }: { params: P
           Plan created. Add its payment provider&apos;s price ids when you turn payments on.
         </p>
       ) : null}
-      {priceCheck && "unavailable" in priceCheck ? (
-        <p role="status" className="max-w-3xl text-small text-ink-3">
-          Couldn&apos;t reach {priceCheck.provider} to compare its prices with this plan&apos;s. Try again in a moment.
-        </p>
-      ) : priceCheck && priceCheck.problems.length > 0 ? (
+      {priceCheck && priceCheck.problems.length > 0 ? (
         <div role="alert" className="max-w-3xl rounded-xl border border-line-strong bg-card p-4">
-          <p className="text-small font-semibold text-ink">The pricing page and {priceCheck.provider} disagree</p>
+          <p className="text-small font-semibold text-ink">Check these prices at {priceCheck.provider}</p>
           <p className="text-small text-ink-2">Customers see this plan&apos;s amounts but pay {priceCheck.provider}&apos;s. Change one to match the other.</p>
           <ul className="mt-2 list-disc pl-5 text-small text-ink-2">
             {priceCheck.problems.map((p) => (

@@ -688,7 +688,7 @@ describe("billing routes with billing off (the default)", () => {
   it("tell JSON callers how to enable billing", async () => {
     const res = await checkout({ planKey: "pro", interval: "month" }, { json: true });
     expect(res.status).toBe(503);
-    expect(await res.json()).toMatchObject({ error: "billing_disabled", message: expect.stringContaining("POLAR_ACCESS_TOKEN") });
+    expect(await res.json()).toMatchObject({ error: "billing_disabled", message: expect.stringContaining("docs/billing.md") });
   });
 
   it("send the portal back to billing, and 404 the webhook", async () => {
@@ -858,7 +858,7 @@ describe("switching billing providers", () => {
 
   it("counts subscriptions still renewing at a provider the site no longer listens to", async () => {
     const { strandedSubscriptions } = await import("@/server/services/billing");
-    const sub = (id: string, provider: "polar" | "stripe", over: Partial<{ status: "active" | "canceled"; cancelAtPeriodEnd: boolean }> = {}) =>
+    const sub = (id: string, provider: "polar" | "stripe", over: Partial<{ status: "active" | "canceled"; cancelAtPeriodEnd: boolean; currentPeriodEnd: string }> = {}) =>
       store.billing.upsertSubscription({
         userId: user.id,
         provider,
@@ -867,12 +867,13 @@ describe("switching billing providers", () => {
         planKey: "pro",
         interval: "month",
         status: over.status ?? "active",
-        currentPeriodEnd: "2099-01-01T00:00:00.000Z",
+        currentPeriodEnd: over.currentPeriodEnd ?? "2099-01-01T00:00:00.000Z",
         cancelAtPeriodEnd: over.cancelAtPeriodEnd ?? false,
       });
     await sub("p1", "polar");
     await sub("p2", "polar", { cancelAtPeriodEnd: true }); // ends on its own: not stranded
     await sub("p3", "polar", { status: "canceled" });
+    await sub("p4", "polar", { currentPeriodEnd: "2020-01-01T00:00:00.000Z" }); // its period is over: ended at Polar, unseen here
     await sub("s1", "stripe");
     h.billing = { id: "stripe" } as BillingProvider;
     expect(await strandedSubscriptions()).toEqual({ polar: 1 });
@@ -886,8 +887,8 @@ describe("checking a plan's prices against the provider", () => {
 
   it("names each price whose amount, currency or interval differs, or that the provider doesn't have", async () => {
     const { checkPlanPrices } = await import("@/server/services/billing");
-    const at: Record<string, { amountCents: number; currency: string; interval: "month" | "year" | "one_time" } | null> = {
-      price_m: { amountCents: 1900, currency: "usd", interval: "month" },
+    const at: Record<string, { amountCents: number; currency: string; interval: "month" | "year" | "one_time" | "other" } | null> = {
+      price_m: { amountCents: 1900, currency: "usd", interval: "other" }, // every 3 months at Stripe
       price_y: { amountCents: 20000, currency: "usd", interval: "year" },
       price_x: null,
     };
@@ -903,9 +904,40 @@ describe("checking a plan's prices against the provider", () => {
     const check = await checkPlanPrices(plan);
     expect(check).toEqual({
       provider: "Stripe",
-      problems: ["Yearly (price_y): Stripe charges $200, the plan shows $190.", "One-time (price_x): Stripe has no such price."],
+      problems: [
+        "Monthly (price_m): Stripe bills it on another schedule (not once a month).",
+        "Yearly (price_y): Stripe charges $200, the plan shows $190.",
+        "One-time (price_x): Stripe has no such price.",
+      ],
     });
-    h.billing = { id: "stripe", label: "Stripe", describePrice: async () => { throw new Error("down"); } } as unknown as BillingProvider;
-    expect(await checkPlanPrices(plan)).toEqual({ provider: "Stripe", unavailable: true });
+    // One price the provider can't answer for doesn't hide the others.
+    h.billing = {
+      id: "stripe",
+      label: "Stripe",
+      describePrice: async (id: string) => {
+        if (id === "price_y") throw new Error("timeout");
+        return at[id] ?? null;
+      },
+    } as unknown as BillingProvider;
+    expect((await checkPlanPrices(plan))?.problems).toEqual([
+      "Monthly (price_m): Stripe bills it on another schedule (not once a month).",
+      "Yearly (price_y): couldn't ask Stripe (timeout).",
+      "One-time (price_x): Stripe has no such price.",
+    ]);
+  });
+
+  it("doesn't check a Razorpay one-time price: its checkout is a link for the plan's own amount", async () => {
+    const { checkPlanPrices } = await import("@/server/services/billing");
+    const describePrice = vi.fn(async () => ({ amountCents: 49900, currency: "inr", interval: "month" as const }));
+    h.billing = { id: "razorpay", label: "Razorpay", describePrice } as unknown as BillingProvider;
+    const plan = {
+      key: "pro",
+      prices: [
+        { interval: "month", amountCents: 49900, currency: "inr", polarProductId: null, razorpayPlanId: "plan_m" },
+        { interval: "one_time", amountCents: 299900, currency: "inr", polarProductId: null },
+      ],
+    } as unknown as Plan;
+    expect(await checkPlanPrices(plan)).toEqual({ provider: "Razorpay", problems: [] });
+    expect(describePrice).toHaveBeenCalledTimes(1);
   });
 });

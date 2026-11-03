@@ -307,7 +307,10 @@ export interface Purchase {
   planKey: string | null;
   amountCents: number;
   currency: string;
+  /** No access any more: a full refund, or a lost chargeback. */
   refunded: boolean;
+  /** A chargeback the merchant lost (refunded is true too). Final: a later re-sync can't undo it. */
+  chargedBack?: boolean;
   createdAt: string;
 }
 

@@ -124,7 +124,7 @@ export function billingErrorMessage(code: string | null | undefined): string | n
 
 /** What JSON callers (and the webhook's 404) are told while billing is off — for developers, so it says how to enable it. */
 export const BILLING_DISABLED_MESSAGE =
-  "Billing is off. Set POLAR_ACCESS_TOKEN and POLAR_WEBHOOK_SECRET (see .env.example) and restart to take payments with Polar.";
+  "Billing is off. Set a billing provider's key and webhook secret (Polar, Stripe or Razorpay: see .env.example and docs/billing.md) and restart to take payments.";
 
 /** The refusals startCheckout explains in its ServiceError("conflict") `details.reason`; each has copy in billingErrorMessage. */
 const CHECKOUT_CONFLICTS = ["already_subscribed", "already_owned"] as const;

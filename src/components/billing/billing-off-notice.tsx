@@ -46,8 +46,9 @@ export function BillingOffNotice({ audience, webhookUrl, className }: BillingOff
       <AlertTitle>Payments are off</AlertTitle>
       <AlertDescription className="text-ink-2">
         <p>
-          Plans show on the pricing page and free plans work, but nothing can be bought. Billing is optional: turn on Polar
-          (merchant of record — it handles VAT and sales tax) when you’re ready to charge.
+          Plans show on the pricing page and free plans work, but nothing can be bought. Billing is optional: turn on a
+          provider when you’re ready to charge. These are the steps for Polar, the default (merchant of record — it handles
+          VAT and sales tax); Stripe and Razorpay are in docs/billing.md.
         </p>
         <ol className="list-decimal space-y-1 pl-5">
           {billingSetupSteps(webhookUrl).map((step) => (

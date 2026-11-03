@@ -388,12 +388,14 @@ describe("what a provider charges for a price id", () => {
   it("Stripe: amount, currency, interval; one-time when not recurring; null for an unknown id", async () => {
     const retrieve = vi.fn(async (id: string) => {
       if (id === "missing") throw Object.assign(new Error("No such price"), { statusCode: 404 });
-      return id === "price_y" ? { unit_amount: 19000, currency: "usd", recurring: { interval: "year" } } : { unit_amount: 29900, currency: "usd", recurring: null };
+      if (id === "price_q") return { unit_amount: 5700, currency: "usd", recurring: { interval: "month", interval_count: 3 } };
+      return id === "price_y" ? { unit_amount: 19000, currency: "usd", recurring: { interval: "year", interval_count: 1 } } : { unit_amount: 29900, currency: "usd", recurring: null };
     });
     const p = createStripeProvider({ client: { prices: { retrieve } } as unknown as StripeClient, webhookSecret: stripeSecret });
     expect(await p.describePrice!("price_y")).toEqual({ amountCents: 19000, currency: "usd", interval: "year" });
     expect(await p.describePrice!("price_once")).toEqual({ amountCents: 29900, currency: "usd", interval: "one_time" });
     expect(await p.describePrice!("missing")).toBeNull();
+    expect((await p.describePrice!("price_q"))?.interval).toBe("other"); // every 3 months
   });
 
   it("Polar: the product's fixed price and recurrence", async () => {
@@ -402,11 +404,12 @@ describe("what a provider charges for a price id", () => {
     expect(await p.describePrice!("prod_1")).toEqual({ amountCents: 1900, currency: "usd", interval: "month" });
   });
 
-  it("Razorpay: the plan's item and period; nothing to compare for a one-time link", async () => {
+  it("Razorpay: the plan's item and period; another schedule is \"other\"", async () => {
     const fetch = vi.fn(async () => ({ id: "plan_1", period: "yearly", interval: 1, item: { amount: 499900, currency: "INR" } }));
     const client = { plans: { fetch } } as unknown as RazorpayClient;
     const p = createRazorpayProvider({ client, webhookSecret: "x" });
     expect(await p.describePrice!("plan_1")).toEqual({ amountCents: 499900, currency: "INR", interval: "year" });
-    expect(await p.describePrice!("pro:one_time")).toBeNull();
+    fetch.mockResolvedValueOnce({ id: "plan_q", period: "monthly", interval: 3, item: { amount: 99900, currency: "INR" } });
+    expect((await p.describePrice!("plan_q"))?.interval).toBe("other"); // every 3 months
   });
 });

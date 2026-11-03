@@ -205,6 +205,8 @@ export const purchases = pgTable(
     amountCents: integer("amount_cents").notNull(),
     currency: text("currency").notNull(),
     refunded: boolean("refunded").notNull().default(false),
+    /** A chargeback the merchant lost: final, so it stays revoked whatever a later re-sync says. */
+    chargedBack: boolean("charged_back").notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [

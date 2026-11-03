@@ -58,8 +58,12 @@ export interface CheckoutInput {
   cancelUrl: string;
 }
 
-/** What a provider charges for one of its prices: compared with the plan's price in /admin/plans. null = it doesn't say. */
-export type ProviderPrice = { amountCents: number | null; currency: string | null; interval: PriceInterval | null };
+/**
+ * What a provider charges for one of its prices, compared with the plan's price in /admin/plans.
+ * `interval` "other" is a recurrence the app doesn't sell (every 3 months, weekly): always a mismatch.
+ * A null amount or currency: the provider doesn't say (a pay-what-you-want price).
+ */
+export type ProviderPrice = { amountCents: number | null; currency: string | null; interval: PriceInterval | "other" };
 
 /** One usage event as a provider receives it (BillingProvider.reportUsage). */
 export type UsageReport = { id: string; customerId: string; metric: string; quantity: number; occurredAt: string };
@@ -89,7 +93,8 @@ export interface BillingProvider {
   reportUsage?(event: UsageReport): Promise<void>;
   /**
    * What the provider charges for a price id (a Polar product, a Stripe price, a Razorpay plan), so
-   * /admin/plans can warn when the plan advertises something else. null: no such price.
+   * /admin/plans can warn when the plan advertises something else. null: no such price. Not called
+   * for a price whose id the app makes up itself (a Razorpay one-time price).
    */
   describePrice?(id: string): Promise<ProviderPrice | null>;
   /**

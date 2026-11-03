@@ -21,7 +21,7 @@ export async function getBucket(): Promise<S3MediaStore | null> {
       region: optionalEnv("S3_REGION") ?? "auto",
       accessKeyId: requireEnv("S3_ACCESS_KEY_ID", "S3 media storage"),
       secretAccessKey: requireEnv("S3_SECRET_ACCESS_KEY", "S3 media storage"),
-      // "uploads", "/uploads/" and "uploads/" are the same folder; "" (or "/") is the bucket's root.
+      // "uploads", "/uploads/" and "uploads/" are the same folder; "/" is the bucket's root (unset or empty: "uploads/").
       prefix: ((p) => (p ? `${p}/` : ""))((optionalEnv("S3_PREFIX") ?? "uploads").replace(/^\/+|\/+$/g, "")),
     }),
   );

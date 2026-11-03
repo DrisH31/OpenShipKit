@@ -110,27 +110,63 @@ describe("Razorpay", () => {
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("canceled");
   });
 
-  it("a cancel that reached Razorpay but failed to write is finished by pressing it again", async () => {
+  // Razorpay's documented cancel errors, word for word:
+  // https://razorpay.com/docs/api/payments/subscriptions/cancel-subscription (Errors)
+  const NO_CYCLE = { statusCode: 400, error: { code: "BAD_REQUEST_ERROR", description: "Subscription cannot be cancelled since no billing cycle is going on" } };
+
+  it("a cancel that reached Razorpay but failed to write still reads as ending (the intent is written first)", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;
     const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
     await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "f1"));
     const me = { type: "user" as const, id: user.id, label: user.email };
 
-    // Razorpay cancels; the re-fetch that follows fails. The row still says renewing.
+    // Razorpay cancels; the re-fetch that follows fails.
     const fetch = client.subscriptions.fetch as ReturnType<typeof vi.fn>;
     fetch.mockImplementationOnce(async () => ({ ...sub })).mockRejectedValueOnce(new Error("network"));
     await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toThrow("network");
+    expect(client.subscriptions.cancel).toHaveBeenCalledWith("sub_1", true);
+    // No Cancel left to press against a subscription Razorpay already set to end.
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+  });
+
+  it("a refusal puts the row back as Razorpay has it; a timeout leaves the intent for the next webhook", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "g1"));
+    const me = { type: "user" as const, id: user.id, label: user.email };
+    const cancel = client.subscriptions.cancel as ReturnType<typeof vi.fn>;
+
+    cancel.mockRejectedValueOnce(NO_CYCLE);
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toMatchObject({ statusCode: 400 });
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(false);
 
-    // Pressed again: Razorpay says it's already cancelled, which is what we wanted.
-    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce({ statusCode: 400, error: { code: "BAD_REQUEST_ERROR", description: "Subscription is already cancelled" } });
-    await rzp.cancelAtPeriodEnd!("sub_1", me);
+    cancel.mockRejectedValueOnce(Object.assign(new Error("socket hang up"), { statusCode: 502 }));
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toThrow("socket hang up");
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+  });
 
-    // Any other refusal still fails.
-    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce({ statusCode: 400, error: { description: "Subscription cannot be cancelled in created state" } });
-    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toMatchObject({ statusCode: 400 });
+  it("a trial (authenticated, first charge later) is cancelled outright, so its first charge never happens", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const startAt = Math.floor(Date.now() / 1000) + 14 * 86_400;
+    Object.assign(sub, { status: "authenticated", start_at: startAt, current_end: null });
+    const cancel = client.subscriptions.cancel as ReturnType<typeof vi.fn>;
+    // Razorpay: a cycle-end cancel of an authenticated subscription is refused; an immediate one cancels it.
+    cancel.mockImplementation(async (_id: string, atCycleEnd: boolean) => {
+      if (atCycleEnd) throw NO_CYCLE;
+      sub.status = "cancelled";
+      sub.ended_at = Math.floor(Date.now() / 1000);
+      return { ...sub };
+    });
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.authenticated", payload: { subscription: { entity: { id: "sub_1" } } } }, "t1"));
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("trialing");
+
+    await rzp.cancelAtPeriodEnd!("sub_1", { type: "user", id: user.id, label: user.email });
+    expect(cancel).toHaveBeenCalledWith("sub_1", false);
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("canceled");
   });
 
   it("authenticated without a later start is not a trial: no access until the first charge", () => {
@@ -283,7 +319,36 @@ describe("Stripe one-time purchases", () => {
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(false);
     dispute.status = "lost";
     await closed("evt_c");
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0]).toMatchObject({ refunded: true, chargedBack: true });
+    // A later refund event re-fetches a charge that says "not refunded": the chargeback still stands.
+    await deliver({ id: "evt_d", type: "charge.refunded", data: { object: { id: "ch_2", payment_intent: "pi_2" } } });
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0]).toMatchObject({ refunded: true, chargedBack: true });
+  });
+
+  it("a refund follows Stripe: one that failed (the charge no longer refunded) gives the access back", async () => {
+    const pi = {
+      id: "pi_3",
+      status: "succeeded",
+      amount_received: 299900,
+      currency: "inr",
+      customer: "cus_1",
+      metadata: { userId: user.id, planKey: "pro", productId: "price_pro_once" },
+      latest_charge: { id: "ch_3", refunded: true },
+    };
+    const client = {
+      paymentIntents: { retrieve: vi.fn(async () => structuredClone(pi)) },
+      webhooks: { constructEventAsync: vi.fn(async (payload: string) => JSON.parse(payload)) },
+    } as unknown as StripeClient;
+    const stripe = createStripeProvider({ client, webhookSecret: "whsec_x", sink: billingWebhookSink });
+    const deliver = (id: string) =>
+      stripe.handleWebhook(
+        new Request("http://localhost/x", { method: "POST", headers: { "stripe-signature": "t=1,v1=ok" }, body: JSON.stringify({ id, type: "charge.refunded", data: { object: { id: "ch_3", payment_intent: "pi_3" } } }) }),
+      );
+    await deliver("evt_r1");
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+    pi.latest_charge.refunded = false; // the refund failed: Stripe put the money back with the merchant
+    await deliver("evt_r2");
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0]).toMatchObject({ refunded: false, chargedBack: false });
   });
 
   it("a one-time checkout made free by a promotion code (no payment intent) is granted from the re-fetched session", async () => {

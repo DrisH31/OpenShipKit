@@ -193,7 +193,7 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
       return {
         amountCents: fixed?.price_amount ?? null,
         currency: fixed?.price_currency ?? null,
-        interval: !product.is_recurring ? "one_time" : (r === "month" || r === "year") && (product.recurring_interval_count ?? 1) === 1 ? r : null,
+        interval: !product.is_recurring ? "one_time" : (r === "month" || r === "year") && (product.recurring_interval_count ?? 1) === 1 ? r : "other",
       };
     },
 

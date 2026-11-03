@@ -25,7 +25,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { comparePlanRank, planCovers, type PlanRef } from "@/core/plans";
-import { grantsAccess, isRenewing, type Entitlement, type Plan, type PriceInterval, type Purchase, type Subscription, type User } from "@/core/types";
+import { RENEWING_STATUSES, grantsAccess, isRenewing, type Entitlement, type Plan, type PriceInterval, type Purchase, type Subscription, type User } from "@/core/types";
 import { getBilling } from "../billing";
 import { assertNotDemo } from "../demo";
 import { getData } from "../data";
@@ -482,11 +482,15 @@ export async function strandedSubscriptions(): Promise<Record<string, number>> {
   const current = (await getBilling())?.id ?? "none";
   const data = await getData();
   const out: Record<string, number> = {};
-  for (const status of ["trialing", "active", "past_due"] as const) {
+  const now = Date.now();
+  for (const status of RENEWING_STATUSES) {
     let cursor: string | undefined;
     do {
       const page = await data.billing.listSubscriptions({ status, limit: 200, cursor });
-      for (const s of page.items) if (s.provider !== current && isRenewing(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
+      // Still inside its period: one whose period has passed was ended at the old provider (whose
+      // cancel webhook we refused) or will be, so it stops counting on its own.
+      const live = (s: Subscription) => !s.currentPeriodEnd || Date.parse(s.currentPeriodEnd) > now;
+      for (const s of page.items) if (s.provider !== current && isRenewing(s) && live(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
@@ -506,38 +510,38 @@ export async function warnStrandedSubscriptions(): Promise<void> {
   }
 }
 
-export type PriceCheck = { provider: string; problems: string[] } | { provider: string; unavailable: true };
+export type PriceCheck = { provider: string; problems: string[] };
 
 /**
  * For /admin/plans/<key>: whether what the plan shows matches what the provider charges for each of its
  * prices (amount, currency, interval). The pricing page shows the plan's amount; the customer pays the
- * provider's. null when billing is off or the provider can't say. Admin pages only: it calls the provider.
+ * provider's. Each price is checked on its own: one that can't be checked says so, and the others
+ * still report. Skips a price whose id the app makes up (a Razorpay one-time price: a payment link for
+ * the plan's own amount). null when billing is off or the provider can't say. Admin pages only.
  */
 export async function checkPlanPrices(plan: Plan): Promise<PriceCheck | null> {
   const billing = await getBilling();
   if (!billing?.describePrice) return null;
   const { formatPrice } = await import("@/shared/money");
   const word = { month: "monthly", year: "yearly", one_time: "one-time" } as const;
-  try {
-    const problems = await Promise.all(
-      plan.prices
-        .filter((p) => p.amountCents > 0)
-        .map(async (price) => {
-          const id = priceIdFor(plan, price, billing.id);
-          if (!id) return [];
-          const at = await billing.describePrice!(id);
-          const name = `${word[price.interval][0].toUpperCase()}${word[price.interval].slice(1)} (${id})`;
-          if (!at) return [`${name}: ${billing.label} has no such price.`];
-          const out: string[] = [];
-          if (at.interval && at.interval !== price.interval) out.push(`${name}: ${billing.label} bills it ${word[at.interval]}.`);
-          if (at.currency && at.currency.toLowerCase() !== price.currency.toLowerCase()) out.push(`${name}: ${billing.label} charges in ${at.currency.toUpperCase()}, the plan shows ${price.currency.toUpperCase()}.`);
-          else if (at.amountCents !== null && at.amountCents !== price.amountCents)
-            out.push(`${name}: ${billing.label} charges ${formatPrice(at.amountCents, price.currency)}${price.perSeat ? " per seat" : ""}, the plan shows ${formatPrice(price.amountCents, price.currency)}.`);
-          return out;
-        }),
-    );
-    return { provider: billing.label, problems: problems.flat() };
-  } catch {
-    return { provider: billing.label, unavailable: true };
-  }
+  const checked = plan.prices.filter((p) => p.amountCents > 0 && !(billing.id === "razorpay" && p.interval === "one_time"));
+  const results = await Promise.allSettled(
+    checked.map(async (price) => {
+      const id = priceIdFor(plan, price, billing.id);
+      if (!id) return [];
+      const name = `${word[price.interval][0].toUpperCase()}${word[price.interval].slice(1)} (${id})`;
+      const at = await billing.describePrice!(id).catch((error: unknown) => {
+        throw new Error(`${name}: couldn't ask ${billing.label} (${error instanceof Error ? error.message : "no answer"}).`);
+      });
+      if (!at) return [`${name}: ${billing.label} has no such price.`];
+      const out: string[] = [];
+      if (at.interval === "other") out.push(`${name}: ${billing.label} bills it on another schedule (not once a ${price.interval === "year" ? "year" : "month"}).`);
+      else if (at.interval !== price.interval) out.push(`${name}: ${billing.label} bills it ${word[at.interval]}.`);
+      if (at.currency && at.currency.toLowerCase() !== price.currency.toLowerCase()) out.push(`${name}: ${billing.label} charges in ${at.currency.toUpperCase()}, the plan shows ${price.currency.toUpperCase()}.`);
+      else if (at.amountCents !== null && at.amountCents !== price.amountCents)
+        out.push(`${name}: ${billing.label} charges ${formatPrice(at.amountCents, price.currency)}${price.perSeat ? " per seat" : ""}, the plan shows ${formatPrice(price.amountCents, price.currency)}.`);
+      return out;
+    }),
+  );
+  return { provider: billing.label, problems: results.flatMap((r) => (r.status === "fulfilled" ? r.value : [String((r.reason as Error).message)])) };
 }

@@ -109,8 +109,9 @@ export function orderState(pi: Stripe.PaymentIntent, disputeLost = false): Provi
     checkoutProductId: meta(pi.metadata, "productId"),
     amountCents: pi.amount_received,
     currency: pi.currency.toLowerCase(),
-    // A FULL refund ends access, and so does a lost chargeback; a partial refund keeps it.
-    refunded: charge?.refunded === true || disputeLost,
+    // A FULL refund ends access; a partial one keeps it. A lost chargeback ends it for good.
+    refunded: charge?.refunded === true,
+    chargedBack: disputeLost,
   };
 }
 
@@ -227,7 +228,8 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
       });
       if (!price) return null;
       const r: string | undefined = price.recurring?.interval;
-      const interval = !r ? ("one_time" as const) : r === "month" || r === "year" ? r : null;
+      const every = price.recurring?.interval_count ?? 1;
+      const interval = !r ? ("one_time" as const) : (r === "month" || r === "year") && every === 1 ? r : ("other" as const);
       return { amountCents: price.unit_amount ?? null, currency: price.currency, interval };
     },
 

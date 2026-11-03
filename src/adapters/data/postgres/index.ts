@@ -262,6 +262,7 @@ const toPurchase = (r: PurchaseRow): Purchase => ({
   amountCents: r.amountCents,
   currency: r.currency,
   refunded: r.refunded,
+  chargedBack: r.chargedBack,
   createdAt: iso(r.createdAt),
 });
 
@@ -843,6 +844,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           amountCents: input.amountCents,
           currency: input.currency,
           refunded: input.refunded,
+          chargedBack: input.chargedBack ?? false,
         };
         const [row] = await write("purchase", () =>
           db()

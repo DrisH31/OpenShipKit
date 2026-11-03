@@ -122,8 +122,10 @@ export interface ProviderOrderState {
   checkoutProductId: string | null;
   amountCents: number;
   currency: string;
-  /** Access revoked: a FULL refund, or a chargeback the merchant lost. A partial refund keeps access. */
+  /** A FULL refund ends access; a partial refund keeps it. Follows the provider (a failed refund comes back). */
   refunded: boolean;
+  /** A chargeback the merchant lost: ends access for good (the sink keeps it). */
+  chargedBack?: boolean;
 }
 
 /**

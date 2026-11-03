@@ -412,7 +412,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       async recordPurchase(input) {
         const id = `${input.provider}:${input.providerOrderId}`;
         const existing = t.purchases.get(id);
-        const purchase: Purchase = { ...input, id: existing?.id ?? randomUUID(), createdAt: existing?.createdAt ?? now() };
+        const purchase: Purchase = { ...input, chargedBack: input.chargedBack ?? false, id: existing?.id ?? randomUUID(), createdAt: existing?.createdAt ?? now() };
         t.purchases.set(id, purchase);
         return clone(purchase);
       },

@@ -1,0 +1,1 @@
+ALTER TABLE "purchases" ADD COLUMN "charged_back" boolean DEFAULT false NOT NULL;

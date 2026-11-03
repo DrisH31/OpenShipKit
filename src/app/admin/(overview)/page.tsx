@@ -36,8 +36,10 @@ import { formatCount, formatDateTime, plural } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { privacyLens } from "@/server/demo";
 import { siteProfile } from "@/server/env";
+import { PROVIDER_LABEL } from "@/core/billing";
 import { requireAdmin } from "@/server/session";
 import { GROWTH_DAYS, getOverview } from "@/server/services/overview";
+import { strandedSubscriptions } from "@/server/services/billing";
 import { getSetupSteps } from "@/server/setup-steps";
 
 export const metadata: Metadata = { title: "Overview" };
@@ -75,17 +77,32 @@ interface Attention {
   icon: typeof MessageSquareIcon;
   title: string;
   body: string;
-  action: { label: string; href: string };
+  action?: { label: string; href: string };
 }
 
 export default async function AdminOverview() {
   const lens = privacyLens(await requireAdmin());
-  const [o, steps] = await Promise.all([getOverview(), getSetupSteps(siteProfile() === "saas")]);
+  const [o, steps, stranded] = await Promise.all([
+    getOverview(),
+    getSetupSteps(siteProfile() === "saas"),
+    siteProfile() === "saas" ? strandedSubscriptions().catch(() => ({})) : {},
+  ]);
   const now = new Date();
   const s = o.stats;
 
   // What is waiting on a person, ranked by consequence: someone who wrote in, then work left unpublished.
   const attention: Attention[] = [];
+  // People still paying a provider this site no longer listens to (BILLING_PROVIDER changed).
+  const strandedLines = Object.entries(stranded) as [keyof typeof PROVIDER_LABEL, number][];
+  if (strandedLines.length) {
+    const n = strandedLines.reduce((a, [, c]) => a + c, 0);
+    attention.push({
+      key: "stranded",
+      icon: TriangleAlertIcon,
+      title: `${plural(n, "subscription")} still billed by ${strandedLines.map(([p]) => PROVIDER_LABEL[p]).join(" and ")}`,
+      body: "Billing now uses another provider, so their renewals and cancellations no longer reach this site. Cancel them there, or switch back (docs/billing.md, “Switching providers”).",
+    });
+  }
   if (s.openFeedback) {
     attention.push({
       key: "feedback",
@@ -165,9 +182,11 @@ export default async function AdminOverview() {
                     <span className="text-small font-semibold text-ink">{title}</span>
                     <span className="text-caption text-ink-3">{body}</span>
                   </div>
-                  <Link href={action.href} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
-                    {action.label}
-                  </Link>
+                  {action ? (
+                    <Link href={action.href} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
+                      {action.label}
+                    </Link>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -268,7 +287,12 @@ export default async function AdminOverview() {
               { label: "Data", value: DATA_WORDS[o.stack.data] },
               {
                 label: "Payments",
-                value: o.stack.profile === "site" ? "None: content site (OPENSHIPKIT_PROFILE=site)" : o.stack.billing === "polar" ? "Polar" : "Off (set POLAR_ACCESS_TOKEN)",
+                value:
+                  o.stack.profile === "site"
+                    ? "None: content site (OPENSHIPKIT_PROFILE=site)"
+                    : o.stack.billing === "none"
+                      ? "Off (set a provider's keys: docs/billing.md)"
+                      : PROVIDER_LABEL[o.stack.billing],
               },
               { label: "Email", value: o.stack.email === "resend" ? "Resend" : "Printed to the server log" },
               { label: "Mode", value: o.stack.demo ? "Demo: not for real users" : "Production database" },

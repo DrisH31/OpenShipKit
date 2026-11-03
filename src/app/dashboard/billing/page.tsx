@@ -444,7 +444,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
                   <TableRow key={p.id}>
                     <TableCell className="px-4 font-semibold text-ink">{planName(p.planKey) ?? "Purchase"} · one-time</TableCell>
                     <TableCell>
-                      <StatusBadge label={p.refunded ? "Refunded" : "Paid"} tone={p.refunded ? "neutral" : "positive"} />
+                      <StatusBadge label={p.chargedBack ? "Charged back" : p.refunded ? "Refunded" : "Paid"} tone={p.refunded ? "neutral" : "positive"} />
                     </TableCell>
                     <TableCell className="tabular">{formatPrice(p.amountCents, p.currency)}</TableCell>
                     <TableCell className="px-4 whitespace-nowrap">{formatDate(p.createdAt)}</TableCell>

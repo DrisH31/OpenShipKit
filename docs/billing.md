@@ -180,11 +180,15 @@ What's different about Razorpay:
 - **No customer portal.** The billing page lists the person's renewing
   subscriptions with a **Cancel at period end** button instead of Manage
   billing. Updating a card goes through Razorpay's own emails and links.
-  Changing plan is cancel, then buy the new plan once the old one ends; the
-  billing page says so.
-- **Pressing Cancel again finishes a cancellation that failed part-way** (it
-  reached Razorpay, then the app couldn't record it): Razorpay's "already
-  cancelled" counts as done.
+- **Cancel records the cancellation first, then asks Razorpay.** If Razorpay
+  refuses, the subscription goes back to renewing and the person sees why; if
+  the answer is lost (a timeout), it stays "ending" until the next webhook
+  settles it. A **trial** (or a mandate whose first charge hasn't happened) is
+  cancelled straight away: Razorpay can't cancel those "at the end of the
+  cycle", and nothing has been charged.
+- **Changing plan mid-cycle isn't offered.** Razorpay's subscription update
+  works only for some payment methods, so the app keeps one rule: cancel, and
+  buy the new plan once the old one ends.
 - **A cancellation is remembered by the app.** Razorpay keeps a subscription
   cancelled "at the end of the cycle" as `active`, with no field saying it will
   end. The app records the cancellation when you press the button and keeps it
@@ -197,10 +201,21 @@ What's different about Razorpay:
 
 ## Chargebacks
 
-A one-time purchase whose chargeback you **lose** loses its access, like a full
-refund: Stripe `charge.dispute.closed` and Razorpay `payment.dispute.lost`, each
-re-fetched before anything changes. With Polar, disputes go to Polar as the
-merchant of record; access ends when Polar reports the order refunded.
+A one-time purchase whose chargeback you **lose** loses its access for good
+(Stripe `charge.dispute.closed` and Razorpay `payment.dispute.lost`, each
+re-fetched before anything changes). It's shown as "Charged back", and no later
+event for that payment hands it back. A refund, unlike a chargeback, follows the
+provider: one that failed gives the access back.
+
+What the app doesn't do:
+
+- **Polar.** Polar is the merchant of record and handles disputes itself. The app
+  follows the order Polar reports; it doesn't read Polar's disputes, so a lost
+  dispute ends access only if Polar also marks the order refunded.
+- **A disputed subscription payment** doesn't end the subscription. The provider
+  keeps it running until you cancel it in their dashboard; the webhook then ends
+  access as usual. That's deliberate: whether to keep a customer who disputed
+  one invoice is your call, not the app's.
 Revoked stays revoked: a later event for the same payment can't hand it back.
 A disputed subscription payment is left to the subscription's own status at
 the provider.
