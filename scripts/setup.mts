@@ -8,6 +8,15 @@
 //   npm run setup -- --compose --file .env.deploy --domain example.com   a server's .env, generated on a laptop
 //   npm run setup -- --dry-run                      show what would change, write nothing
 //   npm run setup -- --profile site                 a landing page + blog with no SaaS (OPENSHIPKIT_PROFILE=site)
+//   npm run setup -- --billing stripe --email smtp --tenancy org   choose the providers up front
+//   npm run setup -- -i                             ask, one question at a time (the default in a terminal
+//                                                   when no options are given)
+//
+// The wizard (-i) asks the questions the flags answer: profile, billing,
+// email, teams, the admin's email, and (compose) the domain. It never asks for
+// a secret: API keys go into the file, not into a terminal's history. It ends
+// with the exact keys each choice still needs. Without a terminal (CI, a pipe
+// with no -i) it never prompts.
 //
 // What it does:
 //   - Creates the file from .env.example, or merges into an existing one:
@@ -48,7 +57,8 @@
 import { randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { argv, exit } from "node:process";
+import { argv, exit, stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 
 interface Options {
   envFile: string;
@@ -60,8 +70,30 @@ interface Options {
   siteUrl?: string;
   /** --profile: "saas" (the default product) or "site" (landing page + blog, no billing). */
   profile?: Profile;
+  billing?: Billing;
+  email?: Email;
+  tenancy?: Tenancy;
+  /** -i, or a terminal with no options at all. */
+  interactive: boolean;
   dryRun: boolean;
 }
+
+/** The app's choices, as env-rules.ts reads them (kept in step by tests/setup.test.ts). */
+type Billing = "none" | "polar" | "stripe" | "razorpay";
+const BILLINGS: readonly Billing[] = ["none", "polar", "stripe", "razorpay"];
+type Email = "console" | "resend" | "smtp";
+const EMAILS: readonly Email[] = ["console", "resend", "smtp"];
+type Tenancy = "personal" | "org";
+const TENANCIES: readonly Tenancy[] = ["personal", "org"];
+
+/** What each provider still needs in the file, and where it's explained. Never asked for: pasted into the file. */
+const NEEDS: Record<Exclude<Billing, "none"> | Exclude<Email, "console">, { keys: string[]; doc: string }> = {
+  polar: { keys: ["POLAR_ACCESS_TOKEN", "POLAR_WEBHOOK_SECRET"], doc: "docs/billing.md" },
+  stripe: { keys: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"], doc: "docs/billing.md#stripe-instead" },
+  razorpay: { keys: ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"], doc: "docs/billing.md#razorpay-instead-india" },
+  resend: { keys: ["RESEND_API_KEY", "EMAIL_FROM"], doc: "docs/email.md" },
+  smtp: { keys: ["SMTP_URL", "EMAIL_FROM"], doc: "docs/email.md" },
+};
 
 /** The app's profiles (OPENSHIPKIT_PROFILE). */
 type Profile = "saas" | "site";
@@ -85,6 +117,10 @@ Usage: npm run setup -- [options]
   --admin-email <email>  ADMIN_EMAILS: this address becomes an admin when it signs in
   --profile <saas|site>  OPENSHIPKIT_PROFILE. site = a landing page + blog with no SaaS
                          (no pricing, billing or plans); docs/site-profile.md
+  --billing <none|polar|stripe|razorpay>   BILLING_PROVIDER (saas only)
+  --email <console|resend|smtp>            EMAIL_PROVIDER
+  --tenancy <personal|org>                 OPENSHIPKIT_TENANCY: org turns teams on (docs/teams.md)
+  -i, --interactive      ask the questions one at a time (the default in a terminal with no options)
   --dry-run              print what would change and write nothing
   -h, --help             this help
 
@@ -96,7 +132,12 @@ function fail(message: string): never {
 }
 
 function parseArgs(args: string[]): Options {
-  const options: Options = { envFile: ".env.local", fileGiven: false, compose: false, dryRun: false };
+  const options: Options = { envFile: ".env.local", fileGiven: false, compose: false, interactive: false, dryRun: false };
+  const choice = <T extends string>(flag: string, raw: string, allowed: readonly T[]): T => {
+    const v = raw.toLowerCase();
+    if (!allowed.includes(v as T)) fail(`${flag} "${raw}" must be one of: ${allowed.join(", ")}`);
+    return v as T;
+  };
   let composeFlag = false;
   let fileFlag = false;
   const value = (i: number, flag: string): string => {
@@ -138,6 +179,19 @@ function parseArgs(args: string[]): Options {
         options.profile = profile as Profile;
         break;
       }
+      case "--billing":
+        options.billing = choice(flag, take(), BILLINGS);
+        break;
+      case "--email":
+        options.email = choice(flag, take(), EMAILS);
+        break;
+      case "--tenancy":
+        options.tenancy = choice(flag, take(), TENANCIES);
+        break;
+      case "-i":
+      case "--interactive":
+        options.interactive = true;
+        break;
       case "--dry-run":
         options.dryRun = true;
         break;
@@ -162,10 +216,55 @@ function parseArgs(args: string[]): Options {
     if (!/^https?:\/\/[^/\s]+$/i.test(options.siteUrl.replace(/\/+$/, ""))) fail(`--site-url "${options.siteUrl}" must be an origin like https://example.com`);
     options.siteUrl = options.siteUrl.replace(/\/+$/, "");
   }
-  if (options.adminEmail !== undefined && !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(options.adminEmail)) {
+  if (options.adminEmail !== undefined && !EMAIL_RE.test(options.adminEmail)) {
     fail(`--admin-email "${options.adminEmail}" is not an email address`);
   }
+  if (options.profile === "site" && options.billing && options.billing !== "none") fail(`--profile site sells nothing: it can't take --billing ${options.billing}`);
+  // In a terminal with no options at all, ask. Never without a terminal (CI, a pipe), unless -i says so.
+  if (args.filter((a) => a !== "--").length === 0 && stdin.isTTY) options.interactive = true;
   return options;
+}
+
+const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
+
+/**
+ * The wizard: one question at a time, each with the default in brackets (Enter takes it). Asks only
+ * what the flags didn't answer, and only what applies (no billing question for a content site).
+ * `ask` is injected so a test can answer from a script.
+ */
+async function interview(options: Options, ask: (question: string) => Promise<string>): Promise<void> {
+  const pick = async <T extends string>(question: string, allowed: readonly T[], fallback: T, help: string): Promise<T> => {
+    for (;;) {
+      const raw = (await ask(`${question} (${allowed.join(" / ")}) [${fallback}]: `)).trim().toLowerCase();
+      if (!raw) return fallback;
+      if (allowed.includes(raw as T)) return raw as T;
+      console.log(`  Please answer one of: ${allowed.join(", ")}. ${help}`);
+    }
+  };
+  console.log("A few questions; Enter takes the default in brackets. Nothing secret is asked: keys go into the file.");
+  options.profile ??= await pick("Profile: a SaaS, or a landing page + blog with no billing?", PROFILES, "saas", "site = no pricing, billing or plans.");
+  if (options.profile === "saas") {
+    options.billing ??= await pick("Billing provider", BILLINGS, "none", "none = plans show, nothing can be bought yet.");
+    options.tenancy ??= await pick("Accounts: one person each, or teams (organisations with members)?", TENANCIES, "personal", "org = teams.");
+  }
+  options.email ??= await pick("Email: print to the terminal (development), Resend, or your own SMTP server?", EMAILS, options.compose ? "resend" : "console", "");
+  if (options.adminEmail === undefined) {
+    for (;;) {
+      const raw = (await ask("Your email, to become the admin when you sign in [skip]: ")).trim();
+      if (!raw) break;
+      if (EMAIL_RE.test(raw)) {
+        options.adminEmail = raw;
+        break;
+      }
+      console.log("  That isn't an email address.");
+    }
+  }
+  if (options.compose && options.domain === undefined) {
+    const raw = (await ask("Your domain, like example.com [skip]: ")).trim().replace(/^https?:\/\//, "").replace(/\/+$/, "").toLowerCase();
+    if (raw && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(raw)) options.domain = raw;
+    else if (raw) console.log("  That isn't a host name; set DOMAIN in the file later.");
+  }
+  console.log("");
 }
 
 const LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/;
@@ -233,11 +332,29 @@ function fills(options: Options, creating: boolean): Map<string, { value: string
   if (options.profile) out.set("OPENSHIPKIT_PROFILE", { value: options.profile, note: "from --profile" });
   // A content site sells nothing: billing stays off even if a Polar token is set later.
   if (options.profile === "site") out.set("BILLING_PROVIDER", { value: "none", note: "from --profile site (no checkout, no webhooks)" });
+  else if (options.billing) out.set("BILLING_PROVIDER", { value: options.billing, note: "your choice of billing provider" });
+  if (options.email) out.set("EMAIL_PROVIDER", { value: options.email, note: "your choice of email" });
+  if (options.tenancy && options.profile !== "site") out.set("OPENSHIPKIT_TENANCY", { value: options.tenancy, note: options.tenancy === "org" ? "teams on (docs/teams.md)" : "one person per account" });
   return out;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const options = parseArgs(argv.slice(2));
+  if (options.interactive) {
+    const rl = createInterface({ input: stdin, output: stdout, terminal: stdin.isTTY === true });
+    // Answers piped in (a test, a script) arrive faster than the questions: read them as lines, in order.
+    const lines = rl[Symbol.asyncIterator]();
+    try {
+      await interview(options, async (question) => {
+        stdout.write(question);
+        const next = await lines.next();
+        if (!stdin.isTTY) stdout.write("\n");
+        return next.done ? "" : String(next.value);
+      });
+    } finally {
+      rl.close();
+    }
+  }
   const target = resolve(options.envFile);
   const templatePath = resolve(".env.example");
   if (!existsSync(templatePath)) fail("no .env.example here — run it from the project root (npm run setup does)");
@@ -337,6 +454,13 @@ function printNextSteps(options: Options, values: Map<string, { value: string; l
   printSiteProfile(options, get("OPENSHIPKIT_PROFILE"));
   const todo: string[] = [];
   if (!get("ADMIN_EMAILS")) todo.push(`Put your email in ADMIN_EMAILS in ${options.envFile} so your account becomes the admin.`);
+  // What the chosen providers still need: pasted into the file, never asked for here.
+  for (const choice of [get("BILLING_PROVIDER"), get("EMAIL_PROVIDER")]) {
+    const need = NEEDS[choice as keyof typeof NEEDS];
+    if (!need) continue;
+    const missing = need.keys.filter((k) => !get(k));
+    if (missing.length) todo.push(`${choice}: set ${missing.join(", ")} in ${options.envFile} (${need.doc}).`);
+  }
   console.log("");
   if (options.compose) {
     if (!get("NEXT_PUBLIC_SITE_URL")) todo.push("Set NEXT_PUBLIC_SITE_URL to your public origin (https://example.com), or re-run with --domain — docker compose refuses to start without it.");
@@ -365,4 +489,4 @@ function printNextSteps(options: Options, values: Map<string, { value: string; l
   }
 }
 
-main();
+main().catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));

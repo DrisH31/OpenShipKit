@@ -21,6 +21,7 @@ npm run build          # must pass with NO env vars set
 npm run smoke          # against the running dev server, read-only: pages (canonical, noindex, one <main>, no cookies), feeds, og:images, links on /, /uploads 404s, unlisted posts (with an MCP key), health, MCP (MCP_DEV_KEY)
 npm run e2e            # against the running dev server, WRITES then cleans up: sign-up → admin → edit content → publish → contact → MCP
 npm run setup -- --profile site   # a landing page + blog with no SaaS (OPENSHIPKIT_PROFILE=site; docs/site-profile.md)
+npm run setup -- --billing stripe --email smtp --tenancy org   # choices as flags; with no options in a terminal it asks
 npm run ds:sync -- --from <design-system>   # dry run; --apply to copy tokens + ui/ from the design system (below)
 npm run db:generate -- --name <change>   # after editing src/adapters/data/postgres/schema.ts
 npm run db:migrate     # apply migrations (stop `npm run dev` first if on the embedded database)

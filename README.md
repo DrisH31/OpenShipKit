@@ -410,7 +410,7 @@ tests/                Vitest (contract tests run on memory and, with TEST_DATABA
 | `npm run dev` | Dev server on :3000 (embedded Postgres when `DATABASE_URL` is unset) |
 | `npm run build` | Production build (`.next/standalone`) — needs no environment |
 | `npm start` | Serve the production build: copies static assets into `.next/standalone` and runs its `server.js` with `.env`/`.env.local` loaded (what the Docker image runs) |
-| `npm run setup` | Write `.env.local` (or `.env` with `--compose`) with generated secrets; never overwrites a set value. `-- --profile site` makes it a landing page + blog with no SaaS ([docs/site-profile.md](docs/site-profile.md)) |
+| `npm run setup` | Write `.env.local` (or `.env` with `--compose`) with generated secrets; never overwrites a set value. In a terminal with no options it asks (profile, billing, teams, email, admin); `--billing`, `--email`, `--tenancy` and `--profile site` answer up front ([docs/getting-started.md](docs/getting-started.md)) |
 | `npm run check` | `typecheck` + `typecheck:modules` + `lint` + `test` — run before every commit |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run typecheck:modules` | Typecheck the opt-in modules on their own (`tsconfig.modules.json`) |

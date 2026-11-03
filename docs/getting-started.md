@@ -64,6 +64,16 @@ That writes `.env.local` with a generated `BETTER_AUTH_SECRET`, an
 `MCP_DEV_KEY` for local agents, and `ADMIN_EMAILS=you@example.com`. It never
 overwrites a value you’ve set, and backs up the old file to `.env.local.bak`.
 
+Run `npm run setup` with nothing after it, in a terminal, and it asks instead,
+one question at a time: a SaaS or a content site, which billing provider, teams
+or not, how email is sent, and your email. Enter takes the default. It never
+asks for a key: at the end it lists the ones your choices need, to paste into
+the file. The same choices are flags, for scripts:
+
+```bash
+npm run setup -- --billing stripe --email smtp --tenancy org --admin-email you@example.com
+```
+
 Restart `npm run dev`, sign up with that email at `/sign-up`, and open
 `/admin`. (Email verification is off in development; the welcome email is in
 the terminal.)
