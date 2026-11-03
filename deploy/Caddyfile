@@ -1,0 +1,26 @@
+# Caddy in front of OpenShipKit: automatic HTTPS (Let's Encrypt), HTTP/3,
+# compression. Used by `docker compose --profile https up -d`.
+#
+# DOMAIN comes from .env (compose passes it in). Its DNS A/AAAA records must
+# point at this server BEFORE the first start, or the certificate can't be
+# issued. Ports 80 and 443 must be open to the internet.
+#
+# Caddy replaces any X-Forwarded-For a client sends (it trusts no upstream
+# proxy unless told to), so the app's rate limits see the real client address.
+#
+# To also serve www.<domain> as a redirect, uncomment the second block and add
+# a DNS record for www. For anything bigger, copy this file and point the
+# compose volume at your copy.
+
+{$DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy app:3000
+
+	# Next.js sends the security headers (next.config.ts); Caddy adds nothing
+	# but hides its own name.
+	header -Server
+}
+
+# www.{$DOMAIN:localhost} {
+# 	redir https://{$DOMAIN:localhost}{uri} permanent
+# }

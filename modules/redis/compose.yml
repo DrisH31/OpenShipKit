@@ -1,0 +1,58 @@
+# modules/redis — a Valkey cache next to the app, for docker compose.
+#
+# Use it as an override file (nothing to edit in docker-compose.yml):
+#   docker compose -f docker-compose.yml -f modules/redis/compose.yml up -d --build
+# or paste the `redis` service and the app's REDIS_URL into docker-compose.yml
+# (what a PaaS that reads one compose file — Dokploy, Coolify — needs).
+#
+# Valkey is the BSD-licensed fork of Redis and speaks the same protocol;
+# `redis:8-alpine` works the same if you prefer it. Pinned like the postgres
+# image: bump it deliberately.
+#
+# Set REDIS_PASSWORD in .env (any long random string: `openssl rand -hex 32`).
+#
+# Why these settings:
+#   - NO `ports`: the app reaches it over the compose network. A published port
+#     is published on the server's public address.
+#   - maxmemory + allkeys-lru: without both, a cache grows until the box runs
+#     out and the OOM killer picks a process — on one server, often Postgres.
+#     The cache must be the thing that suffers first.
+#   - no snapshots, no AOF: it is a cache. Persisting it buys a warm start and
+#     costs disk I/O plus a fork that can double memory at the worst moment.
+
+services:
+  redis:
+    image: valkey/valkey:9.1.2-alpine3.24
+    restart: unless-stopped
+    command:
+      - valkey-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (modules/redis/README.md)}
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --no-auth-warning -a \"$${REDIS_PASSWORD}\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (modules/redis/README.md)}
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+    security_opt:
+      - no-new-privileges:true
+
+  app:
+    environment:
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env (modules/redis/README.md)}@redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy

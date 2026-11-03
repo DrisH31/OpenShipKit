@@ -1,0 +1,477 @@
+/* Standards (web-design): MOT-2 Animate transform and opacity only · MOT-7 Interruptible · MOT-8 Reduced motion ships less · PAGE-1 Content in the first byte · PAGE-5 A sticky header that never covers · MOT-13 Things travel instead of teleporting · MOT-14 The removed-motion test · PAGE-11 A feature is shown working · MOT-17 Pages change without a flash · PAGE-13 A reading page is still */
+/* =============================================================================
+   Motion in CSS — nothing here ships content hidden.
+
+   .reveal is scroll-driven (CSS only, no JavaScript). Where the browser lacks
+   animation-timeline (Firefox today), the visitor prefers reduced motion, or the
+   page is printed (or captured whole without scrolling), the content is simply
+   there: a view timeline that never scrolls holds its first frame, opacity 0. Never put .reveal on a heading, body copy or
+   the LCP element — devices, screens and vignettes only.
+   ============================================================================= */
+
+@keyframes ds-rise {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media screen and (prefers-reduced-motion: no-preference) {
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation: ds-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 40%;
+    }
+    /* A working slice (PAGE-11) is words and controls, so it is never revealed, whatever wraps it:
+       inside FeatureRow's revealed visual column its text sat at opacity 0 until scrolled past
+       (check:rendered, v2.21). */
+    .reveal:has([data-working-slice]) { animation: none; }
+  }
+
+  /* The hero arrives once — readable from the first frame (it is usually the
+     LCP element): a short settle from nearly-there, never from invisible. */
+  .arrive {
+    animation: ds-arrive var(--dur-reveal) var(--ease-out-quint) both;
+    animation-delay: calc((sibling-index() - 1) * var(--stagger-hero));
+  }
+  @supports not (animation-delay: calc(sibling-index() * 1ms)) {
+    .arrive { animation-delay: 0ms; }
+  }
+}
+
+@keyframes ds-arrive {
+  from { opacity: 0.85; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* The sliding pill (src/lib/use-pill.ts): one pill glides behind the selected option of the
+   nav, the scheme switch and every segmented control. Unlayered, so it beats the utilities. */
+[data-slot=pill] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+[data-slot=pill][data-placed] { opacity: 1; }
+[data-slot=pill][data-live] {
+  transition: transform var(--dur-ui) var(--ease-out-quart), width var(--dur-ui) var(--ease-out-quart), height var(--dur-ui) var(--ease-out-quart);
+}
+:has(> [data-slot=pill][data-placed]) > [data-on] {
+  background-color: transparent;
+  box-shadow: none;
+}
+/* The label wipe (<Wipe>, use-pill.ts): two copies of a label in one grid cell; the bright one is
+   clipped to the part of the label the pill covers, and moves with it, on its curve. Until the pill
+   is placed (server HTML) the bright copy shows only on the chosen option, whole. */
+[data-wipe] { display: inline-grid; }
+[data-wipe] > * { grid-area: 1 / 1; }
+[data-wipe-on] { color: var(--ink); clip-path: inset(0 100% 0 0); }
+[data-on="true"] [data-wipe-on] { clip-path: none; }
+:has(> [data-slot=pill][data-placed]) > * [data-wipe-on] {
+  clip-path: inset(0 clamp(0px, calc(var(--lx) + var(--lw) - var(--pill-x) - var(--pill-w)), var(--lw)) 0 clamp(0px, calc(var(--pill-x) - var(--lx)), var(--lw)));
+}
+:has(> [data-slot=pill][data-live]) > * [data-wipe-on] { transition: clip-path var(--dur-ui) var(--ease-out-quart); }
+
+/* The sticky header's edge: none at the top of the page (the page and the header are one
+   surface there); a hairline fades in once content scrolls under it. Scroll-driven CSS, no
+   JavaScript; without support there is simply no line. Opacity only, so it stays on under
+   reduced motion — nothing moves. */
+@keyframes ds-edge { to { opacity: 1; } }
+.scroll-edge::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line-strong);
+  opacity: 0;
+  pointer-events: none;
+}
+@supports (animation-timeline: scroll()) {
+  .scroll-edge::after {
+    animation: ds-edge linear both;
+    animation-timeline: scroll(root);
+    animation-range: 0 48px;
+  }
+}
+
+/* A glyph that replaces another (Copy → Check) or appears with its control (a checkbox's
+   tick, a radio's dot) settles in from slightly small — never from scale(0). Transitions,
+   not keyframes, so a quick double-click retargets instead of restarting. */
+.pop-in {
+  transition: opacity var(--dur-pop) var(--ease-out-quart), scale var(--dur-pop) var(--ease-out-back);
+  @starting-style { opacity: 0; scale: 0.6; }
+}
+
+/* The scheme toggle. After a press, the icon that appears turns into place (never on load:
+   only once the button is touched). The new scheme opens as a circle from the button — a
+   View Transition, the rare action's one flourish. Without View Transitions, or under
+   reduced motion, the scheme simply changes (scheme-switch.tsx skips the transition). */
+@keyframes ds-scheme-icon {
+  from { rotate: -45deg; scale: 0.7; }
+}
+[data-scheme-toggle][data-touched] svg {
+  animation: ds-scheme-icon var(--dur-scheme) var(--ease-out-quint);
+}
+@keyframes ds-scheme-reveal {
+  from { clip-path: circle(0 at var(--vt-x, 50%) var(--vt-y, 0)); }
+  to { clip-path: circle(var(--vt-r, 150%) at var(--vt-x, 50%) var(--vt-y, 0)); }
+}
+:root.scheme-vt::view-transition-old(root),
+:root.scheme-vt::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root.scheme-vt::view-transition-new(root) {
+  animation: ds-scheme-reveal var(--dur-scheme) var(--ease-out-quart);
+}
+
+/* THE PAGE FADE (MOT-17, v2.23). Between pages, the old one fades out and the new one in over
+   --dur-page, so a navigation never flashes an empty frame. In a Next.js app, PageFade (a React
+   <ViewTransition> in a template) names the page `ds-page`; on a static or multi-page site the
+   browser does the same for a whole document (`navigation: auto`, Chrome 126, Safari 18.2). Only
+   opacity, nothing travels; the scheme switch's own reveal (.scheme-vt) is left alone. Under reduced
+   motion the page simply changes. */
+@view-transition { navigation: auto; }
+@keyframes ds-page-out { to { opacity: 0; } }
+@keyframes ds-page-in { from { opacity: 0; } }
+::view-transition-group(.ds-page) { animation-duration: var(--dur-page); animation-timing-function: var(--ease-out-quart); }
+::view-transition-old(.ds-page) { animation: ds-page-out var(--dur-page) var(--ease-out-quart) both; }
+::view-transition-new(.ds-page) { animation: ds-page-in var(--dur-page) var(--ease-out-quart) both; }
+:root:not(.scheme-vt)::view-transition-old(root) { animation: ds-page-out var(--dur-page) var(--ease-out-quart) both; }
+:root:not(.scheme-vt)::view-transition-new(root) { animation: ds-page-in var(--dur-page) var(--ease-out-quart) both; }
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
+
+/* Native <details> disclosure — the cross-browser height animation. */
+.disclosure-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-ui) var(--ease-out-quart);
+}
+details[open] > .disclosure-panel { grid-template-rows: 1fr; }
+/* Open from closed, not from already-open: the panel's first frame is 0fr. */
+@starting-style { details[open] > .disclosure-panel { grid-template-rows: 0fr; } }
+.disclosure-panel > div { overflow: hidden; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+/* The removed-motion test (MOT-14): ?motion=off stops it all for a review, as reduced motion does. */
+html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="off"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="off"] ::view-transition-group(*), html[data-motion="off"] ::view-transition-old(*), html[data-motion="off"] ::view-transition-new(*) { animation: none !important; }
+
+/* ICONS ANSWER A PRESS, NOT A HOVER (v1.25, the owner). An icon inside anything pressable dips as
+   it is pressed (90 ms) and springs back with a slight overshoot when it is let go — the click is
+   felt in the glyph. Hovering moves nothing. `scale` (the individual property), not `transform`,
+   so it composes with a chevron's rotate or a spinner's spin instead of replacing them. Pointer
+   devices and touch alike; nothing under reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  /* :where — zero specificity, so an icon that declares its own transition (a chevron's rotate) keeps it */
+  :where(button, a, [role="button"], [role="tab"], [role="option"], summary) svg {
+    transition: scale var(--dur-settle) var(--ease-out-spring);
+  }
+  :where(button, a, [role="button"], [role="tab"], [role="option"], summary):active:not(:disabled) svg {
+    scale: 0.86;
+    transition-duration: var(--dur-press);
+    transition-timing-function: var(--ease-out-quart);
+  }
+}
+
+/* A loading placeholder (Skeleton) carries a soft band across it, so waiting reads as work
+   in progress rather than a broken box. Transform only, on a pseudo-element; under reduced motion it
+   is simply the still wash. */
+@keyframes ds-shimmer { to { translate: 100% 0; } }
+.shimmer { position: relative; overflow: hidden; }
+@media (prefers-reduced-motion: no-preference) {
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    translate: -100% 0;
+    background: linear-gradient(90deg, transparent, var(--tonal), transparent);
+    animation: ds-shimmer var(--dur-loop) var(--ease-in-out-quart) infinite;
+  }
+}
+
+/* A ONE-TIME CODE (ui/input-otp.tsx, v2.6). Rare, deliberate input, so it may show more than a
+   field typed into all day (MOT-5): each digit turns up into place and a deleted one tips away
+   (shorter, MOT-3); a paste lights the boxes it
+   filled, one after another; a success lifts every box once, in turn, behind a positive ring;
+   while the code is checked the digits pulse like a wave. Transform and opacity only (MOT-2); the
+   rings are drawn still and fade. Under reduced motion there is none of it: digits simply appear
+   and nothing lights. */
+.otp-trail, .otp-trail-success { opacity: 0; }
+.otp-digit-out { display: none; } /* reduced motion: a deleted digit is simply gone */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ds-otp-digit { from { opacity: 0; transform: translateY(0.375rem) rotateX(-35deg); } }
+  .otp-digit { transform-origin: 50% 100%; animation: ds-otp-digit var(--dur-spring) var(--ease-spring) both; } /* the original's spring, now a token */
+  .otp-digit-pasted { animation-delay: calc(var(--otp-p) * var(--stagger)); }
+  @keyframes ds-otp-digit-out { to { opacity: 0; transform: translateY(-0.125rem) rotateX(15deg); } }
+  .otp-digit-out { display: block; transform-origin: 50% 100%; animation: ds-otp-digit-out var(--dur-ui-exit) var(--ease-out-quart) both; }
+
+  @keyframes ds-otp-trail { from { opacity: 1; } to { opacity: 0; } }
+  .otp-trail { animation: ds-otp-trail var(--dur-scheme) var(--ease-out-quint) calc(var(--otp-p) * var(--stagger)) both; }
+  .otp-trail-success { animation: ds-otp-trail var(--dur-scheme) var(--ease-out-quint) calc(var(--otp-i) * var(--stagger)) both; }
+
+  @keyframes ds-otp-lift {
+    0% { translate: 0 0; animation-timing-function: var(--ease-out-quart); }
+    35% { translate: 0 -0.375rem; animation-timing-function: var(--ease-out-spring); }
+    100% { translate: 0 0; }
+  }
+  .otp-lift { animation: ds-otp-lift var(--dur-scheme) linear calc(var(--otp-i) * var(--stagger)) both; }
+
+  @keyframes ds-otp-wave { 0%, 40%, 100% { opacity: 1; } 16% { opacity: 0.3; } }
+  .otp-wave { animation: ds-otp-wave var(--dur-loop) var(--ease-in-out-quart) calc(var(--otp-i) * var(--stagger-hero)) infinite both; }
+}
+
+/* THE SOUND SWITCH'S ICON (sound/sound.tsx, v2.7). Off: a slash draws across from its top end
+   (scaled from where it starts, so it reads as drawn), the waves fold into the speaker, inner
+   first, and the speaker steps back into the space they left. On: the speaker returns and the
+   waves open, the outer one last. Scale, translate and opacity only (MOT-2); the reverse is
+   quicker than the way in (MOT-3). The server's state is "off", so the first frame is right. */
+.sound-icon :is(.sound-slash, .sound-wave, .sound-speaker) { transform-box: view-box; }
+.sound-icon .sound-slash { transform-origin: 2px 2px; scale: 0; transition: scale var(--dur-ui-exit) var(--ease-out-quart); }
+.sound-icon .sound-wave { transform-origin: 11px 12px; transition: opacity var(--dur-hover) var(--ease-out-quart) var(--wave-delay, 0ms), scale var(--dur-hover) var(--ease-out-quart) var(--wave-delay, 0ms); }
+.sound-icon .sound-wave-outer { --wave-delay: var(--stagger); }
+.sound-icon .sound-speaker { transition: translate var(--dur-ui-exit) var(--ease-out-quart); }
+.sound-icon[data-on="false"] .sound-slash { scale: 1; transition-duration: var(--dur-ui); }
+.sound-icon[data-on="false"] .sound-wave { opacity: 0; scale: 0.25; }
+.sound-icon[data-on="false"] .sound-wave-inner { --wave-delay: var(--stagger); }
+.sound-icon[data-on="false"] .sound-wave-outer { --wave-delay: calc(var(--stagger) * 2); }
+.sound-icon[data-on="false"] .sound-speaker { translate: 5.5px 0; transition-duration: var(--dur-ui); transition-delay: calc(var(--stagger) * 2); }
+
+/* TEXT THAT CHANGES (motion/text-morph.tsx, v2.29; a figure's digits since v2.7). The motion itself
+   is scripted on the tokens (lib/motion.ts) and asks lessMotion(); this is the box it moves in. Each
+   piece is its own box so it can travel; a number's piece is a slot holding the character, so the
+   slot moves along the line and the character rolls inside it. A digit rolls a whole line, so a slot
+   is clipped above and below while it rolls (never at rest: a comma's tail would be shaved), with
+   the edges softened where the browser can (torph's mask; learnings/torph.md). */
+.morph { display: inline-block; position: relative; white-space: pre; }
+.morph > span,
+.morph > [data-kind="digit"] > span,
+.morph > [data-kind="symbol"] > span { display: inline-block; }
+.morph [data-roll] { clip-path: inset(0 -100vw); }
+@supports (mask-clip: no-clip) {
+  .morph [data-roll] {
+    mask-image: linear-gradient(transparent, #000 0.15em, #000 calc(100% - 0.15em), transparent);
+    mask-repeat: repeat-x;
+    mask-clip: no-clip;
+  }
+}
+
+/* AN EDITOR'S MARKS (product/editor.tsx, v2.10). A format arrives on the text instead of swapping:
+   an underline or a strike draws across (a 1 px background growing from the start edge, paint
+   only); bold grows to 600 (Inter is variable); italic leans word by word (transform); code takes
+   a tonal tint, then its face. Removing runs back on the shorter exit (MOT-3). From the keyboard
+   the editor marks them data-instant: no transition at all (MOT-5). Written exceptions to MOT-2,
+   for text only: font-weight, a 1 px background's size, and code's inline padding, on a selection
+   a person just chose. */
+.editor-mark {
+  transition-property: background-size, background-color, padding, font-weight;
+  transition-duration: var(--dur-ui);
+  transition-timing-function: var(--ease-out-quint);
+}
+.editor-mark[data-leaving] { transition-duration: var(--dur-ui-exit); }
+.editor-mark:is([data-format="underline"], [data-format="strikethrough"], [data-format="link"]) {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-size: 0% 1px;
+  transition-duration: var(--dur-settle);
+}
+.editor-mark:is([data-format="underline"], [data-format="strikethrough"], [data-format="link"])[data-leaving] { transition-duration: var(--dur-ui-exit); }
+.editor-mark:is([data-format="underline"], [data-format="link"]) { background-position: 0 92%; }
+.editor-mark[data-format="link"][data-on] { color: var(--ink); } /* a link is the ink, underlined: never colour alone */
+.editor-mark[data-format="strikethrough"] { background-position: 0 58%; }
+[dir="rtl"] .editor-mark:is([data-format="underline"], [data-format="strikethrough"], [data-format="link"]) { background-position-x: 100%; } /* the attribute, not :dir(): see base.css */
+.editor-mark:is([data-format="underline"], [data-format="strikethrough"], [data-format="link"])[data-on] { background-size: 100% 1px; }
+.editor-mark[data-format="bold"][data-on] { font-weight: 600; color: var(--ink); }
+.editor-word { display: inline-block; transform-origin: 0 78%; transition: transform var(--dur-ui) var(--ease-out-quint); }
+.editor-mark[data-leaving] .editor-word { transition-duration: var(--dur-ui-exit); }
+.editor-mark[data-format="italic"][data-on] .editor-word { transform: skewX(-12deg); }
+.editor-mark[data-format="code"] { border-radius: var(--radius-sm); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.editor-mark[data-format="code"][data-on] { background-color: var(--tonal-hover); padding-inline: 0.3em; }
+.editor-mark[data-format="code"][data-mono] { font-family: var(--font-code); font-size: 0.92em; }
+.editor-mark[data-instant], .editor-mark[data-instant] .editor-word { transition: none; }
+
+/* The editor's working state: an orb that turns while it thinks, its stage line shimmering, the
+   sources arriving one after another, the answer fading in piece by piece. The orb is drawn from
+   the ink roles (no colour of its own: one look, COL-5). Loops on --dur-loop; under reduced motion
+   all of it is still. */
+.ai-orb {
+  border-radius: 9999px;
+  background:
+    radial-gradient(60% 60% at 30% 28%, var(--ink-faint), transparent 70%),
+    radial-gradient(65% 65% at 72% 68%, var(--ink), transparent 70%),
+    linear-gradient(var(--ink-2), var(--ink-3));
+}
+.text-shimmer {
+  background: linear-gradient(90deg, var(--ink-3) 0%, var(--ink-3) 35%, var(--ink) 50%, var(--ink-3) 65%, var(--ink-3) 100%) 0 0 / 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ds-orb-stir { to { rotate: 1turn; } }
+  .ai-orb[data-stirring] { animation: ds-orb-stir var(--dur-loop) linear infinite; }
+  @keyframes ds-text-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  .text-shimmer { animation: ds-text-shimmer var(--dur-loop) linear infinite; }
+  @keyframes ds-stream-in { from { opacity: 0; } }
+  .stream-in { animation: ds-stream-in var(--dur-ui) var(--ease-out-quint) both; }
+  @keyframes ds-source-in { from { opacity: 0; translate: var(--from, 10px) 0; scale: 0.4; } }
+  .source-in { animation: ds-source-in var(--dur-sheet) var(--ease-out-quint) calc(var(--i, 0) * var(--stagger)) both; }
+}
+
+/* FROM THE KEYBOARD, A SELECTION JUMPS (v2.10.1, MOT-5). A selection indicator moved with the arrow
+   keys is at its place at once; the same move from a pointer glides. data-input on <html> is set by
+   InputModality (motion/input-modality.tsx). Only the indicators named here: typing is keyboard input
+   too, and the code input's ring keeps its glide while digits are typed. */
+html[data-input="keyboard"] :is([data-slot=pill], [data-slot=tabs-indicator], [data-wipe-on]) { transition-duration: 0s; }
+
+/* THINGS TRAVEL INSTEAD OF TELEPORTING (MOT-13, v2.14, after the Family wallet). A tray's next step arrives from the side you are going (forward from
+   the end edge, back from the start), and a tab's panel from the side of the tab you chose (Base UI
+   marks it data-activation-direction). Nothing on first paint ("none"), nothing from the keyboard
+   (MOT-5), nothing under reduced motion or a removed-motion review. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ds-arrive-from { from { opacity: 0; translate: var(--from, 0) var(--from-y, 0); } }
+  [data-slot=tray-step][data-dir] { --from: 1.5rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+  [data-slot=tray-step][data-dir="back"] { --from: -1.5rem; }
+  [dir="rtl"] [data-slot=tray-step][data-dir="forward"] { --from: -1.5rem; }
+  [dir="rtl"] [data-slot=tray-step][data-dir="back"] { --from: 1.5rem; }
+  /* Base UI marks the direction on the tabs root, not the panel (measured), and "none" on first paint. */
+  [data-slot=tabs][data-activation-direction="right"] > [data-slot=tabs-content] { --from: 1.5rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+  [data-slot=tabs][data-activation-direction="left"] > [data-slot=tabs-content] { --from: -1.5rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+  [data-slot=tabs][data-activation-direction="down"] > [data-slot=tabs-content] { --from-y: 1rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+  [data-slot=tabs][data-activation-direction="up"] > [data-slot=tabs-content] { --from-y: -1rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+  /* The way back after a jump rises into place (UI-26). */
+  [data-slot=return-mark] { --from-y: 0.75rem; animation: ds-arrive-from var(--dur-ui) var(--ease-out-quint) both; }
+}
+html[data-input="keyboard"] [data-slot=tabs] > [data-slot=tabs-content] { animation: none; }
+
+
+/* A ROW THAT DRIFTS (marketing/marquee.tsx; PAGE-4, MOT-2, MOT-12; v2.26, learnings/local-business.md).
+   Two copies of the row side by side, moved by half their width and round again: transform only, at a
+   constant speed (linear is right for a drift: there is no arrival to ease into). It runs only while in
+   view and not paused (data-playing), and stops under the pointer or the keyboard. Its ends fade into the
+   page. Under reduced motion nothing moves: the copy and the pause button go, and the row scrolls by hand. */
+@keyframes ds-marquee { to { transform: translateX(-50%); } }
+@keyframes ds-marquee-rtl { to { transform: translateX(50%); } }   /* right to left, the copy sits on the left */
+.marquee {
+  overflow: hidden;
+  mask-image: linear-gradient(to right, transparent, #000 3rem, #000 calc(100% - 3rem), transparent);
+}
+.marquee-track { display: flex; width: max-content; }
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-track { animation: ds-marquee var(--marquee-dur, 60s) linear infinite; animation-play-state: paused; }
+  [dir="rtl"] .marquee-track { animation-name: ds-marquee-rtl; }
+  .marquee[data-playing="true"] .marquee-track { animation-play-state: running; }
+  .marquee:hover .marquee-track, .marquee:focus-within .marquee-track { animation-play-state: paused; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee { overflow-x: auto; mask-image: none; scroll-snap-type: x mandatory; }
+  .marquee li { scroll-snap-align: start; }
+  .marquee-dup, .marquee-toggle { display: none; }
+}
+
+/* AN ANSWER THAT CHANGES SETTLES IN (v2.26; MOT-2, MOT-13). A result the visitor just changed (a quick
+   check's answer, a quote's lines after another job is picked) arrives from nearly there: opacity and a
+   short rise, never a first paint (set the class, or a new key, only after a change). Under reduced
+   motion it simply changes. */
+@media (prefers-reduced-motion: no-preference) {
+  .settle-in { animation: ds-arrive var(--dur-ui) var(--ease-out-quart) both; }
+}
+
+/* ds-sync:keep start header-edge */
+/* The sticky header's edge: none at the top of the page (the page and the header are one
+   surface there); a hairline fades in once content scrolls under it. Scroll-driven CSS, no
+   JavaScript; without support there is simply no line. Opacity only, so it stays on under
+   reduced motion — nothing moves. The header is `relative`, so the line sits on its bottom
+   edge.
+   The NAME: the design system calls this rule .scroll-edge. OpenShipKit renamed it
+   .header-edge (site-header.tsx) because it marks the header's bottom edge, and "scroll"
+   collided with .scroll-shade (base.css), the horizontal scroller's right-edge shade, a
+   different job. Same rule, two names: a sync brings .scroll-edge in beside this block
+   (unused here, harmless). To converge, upstream the rename, or switch site-header.tsx to
+   .scroll-edge and delete this block. Its own keyframes name (ol-edge) can't collide with
+   the system's. */
+@keyframes ol-edge { to { opacity: 1; } }
+.header-edge::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line-strong);
+  opacity: 0;
+  pointer-events: none;
+}
+@supports (animation-timeline: scroll()) {
+  .header-edge::after {
+    animation: ol-edge linear both;
+    animation-timeline: scroll(root);
+    animation-range: 0 48px;
+  }
+}
+/* ds-sync:keep end */
+
+/* ds-sync:keep start openshipkit-page-motion */
+/* ── OpenShipKit page motion ─────────────────────────────────────────────────
+   The hero preview (src/components/sections/hero-preview). Nothing here runs on load:
+   every rule answers a press (a tab, Save, "Watch an agent edit", Undo).
+
+   Its screens share one grid cell, so the frame is as tall as the tallest and never
+   jumps. The one shown settles 4 px up as it fades in (240 ms, quart-out); the one
+   leaving fades faster (160 ms) and only then turns hidden, so the two cross. Opacity
+   and translate only. Under reduced motion the swap is instant (the global rule above). */
+.hp-screen {
+  transition: opacity var(--dur-ui) var(--ease-out-quart), translate var(--dur-ui) var(--ease-out-quart), visibility 0s;
+}
+.hp-screen[data-off] {
+  opacity: 0;
+  translate: 0 4px;
+  visibility: hidden;
+  transition: opacity var(--dur-ui-exit) var(--ease-out-quart), translate var(--dur-ui-exit) var(--ease-out-quart), visibility 0s linear var(--dur-ui-exit);
+}
+
+/* A change that has just been made (a save, the agent's edit, a restore): its row keeps a
+   tonal wash while it is the newest — a state, so reduced motion shows it too — and,
+   with motion, settles 6 px into place as the wash comes up. A pre-painted layer's
+   opacity and a transform: nothing re-lays out. */
+@keyframes ol-settle { from { transform: translateY(-6px); } to { transform: none; } }
+@keyframes hp-wash-in { from { opacity: 0; } }
+.hp-arrived::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--tonal);
+  pointer-events: none;
+}
+.hp-arrived > * { position: relative; }   /* the row's content paints above its wash */
+@media (prefers-reduced-motion: no-preference) {
+  .hp-arrived > * { animation: ol-settle 420ms var(--ease-out-quint) both; }
+  .hp-arrived::before { animation: hp-wash-in 420ms var(--ease-out-quart) both; }
+  /* the mini-site's headline when the title changes by a save, the agent or an undo (never per keystroke) */
+  .hp-pulse { animation: hp-pulse 480ms var(--ease-out-quint) both; }
+}
+@keyframes hp-pulse { from { opacity: 0.35; transform: translateY(5px); } }
+
+/* A panel that replaces another in place (the deploy picker, the price switch): it settles
+   from 6 px below and 60 % opacity when it is shown — readable from its first frame. CSS
+   only: @starting-style runs when display flips from none. */
+.swap-in {
+  transition: opacity var(--dur-ui) var(--ease-out-quart), translate var(--dur-ui) var(--ease-out-quart);
+  @starting-style { opacity: 0.6; translate: 0 6px; }
+}
+/* ds-sync:keep end */

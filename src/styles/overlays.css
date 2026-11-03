@@ -1,0 +1,170 @@
+/* Standards (web-design) this file implements — the design-system/ folders in the web-design skill:
+   COL-11 Colours are roles, in one place
+   COL-14 Elevation is a named scale
+   UI-14 Command menu
+   MOT-2 Animate transform and opacity only
+   MOT-5 The frequency gate
+   MOT-6 Physicality
+   MOT-7 Interruptible
+   MOT-11 Solid by default, glass as an enhancement
+   MOT-13 Things travel instead of teleporting
+   MOT-15 A gesture follows the hand
+   UI-25 A tray holds one step
+   PAGE-4 Loops can be paused */
+/* =============================================================================
+   Overlay motion — one file, driven by the motion tokens.
+
+   shadcn ships each overlay with tw-animate keyframes at 100 ms, the same length
+   in and out. Keyframes restart from zero; transitions can be interrupted, so
+   these use Base UI's data-starting-style / data-ending-style instead. Exits are
+   shorter than entrances (the eye isn't tracking something leaving). Unlayered on
+   purpose, so it beats the utility classes without !important.
+   ============================================================================= */
+
+:is([data-slot=popover-content], [data-slot=dropdown-menu-content], [data-slot=dropdown-menu-sub-content],
+    [data-slot=select-content], [data-slot=combobox-content], [data-slot=tooltip-content], [data-slot=dialog-content],
+    [data-slot=alert-dialog-content], [data-slot=dialog-overlay], [data-slot=alert-dialog-overlay]) {
+  animation: none;
+}
+
+/* Popovers, menus, selects — and the editor's selection toolbar, which sets the same two
+   attributes itself (product/editor.tsx): grow from the trigger (transform-origin is the anchor). */
+:is([data-slot=popover-content], [data-slot=dropdown-menu-content], [data-slot=dropdown-menu-sub-content], [data-slot=select-content], [data-slot=combobox-content], [data-slot=editor-toolbar]) {
+  transition-property: opacity, scale;
+  transition-duration: var(--dur-pop);
+  transition-timing-function: var(--ease-out-quart);
+}
+:is([data-slot=popover-content], [data-slot=dropdown-menu-content], [data-slot=dropdown-menu-sub-content], [data-slot=select-content], [data-slot=combobox-content], [data-slot=editor-toolbar]):is([data-starting-style], [data-ending-style]) {
+  opacity: 0;
+  scale: 0.96;
+}
+:is([data-slot=popover-content], [data-slot=dropdown-menu-content], [data-slot=dropdown-menu-sub-content], [data-slot=select-content], [data-slot=combobox-content], [data-slot=editor-toolbar])[data-ending-style] {
+  transition-duration: var(--dur-pop-exit);
+}
+
+/* A CHOICE BLINKS, THEN ITS MENU GOES (MOT-5; the macOS menu, via Rauno Freiberg's essay). The item that closed the menu (data-chosen, ui/chosen.ts) goes
+   dark for half of --dur-blink and lights again, and only then does the menu fade: the blink says
+   "this one" where the eye already is, without a toast. One blink, never a pulse. */
+@keyframes ds-blink { 0% { background-color: transparent; } 50% { background-color: var(--tonal-hover); } }
+:is([data-slot=dropdown-menu-content], [data-slot=select-content], [data-slot=combobox-content])[data-ending-style]:has([data-chosen]) {
+  transition-delay: var(--dur-blink);
+}
+[data-ending-style] [data-chosen] { animation: ds-blink var(--dur-blink) step-end forwards; }
+
+/* A menu opened from the keyboard appears, and goes, at once (MOT-5: the keyboard is mechanical;
+   a list summoned with a key many times a day gains nothing from growing). The blink still plays:
+   it is confirmation, not decoration. */
+html[data-input="keyboard"] :is([data-slot=popover-content], [data-slot=dropdown-menu-content], [data-slot=dropdown-menu-sub-content], [data-slot=select-content], [data-slot=combobox-content]) {
+  transition-duration: 0s;
+}
+
+/* Tooltips: short; and instant once one is already showing (Base UI marks it data-instant). */
+[data-slot=tooltip-content] {
+  transition: opacity var(--dur-tip) var(--ease-out-quart), scale var(--dur-tip) var(--ease-out-quart);
+}
+[data-slot=tooltip-content]:is([data-starting-style], [data-ending-style]) { opacity: 0; scale: 0.97; }
+[data-slot=tooltip-content][data-instant] { transition-duration: 0ms; }
+
+/* Dialogs: centred, so they scale from the centre — modals are exempt from "grow from the trigger". */
+:is([data-slot=dialog-content], [data-slot=alert-dialog-content]) {
+  transition: opacity var(--dur-ui) var(--ease-out-quart), scale var(--dur-ui) var(--ease-out-quart);
+}
+:is([data-slot=dialog-content], [data-slot=alert-dialog-content]):is([data-starting-style], [data-ending-style]) { opacity: 0; scale: 0.96; }
+:is([data-slot=dialog-content], [data-slot=alert-dialog-content])[data-ending-style] { transition-duration: var(--dur-ui-exit); }
+
+/* Backdrops: a solid scrim. No backdrop blur: it would cover the whole viewport, and blur
+   belongs on small areas only (MOT-11). */
+:is([data-slot=dialog-overlay], [data-slot=alert-dialog-overlay]) {
+  background-color: var(--scrim);
+  backdrop-filter: none;
+  transition: opacity var(--dur-ui) var(--ease-out-quart);
+}
+:is([data-slot=dialog-overlay], [data-slot=alert-dialog-overlay]):is([data-starting-style], [data-ending-style]) { opacity: 0; }
+:is([data-slot=dialog-overlay], [data-slot=alert-dialog-overlay])[data-ending-style] { transition-duration: var(--dur-ui-exit); }
+
+/* Trays (ui/tray.tsx) and sheets (ui/sheet.tsx) are Base UI Drawers, so they FOLLOW THE HAND
+   (MOT-15): while dragged, Base UI writes the offset into --drawer-swipe-movement-x/y (damped past
+   the limit) and marks data-swiping, so the transition steps aside and the panel sits under the
+   finger; on release it either springs home on the token curve or leaves, its exit shortened by
+   --drawer-swipe-strength (a fast throw leaves fast: the hand's momentum is kept). The scrim lightens
+   with --drawer-swipe-progress, so the consequence shows before it is committed. */
+
+/* Trays: rise from the bottom edge on the drawer curve and fade, shorter on the way out; a swipe
+   carries them all the way off instead of fading in place. `transform`, not `translate`: while a
+   finger drags, Base UI writes an inline transform; the same property means it REPLACES ours
+   instead of adding to it (with `translate` the panel moved twice as far as the finger). */
+[data-slot=tray-content] {
+  transform: translateY(var(--drawer-swipe-movement-y, 0px));
+  transition: transform var(--dur-sheet) var(--ease-drawer), opacity var(--dur-sheet) var(--ease-drawer);
+}
+[data-slot=tray-content]:is([data-starting-style], [data-ending-style]) { opacity: 0; transform: translateY(1.5rem); }
+/* A throw's exit is the throw's speed (the strength), never under a press's length, so a flick
+   can't become a two-frame jump. It leaves from wherever the finger let go: a drag already past
+   the tray's own height keeps going, it never steps back to "100%" first. */
+[data-slot=tray-content][data-ending-style] { transition-duration: max(var(--dur-press), calc(var(--drawer-swipe-strength, 1) * var(--dur-sheet-exit))); }
+[data-slot=tray-content][data-ending-style][data-swipe-dismiss] { opacity: 1; transform: translateY(calc(max(100%, var(--drawer-swipe-movement-y, 0px)) + 3rem)); }
+:is([data-slot=tray-content], [data-slot=sheet-content])[data-swiping] { transition-duration: 0ms; }
+
+/* Their scrims: the shared scrim colour, fading with the drag. */
+:is([data-slot=tray-overlay], [data-slot=sheet-overlay]) {
+  background-color: var(--scrim);
+  opacity: calc(1 - var(--drawer-swipe-progress, 0));
+  transition: opacity var(--dur-ui) var(--ease-out-quart);
+}
+:is([data-slot=tray-overlay], [data-slot=sheet-overlay]):is([data-starting-style], [data-ending-style]) { opacity: 0; }
+:is([data-slot=tray-overlay], [data-slot=sheet-overlay])[data-ending-style] { transition-duration: max(var(--dur-press), calc(var(--drawer-swipe-strength, 1) * var(--dur-ui-exit))); }
+:is([data-slot=tray-overlay], [data-slot=sheet-overlay])[data-swiping] { transition-duration: 0ms; }
+
+/* Sheets: slide the whole way on a drawer curve; no fade. Transform, for the reason above. */
+[data-slot=sheet-content] {
+  transform: translate(var(--drawer-swipe-movement-x, 0px), var(--drawer-swipe-movement-y, 0px));
+  transition-property: transform;
+  transition-duration: var(--dur-sheet);
+  transition-timing-function: var(--ease-drawer);
+}
+[data-slot=sheet-content]:is([data-starting-style], [data-ending-style]) { opacity: 1; }
+[data-slot=sheet-content][data-side=right]:is([data-starting-style], [data-ending-style]) { transform: translateX(max(100%, var(--drawer-swipe-movement-x, 0px))); }
+[data-slot=sheet-content][data-side=left]:is([data-starting-style], [data-ending-style]) { transform: translateX(min(-100%, var(--drawer-swipe-movement-x, 0px))); }
+[data-slot=sheet-content][data-side=bottom]:is([data-starting-style], [data-ending-style]) { transform: translateY(max(100%, var(--drawer-swipe-movement-y, 0px))); }
+[data-slot=sheet-content][data-side=top]:is([data-starting-style], [data-ending-style]) { transform: translateY(min(-100%, var(--drawer-swipe-movement-y, 0px))); }
+[data-slot=sheet-content][data-ending-style] { transition-duration: max(var(--dur-press), calc(var(--drawer-swipe-strength, 1) * var(--dur-sheet-exit))); }
+
+/* Accordion (product UI): opens on the UI duration, closes faster. */
+/* Accordion (product UI): a height transition on Base UI's measured panel height (accordion.tsx),
+   so a quick reopen retargets instead of restarting (MOT-7). */
+
+/* Toasts: Sonner's 400 ms is slow for an acknowledgement. */
+[data-sonner-toaster] [data-sonner-toast] {
+  transition-duration: var(--dur-ui);
+  transition-timing-function: var(--ease-out-quart);
+}
+/* A toast is an overlay: the overlay elevation, the house padding and type (COL-14). */
+[data-sonner-toaster] [data-sonner-toast][data-styled=true] {
+  box-shadow: var(--elev-overlay);
+  padding: 12px 16px;
+  gap: 12px;
+  font-family: var(--font-text);
+  font-size: var(--text-small);
+}
+[data-sonner-toaster] [data-sonner-toast] [data-description] { color: var(--ink-2); }
+
+/* Reduced motion keeps ESSENTIAL motion: a spinner still turns (slower), so
+   "it's working" never freezes into "it's stuck". */
+@media (prefers-reduced-motion: reduce) {
+  [data-slot=spinner] {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* The command palette opens instantly: it is summoned from the keyboard, many times a day
+   (web-design motion-interaction: never animate a command palette). */
+[data-slot=dialog-content]:has([data-slot=command]),
+[data-slot=dialog-overlay]:has(~ [data-slot=dialog-content] [data-slot=command]) { transition: none; }
+
+/* The sidebar's collapse glides when clicked, and is instant from ⌘B (MOT-5; sidebar.tsx). */
+[data-instant-nav] :is([data-slot=sidebar-gap], [data-slot=sidebar-container], [data-slot=sidebar-container] *) { transition: none !important; }
+
+/* Catalogue specimens loop a few times and stop: a demo isn't loading anything (PAGE-4, WCAG 2.2.2). */
+[data-mockup] [data-slot=skeleton] { animation-iteration-count: 2; }
+[data-mockup] [data-slot=spinner] { animation-iteration-count: 5; }

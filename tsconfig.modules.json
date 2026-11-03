@@ -1,0 +1,13 @@
+{
+  // Typechecks the opt-in modules (modules/**) and their tests on their own:
+  //   npx tsc --noEmit -p tsconfig.modules.json
+  // The app never imports modules/ until you enable one (modules/README.md),
+  // so this is what keeps them from rotting while they sit unused. The core
+  // files they import (src/server/**) are checked along with them.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": ["next-env.d.ts", "modules/**/*.ts", "modules/**/*.mts", "tests/modules/**/*.ts"],
+  "exclude": ["node_modules"]
+}

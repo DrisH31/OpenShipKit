@@ -1,0 +1,329 @@
+/* Standards (web-design) this file implements — the design-system/ folders in the web-design skill:
+   COL-6 Navigation chrome is neutral
+   COL-11 Colours are roles, in one place
+   COL-13 A categorical palette for charts
+   COL-14 Elevation is a named scale
+   TYP-4 Leading by size
+   LAY-11 Layers and breakpoints are named
+   LAY-12 One grid under every section
+   LAY-16 A card is one target (the .lift utility)
+   UI-1 One component base, restyled through tokens */
+/* =============================================================================
+   Roles → Tailwind utilities and shadcn's variable names.
+
+   Components (shadcn on Base UI) read shadcn's names (--primary, --border …);
+   this file points each at a house ROLE, so every copied component is on-brand
+   without being edited. Utilities: bg-bg, bg-surface, text-ink, text-ink-2,
+   border-line, font-display, text-h1, duration-ui, ease-out-quint …
+   ============================================================================= */
+
+:root,
+.light,
+.dark,
+.invert-scheme {
+  /* Re-declared on every scheme scope so a locally flipped item re-resolves. */
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card-foreground: var(--ink);
+  --popover: var(--raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-ink);
+  --secondary: var(--surface);
+  --secondary-foreground: var(--ink);
+  --muted: var(--tonal);                     /* a wash that shows on any surface; --surface was the card itself, so bg-muted vanished on cards */
+  --muted-foreground: var(--ink-2);
+  --accent-surface: var(--surface);          /* shadcn's "accent" = a hover surface, not our action */
+  --destructive: var(--danger-fill);
+  --border: var(--line);
+  --input: var(--field);
+  --ring: var(--focus);
+  /* --chart-1…5 are NOT aliased here: tokens.css defines the validated series (COL-13), and this
+     file loads after it, so an alias here would silently replace them. */
+  --sidebar: var(--bg);                 /* chrome sits on the page tone; content cards carry the 30 */
+  --sidebar-foreground: var(--ink);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-ink);
+  --sidebar-accent: var(--tonal);       /* active and hover: a tonal wash, never a box */
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: var(--line-strong);   /* the edge between nav and content must be seen */
+  --sidebar-ring: var(--focus);
+}
+
+@theme inline {
+  /* a transition with no duration or easing class uses the house tokens, not Tailwind's 150 ms (MOT-3, MOT-4) */
+  --default-transition-duration: var(--dur-hover);
+  --default-transition-timing-function: var(--ease-out-quart);
+  /* house roles */
+  --color-bg: var(--bg);
+  --color-danger-soft-hover: var(--danger-soft-hover);
+  --color-danger-line: var(--danger-line);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-raised: var(--raised);
+  --color-thumb: var(--thumb);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-field: var(--field);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-faint: var(--ink-faint);
+  --color-action: var(--accent);
+  --color-action-ink: var(--accent-ink);
+  --color-action-hover: var(--accent-hover);
+  --color-focus: var(--focus);
+  --color-positive: var(--ink-positive);
+  --color-warning: var(--ink-warning);
+  --color-danger: var(--ink-danger);
+  --color-positive-soft: var(--positive-soft);
+  --color-info: var(--ink-info);
+  --color-info-soft: var(--info-soft);
+  --color-badge-positive: var(--badge-positive-ink);
+  --color-badge-warning: var(--badge-warning-ink);
+  --color-badge-danger: var(--badge-danger-ink);
+  --color-badge-info: var(--badge-info-ink);
+  --color-tonal: var(--tonal);
+  --color-tonal-hover: var(--tonal-hover);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger-soft: var(--danger-soft);
+
+  /* shadcn's names */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent-surface);
+  --color-accent-foreground: var(--ink);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* type */
+  --font-sans: var(--font-text);
+  --font-heading: var(--font-text);   /* card and dialog titles: Inter — Space Grotesk is for 22 px and up */
+  --font-display: var(--font-display);
+  --font-mono: var(--font-code);
+  --font-signature: var(--font-signature);
+  /* Tracking tightens as size grows, gently on a phone (pillar-type-setting: don't over-tighten).
+     Text sizes keep FIXED line heights, each a multiple of 4 px — 12/16, 14/20, 16/24, 17 and
+     18–20 on 28 (v2.8, TYP-4) — so lines of different sizes still land on one rhythm; headings,
+     which are fluid, take a ratio snapped to the same grid (tokens.css --lh-*, v2.9).
+     Every text role also sets its tracking (0 for text, TYP-5), so a small span inside a heading
+     stops inheriting the heading's negative tracking (v2.10: a chart's "· the last 30 days" was
+     set at −0.01em). A tracking-* utility on the element still wins: buttons keep their +1 %. */
+  --text-display: var(--text-display);
+  --text-display--line-height: var(--lh-display);
+  --text-display--letter-spacing: var(--tracking-display);
+  --text-h1: var(--text-display);            /* a page H1 is the display size: one H1 role */
+  --text-h1--line-height: var(--lh-display);
+  --text-h1--letter-spacing: var(--tracking-display);
+  --text-h2: var(--text-h2);
+  --text-h2--line-height: var(--lh-h2);
+  --text-h2--letter-spacing: var(--tracking-h2);
+  --text-h3: var(--text-h3);
+  --text-figure: var(--text-figure);
+  --text-figure--line-height: var(--lh-figure);
+  --text-figure--letter-spacing: var(--tracking-figure);
+  --text-h3--line-height: var(--lh-h3);
+  --text-h3--letter-spacing: var(--tracking-h3);
+  --text-lead: var(--text-lead);
+  --text-lead--line-height: var(--lh-lead);
+  --text-lead--letter-spacing: var(--tracking-lead);
+  /* reading pages only (tokens.css, v2.3) */
+  --text-title: var(--text-title);
+  --text-title--line-height: var(--lh-title);
+  --text-title--letter-spacing: var(--tracking-title);
+  --text-reading: var(--text-reading);
+  --text-reading--line-height: var(--lh-reading);
+  --text-reading--letter-spacing: var(--tracking-reading);
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--lh-body);
+  --text-body--letter-spacing: var(--tracking-body);
+  --text-small: var(--text-small);
+  --text-small--line-height: var(--lh-small);
+  --text-small--letter-spacing: var(--tracking-small);
+  --text-caption: var(--text-caption);
+  --text-caption--line-height: var(--lh-caption);
+  --text-caption--letter-spacing: var(--tracking-caption);
+  --text-eyebrow: var(--text-eyebrow);
+  --text-eyebrow--line-height: var(--lh-eyebrow);
+  --text-eyebrow--letter-spacing: var(--tracking-eyebrow);
+
+  /* shape — pills for anything you press, 16 px cards, 10 px fields */
+  /* three radii and a small one, from tokens.css (generated): radius-sm for marks inside text, radius-field
+     for fields and menus, radius-card for cards and panels, full pills for anything pressed */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-field);
+  --radius-lg: var(--radius-field);
+  --radius-xl: var(--radius-card);
+  --radius-2xl: var(--radius-card);
+  --radius-3xl: var(--radius-card);
+  --radius-4xl: var(--radius-card);
+  --shadow-sm: var(--elev-control);         /* shadcn's small shadow = a control a hair off its surface */
+  --shadow-xs: var(--elev-control);
+  --shadow-card: var(--elev-card);          /* the elevation scale (tokens.css, COL-14) */
+  --shadow-card-hover: var(--elev-card-hover);
+  --shadow-action: var(--elev-action);
+  --shadow-lit: var(--highlight);         /* a surface's lit top edge (dark only; nothing in light) */
+  --shadow-control: var(--elev-control);
+  /* the chosen option's thumb (segmented controls, tabs, the nav): a lift, never an outline. A 1 px
+     ink-3 ring was tried in v2.2 and removed in v2.2.1: the owner read it as a glow round every
+     chosen and highlighted thing. The thumb's fill and its semibold, full-ink label carry the choice. */
+  --shadow-pill: var(--elev-pill);
+  --shadow-thumb: var(--elev-thumb);
+  --shadow-mockup: var(--elev-mockup);
+  --drop-shadow-device: var(--drop-device);
+  --ease-drawer: var(--ease-drawer);
+  /* overlays: menus, popovers, dialogs, sheets, the tray, toasts. `shadow-overlay` is the utility;
+     until v2.23 the token was --shadow-overlay in tokens.css with no entry here, so the class
+     generated nothing and the Tray, the ReturnMark and the editor's ask bubble had no shadow. */
+  --shadow-overlay: var(--elev-overlay);
+  --shadow-md: var(--elev-overlay);
+  --shadow-lg: var(--elev-overlay);
+  --spacing-section: var(--space-section);
+  --spacing-gutter: var(--gutter);
+  --container-content: var(--content);
+  --container-measure: var(--measure);
+
+  /* motion */
+  --ease-out-quint: var(--ease-out-quint);
+  --ease-out-quart: var(--ease-out-quart);
+  --ease-in-out-quart: var(--ease-in-out-quart);
+  --ease-out-back: var(--ease-out-back);
+  --ease-out-spring: var(--ease-out-spring);
+}
+
+/* The breakpoints, stated (Tailwind's defaults, written down so the Foundations page reads
+   them and nothing types them): a phone below sm, the header sticky from md, the index
+   column from lg, the sidebar's tablet range up to xl. */
+/* tokens:begin breakpoints (generated by npm run tokens) */
+@theme {
+  --breakpoint-sm: 40rem;
+  --breakpoint-md: 48rem;
+  --breakpoint-lg: 64rem;
+  --breakpoint-xl: 80rem;
+}
+/* tokens:end */
+
+/* LAY-12 · One grid under every section: 4 columns on a phone, 12 from --breakpoint-sm
+   (40rem; a media query can't read the variable). Children take spans: col-span-4 on a
+   phone, then sm:/md:/lg:col-span-N of 12; repeated items can take theirs from the parent
+   (*:col-span-4 sm:*:col-span-6). <Grid> and <Col> (components/layout/grid.tsx) are the
+   same grid with the page gaps and the spans spelled out. */
+/* COL-14 · A CARD, IN ONE PLACE. Every card and panel — a KPI, a chart, a settings section, a
+   table's frame — is `surface-card`: the card fill, the quiet hairline, the 16 px radius and the
+   resting elevation (in dark, the lit top edge). Padding and layout stay with the component. A
+   card's finish changes here, never in the twenty-five places that draw one. */
+@utility surface-card {
+  background-color: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--elev-card);
+}
+
+/* A card you can press (a link, a whole-card button) lifts under the pointer. The lifted shadow is
+   painted once on ::after and only its opacity moves (MOT-2: never tween box-shadow); a precise
+   pointer only (MOT-9), nothing under reduced motion beyond the instant state. */
+@utility lift {
+  position: relative;
+  isolation: isolate;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    z-index: -1;
+    border-radius: inherit;
+    box-shadow: var(--elev-card-hover);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-ui) var(--ease-out-quart);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    &:hover::after { opacity: 1; }
+  }
+  &:focus-visible::after, &:has(:focus-visible)::after { opacity: 1; }
+}
+
+/* THE STAGE (marketing heroes and feature visuals): a pool of light from the top, over a fine 32 px grid that fades
+   out towards the edges, so the product screen sits somewhere instead of on a flat field. Paint only,
+   no motion; true grey in both schemes (--stage-light, --stage-grid). */
+@utility stage {
+  position: relative;
+  isolation: isolate;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(60% 55% at 50% 0%, var(--stage-light), transparent 72%),
+      linear-gradient(to right, var(--stage-grid) 1px, transparent 1px) 0 0 / 32px 32px,
+      linear-gradient(to bottom, var(--stage-grid) 1px, transparent 1px) 0 0 / 32px 32px;
+    /* fades out to the sides and the bottom, and in from the top, so the stage never draws a seam
+       against the header above it */
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 8rem), radial-gradient(75% 70% at 50% 30%, #000 30%, transparent 85%);
+    -webkit-mask-composite: source-in;
+    mask-image: linear-gradient(to bottom, transparent, #000 8rem), radial-gradient(75% 70% at 50% 30%, #000 30%, transparent 85%);
+    mask-composite: intersect;
+  }
+}
+
+/* LAY-13 · A TARGET FILLS ITS SPACE (Fitts's law). In a list of
+   like items (a nav, tabs, a segmented control, a row of header tools) the gap between neighbours
+   belongs to them: an invisible ::before reaches halfway across it, so a pointer moving along the
+   list is always over one item and hover never flickers off between two. The list sets --hit-gap
+   to its own gap (default 4 px); the item must already be positioned. Separate actions keep their
+   dead space on purpose (LAY-3): this is for one list, never between a Save and a Delete. */
+@utility hit-fill {
+  &::before {
+    content: "";
+    position: absolute;
+    inset: calc(var(--hit-gap, 0.25rem) / -2 - 0.5px);   /* half a pixel of overlap: fractional layouts leave no seam */
+  }
+}
+
+@utility grid-12 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  @media (width >= 40rem) {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+}
+
+/* ds-sync:keep start openshipkit-theme */
+@theme inline {
+  /* the accent as text (text-action-text): set by brand.css, 4.5:1 on every surface */
+  --color-action-text: var(--accent-text, var(--ink));
+  /* the mark's gradient as utilities (from-mark-from to-mark-to): a product mark only, never the UI */
+  --color-mark-from: var(--brand-mark-from);
+  --color-mark-to: var(--brand-mark-to);
+}
+/* ds-sync:keep end */

@@ -1,0 +1,35 @@
+[
+  {
+    "group": "Start",
+    "items": ["getting-started", "ai-setup", "architecture"]
+  },
+  {
+    "group": "Build",
+    "items": [
+      "content",
+      "auth",
+      "data",
+      "billing",
+      "email",
+      "customization",
+      "site-profile",
+      "mcp",
+      "modules/README",
+      "modules/ai",
+      "modules/rag",
+      "modules/redis"
+    ]
+  },
+  {
+    "group": "Ship",
+    "items": [
+      "deployment",
+      "security",
+      "seo",
+      "scaling",
+      "releasing",
+      "upgrading",
+      "troubleshooting"
+    ]
+  }
+]

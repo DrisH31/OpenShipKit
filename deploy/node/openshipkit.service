@@ -1,0 +1,49 @@
+# systemd unit for OpenShipKit's standalone Next.js server.
+#
+#   sudo cp deploy/node/openshipkit.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now openshipkit
+#   journalctl -u openshipkit -f
+#
+# Assumes the checkout at /opt/openshipkit/app, built with deploy/node/deploy.sh,
+# and its settings in /opt/openshipkit/openshipkit.env (mode 600, outside the
+# checkout so `next build` never reads it).
+# The sandboxing options below are safe for this app: it writes only to the
+# image cache under .next/cache, to the uploads folder (UPLOADS_DIR in the env
+# file — /opt/openshipkit/uploads, outside the checkout so a rebuild never
+# touches it) and to /tmp. Moving UPLOADS_DIR? Change ReadWritePaths with it,
+# or every upload fails with "read-only file system".
+
+[Unit]
+Description=OpenShipKit (Next.js)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openshipkit
+Group=openshipkit
+WorkingDirectory=/opt/openshipkit/app/.next/standalone
+EnvironmentFile=/opt/openshipkit/openshipkit.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+# Give in-flight requests a moment on stop/restart.
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/openshipkit/app/.next/standalone/.next/cache /opt/openshipkit/uploads
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

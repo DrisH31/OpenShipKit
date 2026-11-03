@@ -1,0 +1,58 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# next.js / build
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# testing
+coverage/
+
+# env — never commit secrets. .env.example is the template.
+.env
+.env.*
+!.env.example
+
+# local data: the embedded development database (PGlite) and development
+# uploads (.data/uploads), docker volumes bound to the repo, uploads
+.data/
+/data/
+/uploads/
+
+# backups: database dumps and uploads archives carry personal data (users,
+# contact messages). Broad on purpose — don't narrow these.
+*.dump
+*.dump.partial
+*.sql.gz
+*.uploads.tar.gz
+dump_*/
+/backups/
+
+# `npm run ds:sync` deny-list: words a design-system sync must never import
+# (your own brand or client names). Local only, so the words aren't published.
+.ds-sync-deny
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.vercel
+.idea/
+
+# AI-harness and editor state: per-user locks, permissions and rules (.dockerignore
+# excludes these too). A shared project settings file may be committed.
+.claude/*
+!.claude/settings.json
+.cursor/
+
+# Local tool state (never part of the template)
+.claude/*.lock
+.claude/settings.local.json
+.vitest/

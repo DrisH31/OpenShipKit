@@ -1,0 +1,21 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@import "../styles/tokens.css";
+@import "../styles/brand.css";
+@import "../styles/theme.css";
+@import "../styles/base.css";
+@import "../styles/motion.css";
+@import "../styles/overlays.css";
+@import "../styles/prose.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+/* Hover needs a precise pointer too, not only a device that can hover. */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}

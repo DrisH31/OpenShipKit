@@ -1,0 +1,217 @@
+# CI for OpenShipKit.
+#
+#   check     typecheck, lint, unit tests, `npm run setup` on plain Node,
+#             migrations in step with schema.ts, and `next build` with NO environment — the build must never need
+#             a secret or a database (SPEC invariant 2).
+#   postgres  a real Postgres 18: migrate (twice — must be idempotent), seed,
+#             the data-contract and Better Auth tests against it, then the
+#             production server + `npm run smoke`, then scripts/e2e.mts: sign
+#             up with email verification (the link read from the server log),
+#             admin via ADMIN_EMAILS, no-JavaScript admin forms, publish, contact,
+#             MCP, and the clean-up.
+#   docker    builds both Dockerfile targets and validates docker-compose.yml.
+#
+# No secrets are used anywhere: forks' pull requests run the same checks.
+
+name: CI
+
+on:
+  push:
+    # dev is where work lands; main only takes finished work (CONTRIBUTING.md).
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  check:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:modules
+      - run: npm run lint
+      - run: npm test
+      - name: Setup runs on plain Node
+        # `npm run setup` is `node scripts/setup.mts` (no tsx): the deploy guides
+        # run it in a bare node container. An import Node's type stripping can't
+        # load (a path alias, a non-erasable type) fails here. Writes nothing.
+        run: |
+          node scripts/setup.mts --dry-run --file "$RUNNER_TEMP/ci-dev.env"
+          node scripts/setup.mts --dry-run --compose --file "$RUNNER_TEMP/ci.env" --domain example.com
+      - name: Migrations match schema.ts
+        # A schema.ts change committed without `npm run db:generate` passes every
+        # other check, and production never gets it: the migrator applies only
+        # drizzle/. generate needs no database. drizzle-kit exits 0 even when it
+        # fails, so the step requires its "No schema changes" line as well as an
+        # untouched drizzle/ (a drift adds untracked files, which git diff misses).
+        timeout-minutes: 3
+        run: |
+          out="$(npm run db:generate -- --name ci-drift-check < /dev/null 2>&1)" || { echo "$out"; exit 1; }
+          echo "$out" | tail -n 3
+          changed="$(git status --porcelain -- drizzle/)"
+          if [ -n "$changed" ] || ! echo "$out" | grep -q "No schema changes"; then
+            echo "$changed"
+            echo "::error file=src/adapters/data/postgres/schema.ts::schema.ts and drizzle/ disagree. Run npm run db:generate -- --name <change>, review the SQL and commit drizzle/."
+            exit 1
+          fi
+      - name: Build with no environment
+        # Deliberately empty: if this fails, something reads env or a database at build time.
+        run: env -i PATH="$PATH" HOME="$HOME" NEXT_TELEMETRY_DISABLED=1 npm run build
+      - name: Server bundle holds only the server
+        # A filesystem path built from env (UPLOADS_DIR, PGLITE_DIR …) without a
+        # /*turbopackIgnore: true*/ comment makes the tracer copy the whole repo —
+        # source, tests, a local .data database — into .next/standalone.
+        # docs/ is the one exception, and it must be there: the /docs pages read
+        # docs/*.md, docs/modules/*.md and docs/nav.json at request time
+        # (outputFileTracingIncludes in next.config.ts). Anything else under it
+        # means the tracer swept the folder in.
+        run: |
+          for leaked in src tests scripts .data README.md; do
+            if [ -e ".next/standalone/$leaked" ]; then
+              echo "::error::.next/standalone/$leaked exists: a dynamic filesystem path is tracing the whole project (see AGENTS.md)."
+              exit 1
+            fi
+          done
+          if [ ! -f .next/standalone/docs/README.md ]; then
+            echo "::error::.next/standalone/docs/README.md is missing: the /docs pages would 404 in production (outputFileTracingIncludes in next.config.ts)."
+            exit 1
+          fi
+          stray="$(find .next/standalone/docs -type f ! -name '*.md' ! -path '.next/standalone/docs/nav.json')"
+          if [ -n "$stray" ]; then
+            echo "$stray"
+            echo "::error::.next/standalone/docs holds more than the docs' Markdown and nav.json: something is tracing the docs folder (see src/server/docs.ts)."
+            exit 1
+          fi
+
+  postgres:
+    name: Postgres 18 — migrations, contract tests, smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: openshipkit
+          POSTGRES_PASSWORD: openshipkit
+          POSTGRES_DB: openshipkit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openshipkit -d openshipkit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # Only the steps that talk to the server get DATABASE_URL; unit tests and
+      # the build must not see it.
+      PG_URL: postgres://openshipkit:openshipkit@127.0.0.1:5432/openshipkit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Create the throwaway test database
+        run: psql "$PG_URL" -c "create database openshipkit_test"
+
+      - name: Migrate (twice) and seed (twice)
+        env:
+          DATABASE_URL: ${{ env.PG_URL }}
+        run: |
+          npm run db:migrate
+          npm run db:migrate
+          npm run db:seed
+          npm run db:seed
+
+      - name: Contract and Better Auth tests on Postgres
+        # TEST_DATABASE_URL is truncated before every test; AUTH_TEST_DATABASE_URL
+        # needs the migrations applied (the database migrated above).
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://openshipkit:openshipkit@127.0.0.1:5432/openshipkit_test
+          AUTH_TEST_DATABASE_URL: postgres://openshipkit:openshipkit@127.0.0.1:5432/openshipkit
+
+      - name: Build
+        run: npm run build
+
+      - name: Start the production server
+        run: |
+          cp -r .next/static .next/standalone/.next/static
+          [ -d public ] && cp -r public .next/standalone/public || true
+          cd .next/standalone
+          # ADMIN_EMAILS and EMAIL_CONSOLE_PRINT_BODIES are for the end-to-end
+          # step: its account becomes the admin, and its verification link
+          # reaches server.log (production prints only To and Subject otherwise).
+          DATABASE_URL="$PG_URL" NODE_ENV=production PORT=3000 HOSTNAME=127.0.0.1 \
+          BETTER_AUTH_SECRET=ci-only-secret-ci-only-secret-ci-only-0000 \
+          NEXT_PUBLIC_SITE_URL=http://localhost:3000 \
+          ADMIN_EMAILS=e2e@example.com EMAIL_CONSOLE_PRINT_BODIES=true \
+            nohup node server.js > ../../server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3000/api/health && exit 0
+            sleep 1
+          done
+          cat ../../server.log
+          exit 1
+
+      - name: Smoke test
+        run: npm run smoke -- http://localhost:3000
+
+      - name: End to end
+        # The production build, driven like a person would: verification on,
+        # the forms submitted without JavaScript. Cleans up after itself.
+        run: npx tsx scripts/e2e.mts http://localhost:3000 --email e2e@example.com --email-log server.log
+
+      - name: Server log
+        if: always()
+        run: cat server.log || true
+
+  docker:
+    name: Docker image and compose file
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the app image (runner)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runner
+          push: false
+          tags: openshipkit:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Build the migrator image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: migrator
+          push: false
+          tags: openshipkit-migrator:ci
+          cache-from: type=gha
+      - name: Validate docker-compose.yml
+        run: |
+          printf 'POSTGRES_PASSWORD=ci\nBETTER_AUTH_SECRET=ci\nNEXT_PUBLIC_SITE_URL=https://example.com\nDOMAIN=example.com\n' > .env
+          docker compose config --quiet
+          docker compose --profile https config --quiet
+          rm .env

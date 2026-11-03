@@ -1,0 +1,10 @@
+# Written by `npm run ds:sync` (scripts/ds-sync.mts): the design system that
+# tokens.css, theme.css, base.css, motion.css, overlays.css and src/components/ui/ were last synced from.
+# Edit nothing here by hand; a sync rewrites it.
+name=design-system
+version=2.31.1
+commit=7467e34dbde0c24bc0b7e050b119b3d4c949a320
+describe=v2.30.0-4-g7467e34
+dirty=false
+synced=2026-10-28T14:58:09.681Z
+files=src/components/ui/combobox.tsx,src/components/ui/select.tsx

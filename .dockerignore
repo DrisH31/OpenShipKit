@@ -1,0 +1,45 @@
+# What `docker build` never sends to the daemon. Secrets and local state stay
+# on your machine: the image is built from source alone and reads its settings
+# at runtime (docker compose passes .env in). Keep this in sync with .gitignore.
+
+# dependencies and build output — the image installs and builds its own
+node_modules
+.next
+out
+build
+coverage
+*.tsbuildinfo
+
+# secrets: never bake them into an image
+.env
+.env.*
+!.env.example
+*.pem
+
+# local data: the embedded development database and development uploads
+# (.data/uploads), backups, uploads. Uploaded images reach a server through its
+# volume, never through the image.
+.data
+data
+uploads
+backups
+*.dump
+*.dump.partial
+*.sql.gz
+*.uploads.tar.gz
+dump_*
+.ds-sync-deny
+
+# version control, editors, CI and docs the server never reads
+.git
+.github
+.vscode
+.idea
+.claude
+.cursor
+.DS_Store
+npm-debug.log*
+docker-compose*.yml
+docs/images
+Dockerfile
+.dockerignore

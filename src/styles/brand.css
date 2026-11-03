@@ -1,0 +1,48 @@
+/* Standards (web-design): COL-1 Text contrast · COL-2 Controls, icons and focus at 3:1 · COL-5 One accent, for action only · COL-12 The theme contract */
+/* =============================================================================
+   OPENSHIPKIT — the brand, on top of the house "Neutral" look (tokens.css).
+
+   The theme contract: a product sets ONLY the action colour (--accent, --accent-ink,
+   --accent-hover, --focus), optionally --accent-text, and its mark's gradient — in both
+   schemes. Everything else (greys, inks, status, charts) stays the system's.
+
+   The colour is "ignition": a vermilion between a warning light and a launch flame.
+   Why: developer tools are almost all black-and-white or purple/indigo; a warm signal
+   reads as "go", and as something you hold yourself rather than rent (DESIGN.md, Colour).
+   It is the 10 %: the one primary button, the focus ring, the selected deploy target
+   and pricing interval, the mark. Never a heading, a band or the navigation.
+
+   Measured (src/styles/contrast.test.ts, run by `npm test`; DESIGN.md "Check results"):
+     light  accent-ink #FFF on accent #C2410C 5.18 · on hover #A8360A 6.57
+            accent #C2410C on bg #E6E6E6 4.15 · on card #FFF 5.18 (controls/focus ≥ 3)
+            accent-text #B4380B on bg 4.79 · on card 5.98
+     dark   accent-ink #111 on accent #FF7A3D 7.29 · on hover #FF9361 8.63
+            accent on bg #111 7.29 · surface #181818 6.85 · raised #222 6.14
+            accent-text = accent (≥ 6.1 on every dark surface)
+   Change a value → `npm test` re-measures it.
+   ============================================================================= */
+
+:root,
+.light {
+  --accent: #C2410C;
+  --accent-ink: #FFFFFF;
+  --accent-hover: #A8360A;
+  --focus: #C2410C;
+  /* the accent as text (the selected stack's label, the "live" figure) — darker, so it
+     passes 4.5:1 on the grey page as well as on white */
+  --accent-text: #B4380B;
+  /* the mark: amber into vermilion, light enough to glow, never used in the UI */
+  --brand-mark-from: #F59E0B;
+  --brand-mark-to: #E5431A;
+}
+
+.dark,
+:root:not(.dark) .invert-scheme {
+  --accent: #FF7A3D;
+  --accent-ink: #111111;
+  --accent-hover: #FF9361;
+  --focus: #FF7A3D;
+  --accent-text: #FF7A3D;
+  --brand-mark-from: #FBBF24;
+  --brand-mark-to: #FF6A33;
+}

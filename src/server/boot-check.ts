@@ -1,0 +1,120 @@
+//
+// The production boot check, run once by src/instrumentation.ts's register()
+// in the Node.js runtime only. It refuses to start without what every request
+// needs — DATABASE_URL (unless an embedded database is opted into with
+// OPENSHIPKIT_ALLOW_EMBEDDED_DB=true; DATA_PROVIDER=memory is refused: unit
+// tests only), a BETTER_AUTH_SECRET of 32+ random characters, and
+// RESEND_API_KEY when EMAIL_PROVIDER=resend, and the read-only demo admin's
+// DEMO_ADMIN_EMAIL + DEMO_ADMIN_PASSWORD both or neither — and warns loudly about a missing
+// or local NEXT_PUBLIC_SITE_URL and about email going to the log. An unknown
+// OPENSHIPKIT_PROFILE is fatal (every request would throw on it); the site
+// profile with Polar configured is a warning: billing stays off. It reads
+// process.env only, through the same rules the server uses
+// (src/server/env-rules.ts), so the check can't disagree with what runs.
+//
+// Its own module, loaded with a dynamic import behind NEXT_RUNTIME === "nodejs",
+// because Next also compiles instrumentation for the Edge runtime, which has no
+// process.exit: kept inline, every dev request logged an Edge-runtime warning.
+//
+
+import "server-only";
+import { isLocalHost } from "@/lib/site-url";
+import { demoAdminProblems, readEnv, resolveBillingProvider, resolveDataMode, resolveEmailProvider, resolveProfile, weakAuthSecretReason } from "@/server/env-rules";
+
+/** Exits the process when production is missing something every request needs; warns about the rest. */
+export function checkProductionEnv(): void {
+  if (process.env.NEXT_PHASE === "phase-production-build") return; // `next build` has no secrets, by design
+  const env = (name: string) => readEnv(process.env, name) ?? "";
+
+  const fatal: string[] = [];
+  /** A provider rule that throws (an unknown EMAIL_PROVIDER, say) is a fatal line, not a crash with a stack. */
+  const rule = <T>(fn: () => T): T | null => {
+    try {
+      return fn();
+    } catch (error) {
+      fatal.push(error instanceof Error ? error.message : String(error));
+      return null;
+    }
+  };
+
+  const dataMode = rule(() => resolveDataMode(process.env));
+  if (dataMode === "memory") {
+    fatal.push("DATA_PROVIDER=memory is for unit tests only: every restart wipes users, posts and payments. Unset it and set DATABASE_URL.");
+  } else if (dataMode === "embedded-postgres" && env("OPENSHIPKIT_ALLOW_EMBEDDED_DB") !== "true") {
+    fatal.push("DATABASE_URL is not set. Production needs a Postgres server (see docker-compose.yml and docs/deployment.md).");
+  }
+  // The key that signs sessions: the newest of BETTER_AUTH_SECRETS when a rotation is under way
+  // (docs/auth.md), else BETTER_AUTH_SECRET. Once rotated, the old secret only decrypts earlier
+  // two-factor data and can't be changed without breaking it, so a weak one there is a warning.
+  const versioned = env("BETTER_AUTH_SECRETS");
+  if (versioned) {
+    const newest = versioned.split(",")[0]?.split(":").slice(1).join(":");
+    const weak = weakAuthSecretReason(newest)?.replaceAll("BETTER_AUTH_SECRET", "The newest key in BETTER_AUTH_SECRETS");
+    if (weak) fatal.push(`${weak} It signs every session: generate one with \`openssl rand -base64 32\`.`);
+    if (!env("BETTER_AUTH_SECRET")) {
+      fatal.push("BETTER_AUTH_SECRET is not set. Keep it during a rotation: it decrypts the two-factor secrets stored before the first one.");
+    } else if (weakAuthSecretReason(env("BETTER_AUTH_SECRET"))) {
+      console.warn("[openshipkit] BETTER_AUTH_SECRET is weak. It now only decrypts older two-factor secrets; retire it once every user has set up 2FA again (docs/auth.md).");
+    }
+  } else {
+    const weak = weakAuthSecretReason(env("BETTER_AUTH_SECRET"));
+    if (weak) fatal.push(`${weak} It signs every session: generate one with \`openssl rand -base64 32\` (\`npm run setup\` writes it).`);
+  }
+  const email = rule(() => resolveEmailProvider(process.env));
+  if (email === "resend" && !env("RESEND_API_KEY")) {
+    fatal.push("EMAIL_PROVIDER=resend but RESEND_API_KEY is not set: the first sign-up's verification email would fail. Set the key, or unset EMAIL_PROVIDER.");
+  }
+  const profile = rule(() => resolveProfile(process.env));
+  // A malformed BILLING_PROVIDER throws on every billing read, in either profile: fatal here, like EMAIL_PROVIDER.
+  if (profile) rule(() => resolveBillingProvider(process.env));
+  // The read-only demo admin (showcase only): half-configured, or a short password, is refused rather than silently off.
+  fatal.push(...demoAdminProblems(process.env));
+  if (fatal.length > 0) {
+    for (const line of fatal) console.error(`[openshipkit] ${line}`);
+    console.error("[openshipkit] Refusing to start. Every variable is described in .env.example.");
+    process.exit(1);
+  }
+
+  const site = env("NEXT_PUBLIC_SITE_URL");
+  if (!site) {
+    console.error(
+      "[openshipkit] NEXT_PUBLIC_SITE_URL is not set: canonicals, the sitemap, robots.txt, Open Graph tags and email links will all point at http://localhost:3000. Set it to your public https:// origin.",
+    );
+  } else {
+    let host = "";
+    let protocol = "";
+    try {
+      ({ hostname: host, protocol } = new URL(site));
+    } catch {
+      console.error(`[openshipkit] NEXT_PUBLIC_SITE_URL="${site}" is not a URL. Set it to your public https:// origin.`);
+    }
+    if (host && env("OPENSHIPKIT_ALLOW_LOCALHOST_URL") !== "true") {
+      // The same host list as the dashboard's setup checklist (src/lib/site-url.ts).
+      if (isLocalHost(host)) {
+        console.warn(
+          `[openshipkit] NEXT_PUBLIC_SITE_URL is ${site}: search engines and emails will get local links. Fine for a local production test (OPENSHIPKIT_ALLOW_LOCALHOST_URL=true silences this); set your public origin before going live.`,
+        );
+      } else if (protocol !== "https:") {
+        console.warn(`[openshipkit] NEXT_PUBLIC_SITE_URL is ${site}, not https://. Serve the site over HTTPS and use that origin.`);
+      }
+    }
+  }
+
+  if (profile === "site") {
+    // The profile wins over Polar keys (env-rules.ts); say so, so nobody waits for a webhook that 404s.
+    const polar = [env("BILLING_PROVIDER") === "polar" ? "BILLING_PROVIDER=polar" : "", env("POLAR_ACCESS_TOKEN") ? "POLAR_ACCESS_TOKEN" : ""].filter(Boolean);
+    if (polar.length) {
+      console.warn(`[openshipkit] OPENSHIPKIT_PROFILE=site switches billing off, so ${polar.join(" and ")} ${polar.length === 1 ? "is" : "are"} ignored and /api/billing/* answer 404. Unset ${polar.length === 1 ? "it" : "them"}, or set OPENSHIPKIT_PROFILE=saas to sell (docs/site-profile.md).`);
+    } else {
+      console.info("[openshipkit] OPENSHIPKIT_PROFILE=site: a landing page + blog with no pricing, billing or plans (docs/site-profile.md).");
+    }
+  }
+
+  if (email === "console") {
+    console.warn(
+      env("RESEND_API_KEY")
+        ? "[openshipkit] EMAIL_PROVIDER=console although RESEND_API_KEY is set: messages go to the server log (To and Subject only) and are not sent. Unset EMAIL_PROVIDER to send with Resend."
+        : "[openshipkit] No email provider: messages go to the server log (To and Subject only) and are not sent. Set RESEND_API_KEY so people can verify their email and reset passwords.",
+    );
+  }
+}

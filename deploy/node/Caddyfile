@@ -1,0 +1,18 @@
+# Caddy in front of OpenShipKit on 127.0.0.1:3000 (no Docker).
+#
+#   sudo cp deploy/node/Caddyfile /etc/caddy/Caddyfile   (replace example.com)
+#   sudo systemctl reload caddy
+#
+# Certificates are obtained and renewed automatically once example.com's DNS
+# points here and ports 80/443 are open. Caddy sets X-Forwarded-For to the
+# real client address (it ignores one a client sends).
+
+example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3000
+	header -Server
+}
+
+# www.example.com {
+# 	redir https://example.com{uri} permanent
+# }

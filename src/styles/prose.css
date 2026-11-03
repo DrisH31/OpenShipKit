@@ -1,0 +1,358 @@
+/* Long-form typography for blog posts, changelog entries, legal pages and the docs: everything
+   under `.prose`, the HTML that src/server/markdown.ts renders (owned by the blog/SEO area).
+   Also here: the docs' framed code blocks (`figure.code-block`) and width (`.prose-docs`). The
+   token colours of highlighted code are one rule for the whole site, in base.css (`.code-tokens`).
+
+   Standards (web-design): TYP-1 A scale, not ad-hoc sizes · TYP-4 Leading by size ·
+   TYP-6 Line length · TYP-7 Ink levels make the reading order · TYP-8 Real typography ·
+   TYP-10 Dark mode type · COL-11 Colours are roles, in one place
+
+   Rules:
+   - Colours are ROLES from tokens.css (ink, ink-2, line, surface …), so light, dark and a
+     locally flipped band all work with no overrides here.
+   - Space Grotesk only at 22 px and up (the h2); smaller headings are Inter 600.
+   - The measure is the system's --measure (52ch of Inter ≈ 68–70 characters a line).
+   - Vertical rhythm in em of the body size, so the whole block scales together.
+   - In @layer components, so a utility on the same element (max-w-none, text-lead) wins. */
+
+@layer components {
+  .prose {
+    --prose-gap: 1.25em;
+    --prose-code-bg: var(--surface);
+    --prose-code-line: var(--line);
+    --prose-inline-code-bg: var(--tonal);
+    --prose-marker: var(--ink-faint);
+
+    max-width: var(--measure, 52ch);
+    color: var(--ink-2);
+    font-size: var(--text-body);
+    line-height: 1.75;
+    overflow-wrap: break-word;
+    font-feature-settings: "kern", "calt";
+  }
+
+  /* ── text ─────────────────────────────────────────────────────────────── */
+  .prose :where(p, ul, ol, dl, blockquote, pre, table, figure, details, iframe, hr) {
+    margin-top: var(--prose-gap);
+    margin-bottom: 0;
+  }
+  .prose :where(strong, b) { color: var(--ink); font-weight: 600; }
+  .prose :where(em, i) { font-style: italic; }
+  .prose :where(del, s) { color: var(--ink-3); }
+  .prose :where(small) { font-size: var(--text-small); }
+  .prose :where(sup, sub) { font-size: 0.75em; line-height: 0; }
+  .prose :where(abbr[title]) { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+  .prose :where(mark) { background: var(--warning-soft); color: var(--badge-warning-ink); border-radius: 0.2em; padding: 0 0.15em; }
+
+  /* Links: the ink, underlined at the graphics level and darker on hover — the underline is
+     the cue, never colour alone (the accent is the action, not a link colour). */
+  .prose :where(a) {
+    color: var(--ink);
+    text-decoration-line: underline;
+    text-decoration-color: var(--ink-faint);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--dur-hover) var(--ease-out-quart);
+  }
+  .prose :where(a):hover { text-decoration-color: var(--ink); }
+  .prose :where(a code) { color: inherit; }
+
+  /* ── headings ─────────────────────────────────────────────────────────── */
+  .prose :where(h2, h3, h4, h5, h6) {
+    color: var(--ink);
+    text-wrap: balance;
+    margin-bottom: 0;
+  }
+  .prose :where(h2) {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: var(--text-h3);
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin-top: 2.25em;
+  }
+  .prose :where(h3) {
+    font-family: var(--font-text);
+    font-weight: 600;
+    font-size: var(--text-lead);
+    line-height: 1.4;
+    margin-top: 2em;
+  }
+  .prose :where(h4, h5, h6) {
+    font-family: var(--font-text);
+    font-weight: 600;
+    font-size: var(--text-body);
+    line-height: 1.5;
+    margin-top: 1.75em;
+  }
+  /* a heading pulls the next block closer: it introduces it */
+  .prose :where(h2, h3, h4, h5, h6) + * { margin-top: 0.75em; }
+  /* the section a TOC link jumps to is easy to find */
+  .prose :where(h2, h3, h4):target { text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 6px; }
+
+  /* ── lists ────────────────────────────────────────────────────────────── */
+  .prose :where(ul, ol) { padding-left: 1.375em; }
+  .prose :where(ul) { list-style: disc; }
+  .prose :where(ol) { list-style: decimal; }
+  .prose :where(ul ul) { list-style: circle; }
+  .prose :where(li) { margin-top: 0.5em; padding-left: 0.25em; }
+  .prose :where(li)::marker { color: var(--prose-marker); }
+  .prose :where(ol > li)::marker { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+  .prose :where(li > ul, li > ol) { margin-top: 0.5em; }
+  .prose :where(li > p) { margin-top: 0.5em; }
+  /* GFM task lists: the checkbox is the marker */
+  .prose :where(ul.contains-task-list, ul:has(> li > input[type="checkbox"])) { list-style: none; padding-left: 0.25em; }
+  .prose :where(li.task-list-item, li:has(> input[type="checkbox"])) { padding-left: 0; }
+  .prose :where(input[type="checkbox"]) {
+    width: 1em; height: 1em; margin: 0 0.6em 0 0; vertical-align: -0.125em;
+    accent-color: var(--accent);
+  }
+  .prose :where(dt) { color: var(--ink); font-weight: 600; margin-top: 1em; }
+  .prose :where(dd) { margin-top: 0.25em; padding-left: 1.375em; }
+
+  /* ── quotes, rules, media ─────────────────────────────────────────────── */
+  /* A blockquote is an aside — a note, a warning, a quoted prompt — not a pull quote: body
+     size on a tonal panel, so it reads as set apart without outshouting the headings
+     around it (the legal pages open with one). The panel is the cue; a bold first line
+     names it. */
+  .prose :where(blockquote) {
+    background: var(--tonal);
+    border-radius: calc(var(--radius) * 0.625);
+    padding: 1em 1.25em;
+    color: var(--ink-2);
+    font-size: inherit;
+    line-height: 1.7;
+  }
+  .prose :where(blockquote p) { margin-top: 0.75em; }
+  .prose :where(blockquote > :first-child) { margin-top: 0; }
+
+  .prose :where(hr) {
+    border: 0;
+    border-top: 1px solid var(--line-strong);
+    margin-top: 3em;
+    margin-bottom: 3em;
+  }
+  .prose :where(hr) + * { margin-top: 0; }
+
+  .prose :where(img) {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: calc(var(--radius) * 0.625);
+    border: 1px solid var(--line);
+    margin-top: 2em;
+    margin-bottom: 2em;
+  }
+  .prose :where(p > img:only-child) { margin: 0; }
+  .prose :where(figure) { margin-top: 2em; margin-bottom: 2em; }
+  .prose :where(figure img) { margin: 0; }
+  .prose :where(figcaption) { margin-top: 0.75em; font-size: var(--text-small); line-height: 1.5; color: var(--ink-3); }
+  .prose :where(iframe) {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    height: auto;
+    border: 0;
+    border-radius: calc(var(--radius) * 0.625);
+    background: var(--surface);
+  }
+
+  /* ── code ─────────────────────────────────────────────────────────────── */
+  .prose :where(code, kbd, samp) { font-family: var(--font-code); font-size: 0.875em; }
+  .prose :where(:not(pre) > code) {
+    color: var(--ink);
+    background: var(--prose-inline-code-bg);
+    border-radius: calc(var(--radius) * 0.375);
+    padding: 0.125em 0.375em;
+    /* a file name or command is one token: one that doesn't fit the rest of the line
+       moves to the next whole ("docker-compose.yml", never "docker-" / "compose.yml");
+       only a token longer than a full line wraps inside, anywhere, so it never overflows */
+    display: inline-block;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  .prose :where(kbd) {
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-bottom-width: 2px;
+    border-radius: calc(var(--radius) * 0.375);
+    padding: 0.0625em 0.375em;
+    font-size: 0.8125em;
+  }
+  .prose :where(pre) {
+    /* the code panel: the 30-tone card with a hairline, the ink on it — the same in both schemes */
+    background: var(--prose-code-bg);
+    color: var(--ink);
+    border: 1px solid var(--prose-code-line);
+    border-radius: var(--radius);
+    padding: 1em 1.25em;
+    overflow-x: auto;
+    /* a sideways swipe that reaches the end stops here, not in the browser's back gesture */
+    overscroll-behavior-x: contain;
+    font-size: var(--text-small);
+    line-height: 1.7;
+    tab-size: 2;
+    -webkit-overflow-scrolling: touch;
+  }
+  .prose :where(pre code) {
+    font-size: inherit;
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    color: inherit;
+    white-space: pre;
+  }
+  /* a labelled block names its language in the corner, from the class markdown.ts keeps */
+  .prose :where(pre:has(> code[class*="language-"])) { position: relative; padding-top: 2.25em; }
+  .prose :where(pre > code[class*="language-"])::before {
+    position: absolute;
+    top: 0.75em;
+    left: 1.25em;
+    font-family: var(--font-text);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .prose :where(pre > code.language-ts, pre > code.language-typescript)::before { content: "TypeScript"; }
+  .prose :where(pre > code.language-tsx)::before { content: "TSX"; }
+  .prose :where(pre > code.language-js, pre > code.language-javascript)::before { content: "JavaScript"; }
+  .prose :where(pre > code.language-jsx)::before { content: "JSX"; }
+  .prose :where(pre > code.language-bash, pre > code.language-sh, pre > code.language-shell, pre > code.language-zsh)::before { content: "Shell"; }
+  .prose :where(pre > code.language-json)::before { content: "JSON"; }
+  .prose :where(pre > code.language-yaml, pre > code.language-yml)::before { content: "YAML"; }
+  .prose :where(pre > code.language-sql)::before { content: "SQL"; }
+  .prose :where(pre > code.language-css)::before { content: "CSS"; }
+  .prose :where(pre > code.language-html)::before { content: "HTML"; }
+  .prose :where(pre > code.language-diff)::before { content: "Diff"; }
+  .prose :where(pre > code.language-env, pre > code.language-dotenv)::before { content: ".env"; }
+  .prose :where(pre > code.language-md, pre > code.language-markdown)::before { content: "Markdown"; }
+  .prose :where(pre > code.language-txt, pre > code.language-text)::before { content: "Text"; }
+  /* an unlisted language: no label, no gap */
+  .prose :where(pre:has(> code[class*="language-"]:not(.language-ts, .language-typescript, .language-tsx, .language-js, .language-javascript, .language-jsx, .language-bash, .language-sh, .language-shell, .language-zsh, .language-json, .language-yaml, .language-yml, .language-sql, .language-css, .language-html, .language-diff, .language-env, .language-dotenv, .language-md, .language-markdown, .language-txt, .language-text))) { padding-top: 1em; }
+
+  /* ── highlighted code blocks (renderMarkdownHighlighted: the docs) ─────── */
+  /* A framed block like the landing page's code panels: a caption bar naming the language, where
+     the copy button lands after hydration (its 28 px is inside the bar's height, so nothing
+     moves), and the highlighted <pre> beneath on the same card. */
+  .prose figure.code-block {
+    margin-top: var(--prose-gap);
+    margin-bottom: 0;
+    background: var(--prose-code-bg);
+    border: 1px solid var(--prose-code-line);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .prose figure.code-block > figcaption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 2.5rem;
+    margin: 0;
+    padding: 0.25rem 0.375rem 0.25rem 1.25rem;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-text);
+    font-size: var(--text-caption);
+    font-weight: 600;
+    line-height: 1.35;
+    letter-spacing: 0.04em;
+    color: var(--ink-3);
+  }
+  .prose figure.code-block > pre {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 1em 1.25em;
+  }
+  /* prose in a fence (a prompt, ```text): its lines wrap at the panel, the text copied is unchanged */
+  .prose figure.code-block-wrap > pre,
+  .prose figure.code-block-wrap > pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* keyboard focus on a block that scrolls sideways (code-copy.tsx makes it focusable) */
+  .prose figure.code-block > pre:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+
+  /* ── tables ───────────────────────────────────────────────────────────── */
+  /* A wide table scrolls inside itself; the page never scrolls sideways. */
+  .prose :where(table) {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;   /* as pre: the end of a swipe stays in the table */
+    border-collapse: collapse;
+    font-size: var(--text-small);
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+  }
+  .prose :where(thead th) {
+    color: var(--ink);
+    font-weight: 600;
+    text-align: left;
+    vertical-align: bottom;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .prose :where(th, td) { padding: 0.625em 1em 0.625em 0; vertical-align: top; }
+  .prose :where(th:last-child, td:last-child) { padding-right: 0; }
+  .prose :where(tbody tr) { border-bottom: 1px solid var(--line); }
+  .prose :where(tbody tr:last-child) { border-bottom: 0; }
+  .prose :where(th[align="center"], td[align="center"]) { text-align: center; }
+  .prose :where(th[align="right"], td[align="right"]) { text-align: right; }
+  .prose :where(caption) { caption-side: bottom; margin-top: 0.75em; text-align: left; color: var(--ink-3); }
+  /* a path or command in a cell stays on one line; a table too wide for the measure scrolls (above) */
+  .prose :where(td, th) :where(code) { white-space: nowrap; overflow-wrap: normal; }
+  /* …at the caption step, not 0.875em of the cell's 14 px (12.25 px, off the scale: TYP-1) */
+  .prose :where(td, th) :where(code) { font-size: var(--text-caption); }
+
+  /* ── disclosure, footnotes ────────────────────────────────────────────── */
+  .prose :where(details) {
+    border: 1px solid var(--line);
+    border-radius: calc(var(--radius) * 0.625);
+    padding: 0.75em 1em;
+    background: var(--surface);
+  }
+  .prose :where(summary) { cursor: pointer; color: var(--ink); font-weight: 600; }
+  .prose :where(details[open] > summary) { margin-bottom: 0.5em; }
+
+  .prose :where(section.footnotes) {
+    margin-top: 3em;
+    padding-top: 1.25em;
+    border-top: 1px solid var(--line-strong);
+    font-size: var(--text-small);
+    line-height: 1.6;
+    color: var(--ink-3);
+  }
+  .prose :where(section.footnotes li) { margin-top: 0.375em; }
+  .prose :where(sup > a) { text-decoration: none; padding: 0 0.1em; }
+
+  /* ── dark (TYP-10) ────────────────────────────────────────────────────── */
+  /* light type on dark reads heavier and tighter: a little more air, a lighter code panel step */
+  .dark .prose { line-height: 1.8; }
+  .dark .prose :where(strong, b) { font-weight: 560; }
+  .dark .prose { --prose-code-bg: var(--surface); --prose-code-line: var(--line-strong); }
+
+  /* the first and last child sit flush with the container (last, so it wins the rhythm rules) */
+  .prose > :first-child { margin-top: 0; }
+  .prose > :last-child { margin-bottom: 0; }
+
+  /* ── the docs' width ──────────────────────────────────────────────────── */
+  /* In the docs, reading text keeps the measure while code, tables and images use the whole
+     column: a command or a config file is read across, not wrapped, and the docs' tables have
+     three columns. The opening paragraph is the page's lead (the docs have no separate one). */
+  .prose.prose-docs { max-width: none; }
+  .prose-docs > :where(p, ul, ol, dl, blockquote, h2, h3, h4, h5, h6, details, hr, section) { max-width: var(--measure, 52ch); }
+  .prose-docs.prose-lead > p:first-child { font-size: var(--text-lead); line-height: 1.6; color: var(--ink-2); text-wrap: pretty; }
+  /* code in the lead is set at the body step (0.875em of the fluid lead lands between steps: TYP-1) */
+  .prose-docs.prose-lead > p:first-child :where(code) { font-size: var(--text-body); }
+
+  /* ── print ────────────────────────────────────────────────────────────── */
+  @media print {
+    .prose { max-width: none; color: #000; }
+    .prose :where(a)::after { content: " (" attr(href) ")"; font-size: 0.85em; color: #555; }
+    .prose :where(a[href^="#"])::after { content: ""; }
+    .prose :where(pre) { white-space: pre-wrap; border-color: #ccc; }
+  }
+}

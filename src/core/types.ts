@@ -1,0 +1,402 @@
+//
+// The domain, once. Every adapter (data, billing, email), every page and every
+// MCP tool speaks these types — never a library's own shapes. A Better Auth
+// session becomes an `Identity`, then the app's own `User`; a Postgres row
+// becomes a `Post`.
+//
+// Rules: ids are opaque strings (uuid in Postgres); every
+// timestamp is an ISO-8601 string; money is integer minor units (cents).
+//
+
+/** Better Auth is the only auth. Kept as a type so stored rows say where an identity came from. */
+export type AuthProviderId = "better-auth";
+/** postgres (your server, or embedded PGlite in development) | memory (unit tests only). */
+export type DataProviderId = "postgres" | "memory";
+/** Polar (merchant of record), or none: billing is optional and off by default. */
+export type BillingProviderId = "polar" | "none";
+/** Resend, or console (prints to the server log) in development. */
+export type EmailProviderId = "resend" | "console";
+
+/** A page of results. `nextCursor` is opaque; pass it back to get the next page. */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+export interface ListQuery {
+  limit?: number;
+  cursor?: string | null;
+}
+
+// ---------------------------------------------------------------- users
+
+export type Role = "user" | "admin";
+
+/** Who the auth provider says is signed in. Adapters produce this; nothing else does. */
+export interface Identity {
+  provider: AuthProviderId;
+  providerUserId: string;
+  email: string;
+  name: string | null;
+  image: string | null;
+  emailVerified: boolean;
+}
+
+/** The app's own user row, keyed by (authProvider, authProviderUserId). Roles live here, not at the provider. */
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  image: string | null;
+  role: Role;
+  banned: boolean;
+  authProvider: AuthProviderId;
+  authProviderUserId: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+}
+
+export type UserPatch = Partial<Pick<User, "name" | "role" | "banned">>;
+
+// ---------------------------------------------------------------- content
+
+/**
+ * One editable piece of the site — site settings, navigation, the hero, the
+ * FAQ … — stored as JSON under a key from CONTENT_KEYS (src/core/content.ts),
+ * validated by that key's schema on every read and write.
+ */
+export interface ContentEntry {
+  key: string;
+  value: unknown;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------- posts
+
+/** One table for every long-form document: blog posts, changelog entries and static pages (privacy, terms, about). */
+export type PostKind = "post" | "changelog" | "page";
+export type PostStatus = "draft" | "published";
+
+export interface Post {
+  id: string;
+  kind: PostKind;
+  slug: string;
+  title: string;
+  description: string;
+  /** Markdown (GFM). Rendered and sanitised on the server. */
+  body: string;
+  coverImage: string | null;
+  /**
+   * What the cover shows, for its alt text and og:image:alt. Null or empty
+   * means the cover is decorative (alt=""). Meaningless without a cover.
+   */
+  coverAlt: string | null;
+  tags: string[];
+  status: PostStatus;
+  /**
+   * Shown on the indexes: /blog, tag pages, the changelog list, "Keep
+   * reading", the landing page and llms.txt. A different question from
+   * `status`: an unlisted PUBLISHED post still answers 200 at its URL and stays
+   * in the sitemap, the RSS feed and llms-full.txt — it is only no longer
+   * promoted. Use it when a post outlives its reason to be advertised (the
+   * feature it announced is gone, a newer guide supersedes it): unpublishing
+   * would throw away its rankings and inbound links; leaving it listed keeps
+   * advertising something stale. Default true.
+   */
+  listed: boolean;
+  authorName: string | null;
+  seoTitle: string | null;
+  seoDescription: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PostInput {
+  kind: PostKind;
+  slug: string;
+  title: string;
+  description?: string;
+  body?: string;
+  coverImage?: string | null;
+  coverAlt?: string | null;
+  tags?: string[];
+  status?: PostStatus;
+  /** Defaults to true (see Post.listed). */
+  listed?: boolean;
+  authorName?: string | null;
+  seoTitle?: string | null;
+  seoDescription?: string | null;
+  /** Defaults to now when a post is first published. */
+  publishedAt?: string | null;
+  /**
+   * Seed and audit restore only: keep the original id and timestamps, so a
+   * restored post keeps its audit history and a seeded post reports the date it
+   * was written, not the install date. Omitted → a new id and now.
+   */
+  id?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** A partial update. Ids and timestamps are the store's, never patched. */
+export type PostPatch = Partial<Omit<PostInput, "kind" | "id" | "createdAt" | "updatedAt">>;
+
+export interface PostQuery extends ListQuery {
+  kind?: PostKind;
+  status?: PostStatus;
+  /**
+   * true → listed posts only; false → unlisted only; omitted → both. Only the
+   * index readers set it (listListed in src/server/services/posts.ts): the
+   * sitemap, feeds and llms-full.txt must keep unlisted posts.
+   */
+  listed?: boolean;
+  tag?: string;
+  search?: string;
+}
+
+// ---------------------------------------------------------------- plans
+
+export type PriceInterval = "month" | "year" | "one_time";
+
+export interface PlanPrice {
+  interval: PriceInterval;
+  amountCents: number;
+  /** ISO 4217, lower case: "usd". */
+  currency: string;
+  /** The Polar product this price checks out. Empty until set in /admin/plans. */
+  polarProductId: string | null;
+}
+
+export interface Plan {
+  id: string;
+  /** Stable slug used everywhere else ("starter", "pro"). Unique. */
+  key: string;
+  name: string;
+  description: string;
+  features: string[];
+  /** No prices → a free plan. */
+  prices: PlanPrice[];
+  highlighted: boolean;
+  /** Show "Contact us" instead of a checkout (enterprise). */
+  contactSales: boolean;
+  ctaLabel: string;
+  trialDays: number | null;
+  active: boolean;
+  sortOrder: number;
+  updatedAt: string;
+}
+
+export type PlanInput = Omit<Plan, "id" | "updatedAt">;
+
+// ---------------------------------------------------------------- billing
+
+export type SubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "canceled"
+  | "incomplete"
+  | "unpaid"
+  | "paused";
+
+/** Statuses that grant access. past_due only within PAST_DUE_GRACE_DAYS of the period end. */
+export const ENTITLED_STATUSES: readonly SubscriptionStatus[] = ["trialing", "active", "past_due"];
+
+/** How long a failed renewal keeps access while the provider retries the card. */
+export const PAST_DUE_GRACE_DAYS = 7;
+
+/**
+ * Pure: does this subscription still grant access at `now`? An entitled status
+ * whose period hasn't ended (or has none), or past_due within
+ * PAST_DUE_GRACE_DAYS of the period end — a failed renewal keeps access for a
+ * short grace while the card is retried, not forever. computeEntitlement() and
+ * every DataStore's stats().activeSubscriptions use this one rule (the Postgres
+ * store spells it in SQL).
+ */
+export function grantsAccess(sub: Pick<Subscription, "status" | "currentPeriodEnd">, now: number = Date.now()): boolean {
+  if (!ENTITLED_STATUSES.includes(sub.status)) return false;
+  if (!sub.currentPeriodEnd) return true;
+  const end = Date.parse(sub.currentPeriodEnd);
+  const graceMs = sub.status === "past_due" ? PAST_DUE_GRACE_DAYS * 24 * 60 * 60 * 1000 : 0;
+  return end + graceMs > now;
+}
+
+export interface Subscription {
+  id: string;
+  userId: string;
+  provider: Exclude<BillingProviderId, "none">;
+  providerSubscriptionId: string;
+  providerCustomerId: string | null;
+  planKey: string | null;
+  interval: PriceInterval | null;
+  status: SubscriptionStatus;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SubscriptionUpsert = Omit<Subscription, "id" | "createdAt" | "updatedAt">;
+
+export interface Purchase {
+  id: string;
+  userId: string;
+  provider: Exclude<BillingProviderId, "none">;
+  providerOrderId: string;
+  planKey: string | null;
+  amountCents: number;
+  currency: string;
+  refunded: boolean;
+  createdAt: string;
+}
+
+export type PurchaseInput = Omit<Purchase, "id" | "createdAt">;
+
+/** What a user may use right now — derived from subscriptions and purchases, never stored. */
+export interface Entitlement {
+  planKey: string | null;
+  source: "subscription" | "purchase" | "free";
+  status: SubscriptionStatus | "lifetime" | "free";
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+// ---------------------------------------------------------------- feedback & contact
+
+export type FeedbackKind = "bug" | "feature" | "general" | "contact";
+export type FeedbackStatus = "new" | "planned" | "in_progress" | "done" | "closed";
+
+export interface Feedback {
+  id: string;
+  userId: string | null;
+  email: string | null;
+  name: string | null;
+  kind: FeedbackKind;
+  title: string | null;
+  message: string;
+  status: FeedbackStatus;
+  adminNote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeedbackInput {
+  userId?: string | null;
+  email?: string | null;
+  name?: string | null;
+  kind: FeedbackKind;
+  title?: string | null;
+  message: string;
+}
+
+// ---------------------------------------------------------------- email list
+
+export type SubscriberStatus = "subscribed" | "unsubscribed";
+
+export interface Subscriber {
+  id: string;
+  email: string;
+  source: string | null;
+  status: SubscriberStatus;
+  createdAt: string;
+}
+
+// ---------------------------------------------------------------- agents (MCP)
+
+/**
+ * What an MCP agent key may do. Scopes are cumulative:
+ *  - read  — read everything that is not a secret
+ *  - write — read + edit and publish content, posts, plans, feedback
+ *  - admin — write + users, roles, subscribers, agent keys
+ */
+export type AgentScope = "read" | "write" | "admin";
+
+export interface AgentKey {
+  id: string;
+  name: string;
+  scope: AgentScope;
+  /** Last 6 characters of the key, to recognise it in a list. */
+  hint: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  /**
+   * The users.id of the admin who minted it; null for keys minted by the CLI
+   * (scripts/mcp-key.mts), minted before creators were recorded, whose
+   * creator has since been deleted, and for the MCP_DEV_KEY stand-in
+   * (src/server/mcp/auth.ts). Demoting, banning or deleting that admin
+   * revokes the key (src/server/services/users.ts).
+   */
+  createdBy: string | null;
+}
+
+// ---------------------------------------------------------------- audit
+
+export type ActorType = "user" | "agent" | "system";
+
+export interface Actor {
+  type: ActorType;
+  id: string | null;
+  /** Human-readable: an email, an agent key's name, "webhook:polar". */
+  label: string;
+  /**
+   * The read-only demo admin (src/core/demo.ts): every write service refuses
+   * it. Set by actorFor(); never stored (a refused write records nothing).
+   */
+  readOnly?: true;
+}
+
+/**
+ * Every write through the app's services and the MCP server is recorded with
+ * the value before and after, so any change can be inspected and undone.
+ */
+export interface AuditEntry {
+  id: string;
+  actor: Actor;
+  /** Verb in the form `<entity>.<verb>`: "content.update", "post.publish", "user.role". */
+  action: string;
+  entity: string;
+  entityId: string | null;
+  before: unknown;
+  after: unknown;
+  createdAt: string;
+}
+
+export type AuditInput = Omit<AuditEntry, "id" | "createdAt">;
+
+export interface AuditQuery extends ListQuery {
+  entity?: string;
+  entityId?: string;
+}
+
+// ---------------------------------------------------------------- overview
+
+/**
+ * New accounts and new email subscribers per day, for the overview's trends:
+ * `days` are UTC dates (YYYY-MM-DD), oldest first, ending today; `users[i]` and
+ * `subscribers[i]` are the rows created on `days[i]` (subscribers still
+ * subscribed). Counts of what exists now: a deleted account leaves its day.
+ */
+export interface Growth {
+  days: string[];
+  users: number[];
+  subscribers: number[];
+}
+
+/** The UTC days `growth()` covers: `count` dates ending on `now`'s day, oldest first. */
+export function growthDays(count: number, now: Date = new Date()): string[] {
+  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Array.from({ length: count }, (_, i) => new Date(end - (count - 1 - i) * 86_400_000).toISOString().slice(0, 10));
+}
+
+export interface Stats {
+  users: number;
+  admins: number;
+  subscribers: number;
+  activeSubscriptions: number;
+  purchases: number;
+  publishedPosts: number;
+  draftPosts: number;
+  openFeedback: number;
+}

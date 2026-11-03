@@ -1,0 +1,444 @@
+/* Standards (web-design): LAY-15 Native on a phone · COL-17 Forced colours keep every state · TYP-6 Line length · TYP-8 Real typography · TYP-10 Dark mode type · TYP-12 Codes and IDs read left to right · LAY-8 Focus is visible and never hidden · PAGE-5 A sticky header that never covers · UI-30 A scroller says so, and takes the keyboard · TYP-17 Long-form text is set completely, for reading */
+@layer base {
+  * { @apply border-line; }
+  html {
+    font-family: var(--font-text);
+    -webkit-font-smoothing: antialiased;
+    /* Kerning and the optical size axis, explicitly; no `text-rendering: optimizeLegibility` (v2.23):
+       kerning and ligatures are on by default in every engine now, and on a long page it made
+       Chrome on Android lay text out more slowly for nothing. */
+    font-kerning: normal;
+    font-optical-sizing: auto;
+    /* The scrollbar's room is kept whether the page scrolls or not, so the centred column never
+       moves sideways between a short page and a long one, or when a dialog locks the scroll
+       (Windows, Linux; overlay scrollbars take no room and are unaffected). */
+    scrollbar-gutter: stable;
+    font-synthesis: none;   /* never a faked bold or italic (TYP-8): a missing face shows as upright, and check:rendered names it */
+    /* NATIVE ON A PHONE (LAY-15). No grey/blue flash on tap: every control draws its own :active
+       press (motion.css), and the browser's flash would compete with it. No font inflation when a
+       phone turns to landscape. */
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  /* Controls: a quick second tap is a second press, never a double-tap zoom; a long press doesn't
+     select the label or open the callout. Controls only — text and links in prose stay selectable. */
+  :where(button, [role="button"], [role="tab"], [role="radio"], [role="switch"], [role="checkbox"], [role="menuitem"], [role="option"], summary) {
+    touch-action: manipulation;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  body {
+    @apply bg-bg text-ink;
+    font-size: var(--text-body);
+    line-height: 1.5rem;         /* 16 / 24: text set without a role still lands on the 4 px rhythm */
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 700;            /* Space Grotesk, variable — real weights, never synthesised */
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  h4, h5, h6 { font-family: var(--font-text); font-weight: 600; color: var(--ink); }
+  p { text-wrap: pretty; }       /* Chrome + Safari; Firefox falls back to normal wrapping */
+  /* Selected text keeps its ink on a quiet grey (v2.23): the full inverse flashed a black block. */
+  ::selection { background: var(--selection); color: var(--ink); }
+  /* The editor's asked-about text keeps a mark while focus is in the question (CSS Highlight API). */
+  ::highlight(editor-ask) { background-color: var(--tonal-hover); color: var(--ink); }
+  /* Links in running text: underlined in the meta ink (--link-underline, ink-3: 4.6:1) and darker
+     on hover. The underline is the cue, never colour alone, because the accent is the ink. The ONE
+     rule for every link in prose (Prose no longer sets its own: its line-strong underline was 1.24:1
+     on the page, so links could not be found, v2.23). A link in reading text takes the full ink, a
+     step above the ink-2 around it; anywhere else it keeps its text's colour. */
+  :where(p, li, dd, td, figcaption, blockquote) > a:not([class]) {
+    color: inherit; text-decoration: underline; text-decoration-color: var(--link-underline);
+    text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-skip-ink: auto;
+    transition: text-decoration-color var(--dur-hover) var(--ease-out-quart);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    :where(p, li, dd, td, figcaption, blockquote) > a:not([class]):hover { text-decoration-color: var(--link-underline-hover); }
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+  /* WCAG 2.4.11 (LAY-8, PAGE-5): focus never hides under a sticky bar. Below 768 px the header
+     scrolls away; from 768 px it's sticky (72 px, 80 on touch). */
+  /* What's pinned at the top, named once, so nothing types a header height:
+     --sticky-header  the site header while it sticks (from 768 px: 40 px controls + 32 px padding;
+                      48 px controls on touch); 0 on a phone, where it scrolls away (PAGE-5). The
+                      components page's list pins under it and fills the rest of the screen. */
+  /* (defined in tokens.css, generated from web-design's tokens.json) */
+  html { scroll-padding-top: calc(var(--sticky-header) + 1.5rem); }
+  :target { scroll-margin-top: 0; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  /* Codes, keys and IDs read left to right in every language (TYP-12): isolated from the text
+     round them, so "order A-558" in an Arabic sentence doesn't come out as 558-A. */
+  :where(code, kbd, samp, [data-slot=kbd-group], [data-slot=dropdown-menu-shortcut], [data-slot=command-shortcut]) { direction: ltr; unicode-bidi: isolate; }
+  /* Right to left, an icon that points forward or back points the other way (TYP-13): chevrons and
+     arrows mirror where the text runs right to left. `transform`, so an icon's press dip (`scale`,
+     motion.css) still composes. By the dir ATTRIBUTE, not :dir(): the CSS build rewrites :dir(rtl)
+     into :lang(ar), :lang(he)… for older browsers, which a page set dir="rtl" without that lang
+     never matches (found testing, v2.11). A nested left-to-right region (a chart's plot) is reset.
+     Layout is logical throughout ui/ (ms/me, ps/pe, start/end, text-start); only centring, an
+     explicit side prop and measured positions stay physical. Shortcut chips stay left to right
+     like codes: "⌘E", never "E⌘". */
+  [dir="rtl"] :is(.lucide-chevron-right, .lucide-chevron-left, .lucide-chevrons-right, .lucide-chevrons-left, .lucide-arrow-right, .lucide-arrow-left, .lucide-arrow-up-right) { transform: scaleX(-1); }
+  [dir="rtl"] [dir="ltr"] :is(.lucide-chevron-right, .lucide-chevron-left, .lucide-chevrons-right, .lucide-chevrons-left, .lucide-arrow-right, .lucide-arrow-left, .lucide-arrow-up-right) { transform: none; }
+  /* A figure that proves something: the display face, bold, tabular. Its flag-topped 1
+     is part of the voice ("Counted, not claimed."). Mono stays for code and IDs. */
+  .figure { font-family: var(--font-display); font-weight: 700; font-variant-numeric: lining-nums proportional-nums; letter-spacing: -0.01em; }
+  /* Tabular only where digits stack in a column or count live — Space Grotesk's tabular 1 is 53% wider. */
+  .figure.tabular { font-variant-numeric: lining-nums tabular-nums; letter-spacing: 0; }
+  /* A figure inside running Inter text: Space Grotesk's cap height is 4% smaller. */
+  :is(p, li, span) > .figure-inline { font-family: var(--font-display); font-weight: 700; font-size: 1.04em; }
+}
+
+/* A horizontal scroller's "more this way" edge, in CSS only (no JavaScript, no listener):
+   a soft shade at the right edge while content runs past it, covered by a strip in the
+   scroller's own colour that travels with the content (background-attachment: local), so
+   the shade is gone once the end is in view. Set --scroll-cover to the colour behind the
+   scroller. The shade is graphics only, never text. Unlayered, so it beats a bg utility:
+   put it on the scroller only, never on chrome (the sticky header's edge is .scroll-edge,
+   motion.css). overscroll-behavior-x: a sideways swipe that reaches the scroller's end stops
+   there instead of carrying on into the browser's back/forward gesture. Table uses it while
+   it overflows. Upstreamed from OpenShipKit (v2.2). */
+.scroll-shade {
+  background:
+    linear-gradient(to left, var(--scroll-cover, var(--surface)) 40%, transparent) right center / 2.5rem 100% no-repeat local,
+    linear-gradient(to left, color-mix(in oklab, var(--ink) 14%, transparent), transparent) right center / 1.25rem 100% no-repeat scroll,
+    var(--scroll-cover, var(--surface));
+  overscroll-behavior-x: contain;
+}
+
+/* The same "more this way" edge for a scroller that has its own fill (a pill track on the tonal,
+   a code line in a tinted box), where .scroll-shade's covering strip would paint over it: the
+   scroller's end FADES OUT (a mask), whatever is behind it. CSS only: a scroll timeline on the
+   scroller itself, so the fade is there while content runs past the end and gone once the end is
+   in view; a scroller with nothing to scroll has no active timeline, so no fade (UI-30). Where
+   scroll timelines are missing (Firefox today) the scroller is simply unmasked. */
+@supports (animation-timeline: scroll()) {
+  .scroll-fade {
+    animation: ds-scroll-fade linear both;
+    animation-timeline: scroll(self inline);
+    --scroll-fade-to: to left;
+  }
+  [dir="rtl"] .scroll-fade { --scroll-fade-to: to right; }   /* the end edge; the attribute, not :dir() */
+  @keyframes ds-scroll-fade {
+    0%, 96% { mask-image: linear-gradient(var(--scroll-fade-to), transparent, #000 2.5rem); }
+    100% { mask-image: none; }
+  }
+}
+
+/* Dark mode (TYP-10) keeps the real weights — 400, 600, 700 — and adds no tracking. The ink a step
+   below white and the page a step above black already carry it. Easing the weights (380 body,
+   650 display, +0.005em on small text, v1.x–v2.7) thinned type twice over on a Mac, where
+   antialiased smoothing already lightens light-on-dark: the owner read it as faded, low-opacity
+   text (v2.8). It also overrode the weight of every Inter h1–h3 a component had set. */
+/* The display's wide-screen tracking and leading are tokens now (--tracking-display, --lh-display
+   in tokens.css, v2.23): one source, where they had been a token and a second rule here. */
+
+/* A TEXT FIELD SHOWS FOCUS ON ITS OWN EDGE (LAY-8, v2.30). Browsers count a click or a tap into a
+   text field as :focus-visible (typing follows), so the house ring, 2 px with a 2 px gap, haloed
+   every field on every tap: the owner read it as cheap. A field's focus is its edge instead: the
+   border takes the focus ink and doubles to 2 px (a 1 px shadow, so nothing shifts), no gap, no
+   outer ring. Still a 3:1 indicator for the keyboard (WCAG 2.4.7). An invalid field keeps its
+   danger edge while focused, a step thicker, so the error is never covered by the focus. Buttons,
+   links and every other control keep the ring, which only the keyboard shows them. Unlayered, so a
+   component's utilities can't undo it. The search inside a combobox's popup stays bare. */
+:is([data-slot=input], [data-slot=textarea]):focus-visible,
+[data-slot=input-group]:has([data-slot=input-group-control]:focus-visible):not([data-slot=combobox-content] *) {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus), var(--elev-control);
+}
+:is([data-slot=input], [data-slot=textarea])[aria-invalid=true]:focus-visible,
+[data-slot=input-group]:has([data-slot=input-group-control][aria-invalid=true]:focus-visible):not([data-slot=combobox-content] *) {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 2px var(--color-danger);
+}
+/* A writing surface with no edge of its own (the editor's document) has nothing to colour, and the
+   caret already says where you are once you click into it: the ring shows only when the keyboard
+   brought you there (data-input, motion/input-modality.tsx). */
+:root[data-input="pointer"] [contenteditable]:focus-visible { outline: none; }
+
+/* FORCED COLOURS (Windows contrast themes; COL-17). The system repaints every background and text
+   in its own few colours, so anything that shows a STATE only as a fill is lost: a selected pill,
+   the current place in a nav, a switch's thumb, a progress bar, a slider's range. Measured with the
+   mode emulated, all of those vanished. Unlayered, so no utility (outline-none, a bg-*) can undo it.
+   - A selected state is outlined in Highlight, keyed off the state's own ARIA, so any control that
+     marks itself correctly is covered (upstreamed from OpenShipKit, extended to radios and options).
+     A focused control keeps its focus ring instead.
+   - A switch, a progress bar and a slider opt out of the repaint for their own parts, drawn in system
+     colours: the track's edge in the text colour, the "on" or filled part in Highlight. */
+@media (forced-colors: active) {
+  :is(
+    a[aria-current="page"],
+    [aria-pressed="true"],
+    [role="tab"][aria-selected="true"],
+    [role="radio"][aria-checked="true"],
+    [role="option"][aria-selected="true"],
+    label:has(> input[type="radio"].sr-only:checked)
+  ):not(:focus-visible, :has(:focus-visible)) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  [data-slot=switch] { forced-color-adjust: none; background: Canvas; border-color: ButtonText; }
+  [data-slot=switch][data-checked] { background: Highlight; border-color: Highlight; }
+  [data-slot=switch-thumb] { forced-color-adjust: none; background: ButtonText; }
+  [data-slot=switch][data-checked] [data-slot=switch-thumb] { background: HighlightText; }
+  :is([data-slot=progress-track], [data-slot=slider-track]) { forced-color-adjust: none; background: Canvas; box-shadow: inset 0 0 0 1px CanvasText; }
+  :is([data-slot=progress-indicator], [data-slot=slider-range]) { forced-color-adjust: none; background: Highlight; }
+}
+
+/* LONG-FORM TEXT (Prose; TYP-6, TYP-14, TYP-17). Everything an article, a guide or a changelog brings
+   — MDX included — set once, here, so a post never falls back to the browser's defaults (v2.23: Prose
+   styled paragraphs, headings, lists, quotes and inline code; a table, a rule, an image, a nested list,
+   a definition, a key, a highlight and an h4 came out unstyled). In @layer components, so a utility on
+   an element still wins. The column's rhythm is the reading line: 17/28, paragraphs one line apart
+   (--space-paragraph), a section heading 48 px above and 16 below so it belongs to what it opens. */
+@layer components {
+  .ds-prose {
+    max-width: var(--measure);
+    font-size: var(--text-reading);
+    line-height: 1.75rem;
+    color: var(--ink-2);
+    overflow-wrap: break-word;   /* a pasted URL wraps instead of widening a phone page */
+    hanging-punctuation: first allow-end;   /* Safari: opening quotes hang in the margin */
+    /* Inter's reading forms (self-hosted Inter 4, v2.23): an l with a tail and an I with serifs, so
+       Il1 and a name like "Illa" read as the letters they are. Text only; figures keep their own. */
+    font-feature-settings: "cv05", "cv08";
+  }
+  .ds-prose > :first-child:not(h2, h3, h4) { margin-top: 0; }
+  /* Below 40rem the column is ~40 characters: hyphenate there only (needs <html lang>). */
+  @media (max-width: 40rem) { .ds-prose { hyphens: auto; -webkit-hyphens: auto; } }
+  .ds-prose :is(p, li, blockquote, figcaption, dd) { text-wrap: pretty; }
+
+  .ds-prose p { margin-top: var(--space-paragraph); }
+  .ds-prose :is(strong, b) { font-weight: 600; color: var(--ink); }
+  .ds-prose :is(em, i) { font-family: var(--font-inter-italic), var(--font-text); font-style: italic; }
+  .ds-prose sup { font-size: var(--text-caption); line-height: 0; }
+  .ds-prose small { font-size: var(--text-small); }
+  /* A link in reading text takes the full ink, one step above the text round it; its underline is
+     base.css's one rule (--link-underline, 4.6:1). */
+  .ds-prose a:not([class]) { color: var(--ink); }
+
+  .ds-prose h2 { margin-top: 3rem; margin-bottom: 1rem; font-family: var(--font-display); font-weight: 700;
+    font-size: var(--text-h3); line-height: var(--lh-h3); letter-spacing: -0.01em; color: var(--ink); }
+  .ds-prose h3 { margin-top: 2rem; margin-bottom: 0.5rem; font-family: var(--font-text); font-weight: 600;
+    font-size: var(--text-lead); line-height: 1.75rem; color: var(--ink); }
+  .ds-prose h4 { margin-top: 1.5rem; margin-bottom: 0.25rem; font-family: var(--font-text); font-weight: 600;
+    font-size: var(--text-reading); line-height: 1.75rem; color: var(--ink); }
+  .ds-prose :is(h2, h3, h4) + :is(p, ul, ol, dl) { margin-top: 0; }
+  .ds-prose :is(h2, h3, h4)[id] { scroll-margin-top: calc(var(--sticky-header) + 1.5rem); }
+
+  .ds-prose :is(ul, ol) { margin-top: var(--space-paragraph); padding-inline-start: 1.25rem; }
+  .ds-prose ul { list-style: disc; }
+  .ds-prose ol { list-style: decimal; }
+  .ds-prose li { margin-top: 0.5rem; padding-inline-start: 0.25rem; }
+  .ds-prose li :is(ul, ol) { margin-top: 0.5rem; }   /* a nested list belongs to its item */
+  .ds-prose li > p { margin-top: 0.5rem; }
+  .ds-prose li::marker { color: var(--ink-3); }      /* bullets point, they don't compete with the words */
+  .ds-prose ol > li::marker { font-variant-numeric: tabular-nums; }
+
+  .ds-prose dl { margin-top: var(--space-paragraph); }
+  .ds-prose dt { margin-top: 1rem; font-weight: 600; color: var(--ink); }
+  .ds-prose dt:first-child { margin-top: 0; }
+  .ds-prose dd { margin-top: 0.25rem; padding-inline-start: 1.25rem; }
+
+  .ds-prose blockquote { margin-block: 2rem; border-inline-start: 2px solid var(--line-strong);
+    padding-inline-start: 1.25rem; font-size: var(--text-lead); line-height: 1.75rem; color: var(--ink); }
+  .ds-prose blockquote > p:first-child { margin-top: 0; }
+  .ds-prose blockquote cite { display: block; margin-top: 0.75rem; font-size: var(--text-small); line-height: 1.25rem; font-style: normal; color: var(--ink-3); }
+
+  .ds-prose hr { margin-block: 3rem; border: 0; border-top: 1px solid var(--line-strong); }
+
+  .ds-prose :not(pre) > code { border-radius: 0.25rem; background: var(--tonal); padding: 0.125rem 0.25rem;
+    font-family: var(--font-code); font-size: 0.875em; color: var(--ink); }
+  .ds-prose kbd { border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 0.25rem;
+    padding: 0 0.25rem; font-family: var(--font-text); font-size: 0.8125em; font-weight: 600; color: var(--ink); }
+  .ds-prose mark { border-radius: 0.125rem; background: var(--warning-soft); color: var(--ink); padding-inline: 0.125em; }
+  .ds-prose abbr[title] { text-decoration: underline dotted var(--ink-faint); text-underline-offset: 3px; cursor: help; }
+  .ds-prose :is(del, s) { color: var(--ink-3); }
+
+  /* Images and figures in the text take the column's width, the card's radius, and a caption that
+     says what they show (PAGE-9: sized, described; the width and height attributes stop the shift). */
+  .ds-prose :is(img, video) { display: block; max-width: 100%; height: auto; margin-top: 2rem; border-radius: var(--radius); }
+  .ds-prose figure { margin-top: 2rem; }
+  .ds-prose figure > :is(img, video) { margin-top: 0; }
+  .ds-prose figcaption { margin-top: 0.75rem; font-size: var(--text-small); line-height: 1.25rem; color: var(--ink-3); }
+
+  /* A table scrolls inside the column instead of widening the page (LAY-5, UI-30). Wrap it in a
+     <div class="ds-prose-table" tabindex="0" role="region" aria-label="…"> when it may be wide. */
+  .ds-prose table { width: 100%; margin-top: 2rem; border-collapse: collapse; font-size: var(--text-small); line-height: 1.25rem; font-variant-numeric: tabular-nums; }
+  .ds-prose .ds-prose-table { margin-top: 2rem; overflow-x: auto; }
+  .ds-prose .ds-prose-table > table { margin-top: 0; }
+  .ds-prose :is(th, td) { padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--line-strong); text-align: start; vertical-align: top; }
+  .ds-prose :is(th, td):first-child { padding-inline-start: 0; }
+  .ds-prose :is(th, td):last-child { padding-inline-end: 0; }
+  .ds-prose th { font-weight: 600; color: var(--ink); }
+  .ds-prose thead th { color: var(--ink-3); font-weight: 600; }
+}
+
+/* THE ARTICLE'S MARGINS (marketing/article.tsx). Below 80rem: one column, the outline a closed
+   disclosure above the text, so the opening stays in the first screen (v2.28: it was an open list,
+   and a 13-entry comparison pushed its answer a whole phone screen down). From 80rem, three tracks on
+   one axis: the outline in the left margin, open, staying in view, scrolling inside itself when it is
+   taller than the window; the reading column; sidenotes in the right margin, each beside its line.
+   The tracks are measured in the reading role, so the middle one is exactly the column's 52ch.
+   The outline's rail: subsections indented under their section, the section being read marked in
+   full ink with its stroke on the rail (article-outline.tsx sets aria-current), never animated. */
+@layer components {
+  .ds-article { container: ds-article / inline-size; }
+  .ds-outline { margin-inline: auto; width: 100%; max-width: var(--measure); font-size: var(--text-reading);
+    margin-bottom: 2rem; border-radius: var(--radius); background: var(--tonal); }
+  .ds-outline-summary { display: flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; padding: 0.75rem 1.25rem;
+    border-radius: var(--radius); cursor: pointer; list-style: none;
+    font-size: var(--text-small); line-height: 1.25rem; font-weight: 600; color: var(--ink-2); }
+  .ds-outline-summary::-webkit-details-marker { display: none; }
+  .ds-outline-chevron { margin-inline-start: auto; width: 1rem; height: 1rem; flex: none; color: var(--ink-3);
+    transition: rotate var(--dur-hover) var(--ease-out-quart); }
+  .ds-outline-details[open] .ds-outline-chevron { rotate: 180deg; }
+  .ds-outline-list { display: flex; flex-direction: column; margin: 0 1.25rem 1.25rem;
+    border-inline-start: 1px solid var(--line-strong); font-size: var(--text-small); line-height: 1.25rem; }
+  .ds-outline-list a { display: block; margin-inline-start: -1px; border-inline-start: 2px solid transparent;
+    padding-block: 0.375rem; padding-inline: 0.75rem 0; color: var(--ink-2);
+    transition: color var(--dur-hover) var(--ease-out-quart); }
+  .ds-outline-list [data-level="3"] a { padding-inline-start: 1.5rem; }
+  .ds-outline-list a:hover { color: var(--ink); }
+  .ds-outline-list a[aria-current] { color: var(--ink); border-inline-start-color: var(--ink); transition: none; }
+  @media (pointer: coarse) { .ds-outline-list a { padding-block: 0.75rem; } }
+  .ds-article-column .ds-sidenote { display: none; }
+
+  /* A table of four columns or more is looked at more than read, and the column squeezed it into
+     scrolling: it takes up to the article's wide width (56rem), centred on the column, or from the
+     column's start edge into the empty margin when the outline holds the other one. A narrower table,
+     and any table in an article with sidenotes (they own the right margin), stays in the column. */
+  .ds-article:not(:has(.ds-sidenote)) .ds-prose-table:has(tr > :nth-child(4)) {
+    --ds-table-w: min(56rem, 100cqi);
+    width: var(--ds-table-w); max-width: none; margin-inline: calc((100% - var(--ds-table-w)) / 2); }
+
+  @media (min-width: 80rem) {
+    .ds-article { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, var(--measure)) minmax(0, 1fr);
+      column-gap: 3rem; font-size: var(--text-reading); }
+    .ds-article > .ds-article-column { grid-column: 2; grid-row: 1; margin: 0; }
+    .ds-article > .ds-outline { grid-column: 1; grid-row: 1; align-self: start; justify-self: end;
+      position: sticky; top: calc(var(--sticky-header) + 2rem); width: min(14rem, 100%); margin: 0;
+      max-height: calc(100dvh - var(--sticky-header) - 4rem); overflow-y: auto; overscroll-behavior: contain;
+      scrollbar-width: thin; background: none; border-radius: 0; }
+    .ds-outline-summary { min-height: 0; padding: 0; cursor: default; pointer-events: none;
+      font-size: var(--text-caption); line-height: 1rem; color: var(--ink-3); }
+    .ds-outline-chevron { display: none; }
+    /* Open before the script runs, so nothing shifts in the margin; the script then sets [open]. */
+    .ds-outline-details::details-content { content-visibility: visible; }
+    .ds-outline-list { margin: 0.75rem 0 0; border-inline-start-color: var(--line); }
+    .ds-article:has(> .ds-outline):not(:has(.ds-sidenote)) .ds-prose-table:has(tr > :nth-child(4)) {
+      --ds-table-w: min(56rem, (100cqi + 100%) / 2); margin-inline: 0; }
+    .ds-article-column .ds-sidenote { display: block; float: inline-end; clear: inline-end; position: relative;
+      width: 14rem; margin-inline-end: -17rem; margin-block: 0.25rem 1rem;
+      font-size: var(--text-small); line-height: 1.25rem; color: var(--ink-3); text-wrap: pretty; }
+    .ds-sidenote-n { margin-inline-end: 0.375rem; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+    /* With the notes beside their lines, the number in the text is just a number, and the end list is
+       kept for screen readers (it holds the same notes, read once: the side copy is aria-hidden). */
+    .ds-article:has(.ds-sidenote) .ds-fnref { pointer-events: none; text-decoration: none; color: var(--ink-3); }
+    .ds-article:has(.ds-sidenote) .ds-notes { position: absolute; width: 1px; height: 1px; overflow: hidden;
+      clip-path: inset(50%); white-space: nowrap; margin: 0; padding: 0; border: 0; }
+  }
+
+  /* A heading's own link: a quiet link mark after its words, there under the pointer and on focus only. */
+  .ds-anchor { display: inline-flex; vertical-align: middle; margin-inline-start: 0.375em; padding: 0.25rem;
+    border-radius: 0.375rem; color: var(--ink-faint);
+    opacity: 0; transition: opacity var(--dur-hover) var(--ease-out-quart), color var(--dur-hover) var(--ease-out-quart); }
+  .ds-anchor > svg { width: 0.625em; height: 0.625em; }
+  .ds-anchor:focus-visible { opacity: 1; }
+  @media (hover: hover) and (pointer: fine) {
+    .ds-anchored:hover .ds-anchor { opacity: 1; }
+    .ds-anchor:hover { color: var(--ink); }
+  }
+  @media (hover: none), (pointer: coarse) { .ds-anchor:not(:focus-visible) { display: none; } }
+  .ds-anchored { scroll-margin-top: calc(var(--sticky-header) + 1.5rem); }
+}
+
+/* ds-sync:keep start app-shell-sticky-header */
+/* The signed-in shell (dashboard, admin) has its own top bar, sticky at EVERY width
+   (app-shell.tsx: h-14), so on a phone too it counts as --sticky-header. html:has()
+   outranks :root, so this wins in every media query above. */
+@layer base {
+  html:has([data-slot=sidebar-inset]) { --sticky-header: 3.5rem; }
+}
+/* ds-sync:keep end */
+
+/* ds-sync:keep start section-tone */
+/* Two page-tone sections in a row share ONE section gap: the second drops its top padding,
+   so the space between them is the first one's bottom padding, not both stacked (a doubled
+   gap on the same tone reads as a missing section). A band or the inverse close keeps its
+   padding: its own edge marks the change. Unlayered, so it beats the py-section utility. */
+section[data-tone="page"] + section[data-tone="page"] {
+  padding-top: 0;
+}
+/* ds-sync:keep end */
+
+/* ds-sync:keep start forced-colors-selection */
+/* Forced colours (Windows High Contrast, LAY-8): the system repaints every background, so a
+   selected state drawn only as a fill (the pricing interval, the editor's Write/Preview, tabs,
+   the current nav item, the sidebar's active row) would look like its neighbours. Give each a
+   system-colour outline instead. Unlayered, so no utility's outline-none can hide it; a focused
+   control keeps its focus ring instead. The selectors are the states' own ARIA, so any new pill
+   that marks itself correctly is covered. */
+@media (forced-colors: active) {
+  :is(
+    a[aria-current="page"],
+    [aria-pressed="true"],
+    [role="tab"][aria-selected="true"],
+    label:has(> input[type="radio"].sr-only:checked)
+  ):not(:focus-visible, :has(:focus-visible)) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+/* ds-sync:keep end */
+
+/* ds-sync:keep start code-tokens */
+/* Syntax colour, one rule for every highlighted block (the landing page's CodePanel and the
+   docs' Markdown code): src/server/highlight.ts puts each token's light and dark colour on it
+   as --shiki-light / --shiki-dark, and this picks the scheme's — so code follows the scheme
+   switch with no re-render and no script. Only tokens that carry the properties are coloured;
+   everything else keeps its ink. The inverse band in a light page is dark, so it takes the
+   dark colours. highlightTokens raises every colour to 4.5:1 on the card first (src/shared/code-contrast.ts). */
+.code-tokens [style*="--shiki-light"] { color: var(--shiki-light); }
+:is(.dark, :root:not(.dark) .invert-scheme) .code-tokens [style*="--shiki-dark"] { color: var(--shiki-dark); }
+/* ds-sync:keep end */
+
+/* ds-sync:keep start hero-preview */
+/* The hero's admin preview (src/components/sections/hero-preview). Its frame sits deeper
+   than a plain mockup — a hairline ring, a contact shadow and a long soft one, so it reads
+   as a window resting above the page — and its toolbar carries a 1 px top highlight, the
+   lit edge of the glass. Defined per scheme as roles (COL-8, COL-11): on light the ring
+   carries the edge; on dark the highlight does, because a shadow barely shows on #111.
+   Unlayered, so it replaces BrowserChrome's shadow-mockup utility. */
+:root {
+  --elev-hero:
+    0 0 0 1px rgb(0 0 0 / 0.03),
+    0 1px 2px rgb(0 0 0 / 0.06),
+    0 12px 24px -12px rgb(0 0 0 / 0.16),
+    0 48px 96px -40px rgb(0 0 0 / 0.32);
+  --chrome-highlight: rgb(255 255 255 / 0.9);
+}
+.dark {
+  --elev-hero:
+    0 0 0 1px rgb(0 0 0 / 0.5),
+    0 1px 2px rgb(0 0 0 / 0.4),
+    0 12px 24px -12px rgb(0 0 0 / 0.6),
+    0 48px 96px -40px rgb(0 0 0 / 0.8);
+  --chrome-highlight: rgb(255 255 255 / 0.08);
+}
+.hp-frame { box-shadow: var(--elev-hero); }
+.hp-frame [data-chrome-bar] { box-shadow: inset 0 1px 0 var(--chrome-highlight); }
+/* The screens' tab row scrolls sideways below 768 px with the soft "more" edge
+   (.scroll-shade); from 768 px it is the sidebar's column, which needs no shade. */
+@media (min-width: 48rem) {
+  .hp-tabs.scroll-shade { background: none; }
+}
+/* ds-sync:keep end */

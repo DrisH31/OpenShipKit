@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "openshipkit": {
+      "type": "http",
+      "url": "${OPENSHIPKIT_MCP_URL:-http://localhost:3000/api/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${OPENSHIPKIT_MCP_KEY:-}"
+      }
+    }
+  }
+}

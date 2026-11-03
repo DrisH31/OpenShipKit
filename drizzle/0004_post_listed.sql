@@ -1,0 +1,1 @@
+ALTER TABLE "posts" ADD COLUMN "listed" boolean DEFAULT true NOT NULL;

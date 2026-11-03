@@ -1,0 +1,156 @@
+# OpenShipKit in production: Postgres + a one-shot migration + the app, and
+# Caddy for automatic HTTPS when you ask for it.
+#
+#   npm run setup -- --compose --domain example.com   # writes .env with generated secrets (once)
+#   docker compose up -d --build                      # postgres → migrate → app on 127.0.0.1:3000
+#   docker compose --profile https up -d --build      # + Caddy on :80/:443 for DOMAIN
+#
+# Updating a running site — migrate BEFORE replacing the app, so the old app
+# serves until the migration has succeeded (deploy/vps/README.md, "Updating"):
+#
+#   docker compose --profile https build
+#   docker compose run --rm migrate
+#   docker compose --profile https up -d
+#
+# Compose reads `.env` next to this file — NOT .env.local (that one is for
+# `npm run dev`). It uses .env twice: to fill the ${…} below, and as the app's
+# environment (env_file). Needs Docker Compose 2.24 or newer.
+#
+# Non-obvious rules:
+#   - DATABASE_URL is assembled here from POSTGRES_* and always points at the
+#     bundled `postgres` service; a DATABASE_URL in .env is ignored by compose.
+#     The password goes into a URL unencoded, so keep it URL-safe
+#     (npm run setup generates hex).
+#   - Every published port binds to 127.0.0.1 except Caddy's. Docker writes its
+#     own firewall rules, so a port published on 0.0.0.0 is public even when
+#     ufw says otherwise. Set APP_BIND=0.0.0.0 only behind another firewall.
+#   - Postgres 18 images keep data under /var/lib/postgresql/18/docker: the
+#     volume is mounted at /var/lib/postgresql (the 18+ layout).
+#   - `app` waits for `migrate` to finish successfully. But `up -d --build`
+#     stops and replaces an existing app container BEFORE that wait, so on an
+#     update the site is down while migrations run, and a failed migration
+#     leaves it down. Hence the update order above.
+#   - BETTER_AUTH_SECRET and NEXT_PUBLIC_SITE_URL are required (${…:?} below):
+#     compose refuses to start without them, and a PaaS (Dokploy, Coolify)
+#     lists them as variables to fill. Every other app variable reaches the
+#     app through env_file.
+#   - The project name prefixes the containers, the built images
+#     (<name>-app, <name>-migrate) and the volumes (<name>_postgres_data,
+#     <name>_uploads). It is
+#     COMPOSE_PROJECT_NAME from .env (npm run setup -- --compose --domain …
+#     derives one), else `-p`, else "openshipkit" below. Two copies of OpenShipKit
+#     on one server MUST have different names, or the second takes over the
+#     first one's containers and database. Never rename a running site: the
+#     new name starts on a new, empty volume.
+#   - PORT and HOSTNAME are pinned for the app container: Caddy, the port
+#     mapping and the image's healthcheck all expect 0.0.0.0:3000, and
+#     `environment` wins over env_file, so a stray PORT/HOSTNAME in .env can't
+#     make the site unreachable. Move the published port with APP_BIND/APP_PORT.
+#   - Uploaded images live in the `uploads` volume (<name>_uploads), mounted at
+#     /app/uploads; UPLOADS_DIR is pinned to it for the same reason as PORT (a
+#     development value copied into .env would write into the container's
+#     throwaway filesystem). The DATABASE stores only the images' URLs, so a
+#     backup is BOTH the Postgres dump and this volume:
+#     deploy/backups/backup.sh takes both. Restoring one without the other is a
+#     site of broken images.
+#   - Both data volumes are NAMED on purpose: volume backup tools (Dokploy's
+#     Volume Backups among them) see named volumes only. Don't turn them into
+#     bind mounts without checking what your backup does with those.
+#
+
+name: openshipkit
+
+x-database-url: &database-url
+  DATABASE_URL: postgres://${POSTGRES_USER:-openshipkit}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (npm run setup -- --compose)}@postgres:5432/${POSTGRES_DB:-openshipkit}
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openshipkit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (npm run setup -- --compose)}
+      POSTGRES_DB: ${POSTGRES_DB:-openshipkit}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    ports:
+      # For psql / drizzle studio from the host: postgres://…@127.0.0.1:5433/openshipkit
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    shm_size: 256mb
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    env_file:
+      - path: .env
+        required: false   # a PaaS (Dokploy, Coolify) may inject variables instead
+    environment:
+      <<: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *database-url
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      UPLOADS_DIR: /app/uploads
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET in .env (npm run setup -- --compose)}
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:?Set NEXT_PUBLIC_SITE_URL in .env to your https:// origin (npm run setup -- --compose --domain example.com)}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    volumes:
+      # Uploaded images. The image creates /app/uploads owned by `node`, so a
+      # new volume starts writable (see the Dockerfile).
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Automatic HTTPS for a bare VPS: Let's Encrypt certificates for DOMAIN,
+  # renewed on their own. Only with `--profile https`.
+  caddy:
+    image: caddy:2.11.7-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  postgres_data:
+  # Uploaded images (UPLOADS_DIR). Back it up with the database — backup.sh does.
+  uploads:
+  # Certificates and the ACME account. Keep it: losing it means re-issuing
+  # every certificate and possibly hitting Let's Encrypt's rate limits.
+  caddy_data:
+  caddy_config:

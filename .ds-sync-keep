@@ -1,0 +1,4 @@
+# Paths `npm run ds:sync` must never overwrite, one per line (scripts/ds-sync.mts).
+# brand.css and prose.css are always kept; add a synced file here when OpenShipKit
+# has to diverge from the design system for good. Prefer a ds-sync:keep block
+# inside the file, or upstreaming the change, to pinning a whole file.

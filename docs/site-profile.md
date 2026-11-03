@@ -1,0 +1,132 @@
+# A content site: landing page + blog, no SaaS
+
+OpenShipKit is a SaaS starter, but the same code makes a fast, self-hosted
+**marketing site with a blog**: the landing page, posts, changelog, legal pages,
+the contact form, the admin and the MCP server — without plans, pricing or
+checkout. Two ways to get there:
+
+| | The profile switch (recommended) | Deleting the code |
+|---|---|---|
+| How | `OPENSHIPKIT_PROFILE=site` | the steps [below](#deleting-the-saas-code-for-good) |
+| Undo | set it back to `saas` (or empty) and restart | git |
+| Template updates | merge as usual | conflict in every file you edited |
+| What’s left in the repository | the billing code, switched off | less code |
+
+## The switch
+
+```bash
+npm run setup -- --profile site                      # development: .env.local
+npm run setup -- --compose --profile site            # production: .env
+```
+
+That sets `OPENSHIPKIT_PROFILE=site` and `BILLING_PROVIDER=none` (a value you
+already set is never changed — edit the file for that) and prints what the
+profile switches off. Or set the variable yourself and restart.
+
+With `OPENSHIPKIT_PROFILE=site`:
+
+- **No pricing.** `/pricing` is a 404; the landing page has no pricing
+  section or plan cards; the header and footer leave out every link to a
+  SaaS-only page (`/pricing`, the dashboard’s Billing, the admin’s Plans),
+  whether it is a default or one you saved.
+- **No billing.** No checkout or customer portal (`/api/billing/*` answer
+  404), billing is off whatever Polar keys are set, and the dashboard has no
+  Billing page or link.
+- **No plans in the admin**: no Plans page or link in `/admin`, and no plan
+  tools over MCP.
+- **Nothing about plans in what crawlers read**: no `/pricing` in the sitemap
+  or `llms.txt`, no `Offer` in the JSON-LD.
+
+Everything else stays: sign-up and sign-in (the dashboard is a place for
+accounts, feedback and settings), the blog and changelog with their feeds,
+legal pages, the contact and newsletter forms, the admin (content, posts,
+media, users, feedback, subscribers, agent keys, audit), MCP and every SEO
+surface.
+
+Nothing is deleted, and stored data is untouched: switching back to `saas`
+brings the pricing page and plans back as they were.
+
+The starter legal pages are your content, so the profile doesn’t edit them.
+The Terms (`/legal/terms`) are written for a subscription SaaS: section 5
+covers plans, payment and Polar and links to `/pricing`, which is a 404 here.
+Rewrite or remove that section in `/admin/posts` along with the rest of the
+placeholders ([content.md](content.md)).
+
+**Check it** after a restart:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/pricing        # 404
+curl -s http://localhost:3000/sitemap.xml | grep -c '/pricing'                # 0
+curl -s http://localhost:3000/api/health | grep -o '"profile":"[a-z]*"'      # "profile":"site"
+npm run smoke                                                                  # still green
+```
+
+Smoke reads the profile from `/api/health` and, under `site`, checks that
+`/pricing` is a 404 and missing from the sitemap instead of loading it.
+
+Navigation you saved in `/admin/content/navigation` is never rewritten: a
+Pricing link in it is left out when the page renders, and comes back if you
+switch to `saas`. Remove it there if you want the stored copy clean.
+
+## Deleting the SaaS code for good
+
+Only if you want the code gone, and accept that template updates will
+conflict. Do it on a branch, in this order, and let the type checker find the
+stragglers. (This list was checked on a copy of the template: after steps 1–4,
+`npx tsc --noEmit` passes.)
+
+**1. Delete the SaaS routes and components:**
+
+```bash
+rm -r "src/app/(marketing)/pricing" src/app/api/billing src/app/dashboard/billing \
+      src/app/admin/plans src/components/billing \
+      src/components/sections/pricing.tsx src/components/sections/pricing-plans.tsx \
+      src/server/mcp/tools/plans.ts tests/billing.test.ts
+```
+
+**2. Fix the three imports the type checker now names** (`npx tsc --noEmit`):
+
+- `src/app/(marketing)/page.tsx` — remove the `Pricing` import and `<Pricing />`.
+- `src/server/mcp/tools/index.ts` — remove the `PLAN_TOOLS` import and its
+  spread in `TOOLS`.
+- `src/components/sections/sections.test.ts` — remove the `pricing-plans`
+  import and the `describe` blocks that use `PricingPlans` or `isCurrentPlan`.
+
+**3. Remove the links to what’s gone.** The type checker can’t see a URL in a
+string. Find them all:
+
+```bash
+grep -rn '"/pricing\|/dashboard/billing\|/admin/plans\|/api/billing' src --include='*.ts' --include='*.tsx'
+```
+
+and change each: the `/pricing` entry in `STATIC_PATHS` (`src/app/sitemap.ts`)
+and in the 404 page’s list (`src/app/not-found.tsx`); the Pricing links in
+`navigation` (`src/content/defaults.ts`); the Billing and Plans entries in
+`src/lib/app-nav.ts`; the “New plan” command (`src/components/product/product-shell.tsx`);
+the plan and billing cards on `src/app/dashboard/page.tsx` and the admin
+overview’s “Paying now” link (`src/app/admin/(overview)/page.tsx`); the
+`pricing` entry in `LIVE_AT` (`src/app/admin/content/[key]/page.tsx`); the
+pricing lines in `src/components/seo/llms.ts` and the `Offer` nodes in
+`src/shared/jsonld.ts`. Comments and the starter posts
+(`src/content/seed-posts.ts`) mention `/admin/plans` too — rewrite or delete
+those posts anyway.
+
+**4. Tests and docs:** in `tests/mcp.test.ts` remove the `plans` tests, the
+plan tool names from “covers the whole site”, and the plan calls in the
+refusal test; in `docs/mcp.md` remove the plan tools (no test needs them
+there any more). Remove the pricing parts of `docs/` you no longer need.
+`npm test` then passes.
+
+**5. Content:** in `/admin/content`, turn off or reset the `pricing` section,
+and remove Pricing from `navigation` if you saved it.
+
+**6. Leave the data layer.** The `plans`, `subscriptions` and `purchases`
+tables, `src/server/services/{billing,plans}.ts`, `src/adapters/billing/` and
+the `DataStore` methods behind them are part of the core contract (both
+adapters, the contract tests, the audit log’s restore). Removing them means a
+migration that drops tables and edits across `src/core`, both data adapters
+and `tests/contract`; empty tables cost nothing. If you do it anyway, follow
+[AGENTS.md](../AGENTS.md) “Add a database column” in reverse, one table per
+migration.
+
+Then: `npm run check`, `npm run build` with no environment, `npm run smoke`.

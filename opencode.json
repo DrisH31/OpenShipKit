@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "openshipkit": {
+      "type": "remote",
+      "url": "http://localhost:3000/api/mcp",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "Authorization": "Bearer {env:OPENSHIPKIT_MCP_KEY}"
+      }
+    }
+  }
+}

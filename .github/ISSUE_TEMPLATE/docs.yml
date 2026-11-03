@@ -1,0 +1,27 @@
+name: Docs problem
+description: A guide, a command or an AI setup prompt is wrong, out of date or unclear.
+labels: ["docs"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The guides live in `docs/` and `deploy/`, and on the website at /docs. If a step failed on your machine, the bug report form may fit better. **Remove keys, emails and server addresses from anything you paste.**
+  - type: input
+    id: page
+    attributes:
+      label: Which page
+      placeholder: "docs/ai-setup.md → step 5b, or https://…/docs/deployment"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What's wrong
+      description: What the page says, what actually happens, and what it should say.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OpenShipKit version or commit
+      placeholder: "1.0.0, or the output of git rev-parse --short HEAD"

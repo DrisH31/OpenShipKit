@@ -1,0 +1,60 @@
+# Dependabot: weekly, grouped, so updates arrive as a few reviewable PRs.
+# Next.js security releases still come through immediately (security updates
+# ignore the schedule). Every PR runs CI, including the no-env build.
+# Version updates target `dev`, like every other change (CONTRIBUTING.md);
+# security updates always go to the default branch, which GitHub decides.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      next-react:
+        patterns: ["next", "eslint-config-next", "react", "react-dom", "@types/react", "@types/react-dom"]
+      database:
+        patterns: ["drizzle-orm", "drizzle-kit", "pg", "@types/pg", "@electric-sql/pglite"]
+      auth:
+        patterns: ["better-auth"]
+      tooling:
+        dependency-type: development
+        update-types: ["minor", "patch"]
+      runtime-minor:
+        dependency-type: production
+        update-types: ["minor", "patch"]
+    ignore:
+      # Majors that need a deliberate migration (SPEC.md §4 explains each cap).
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    ignore:
+      # Postgres majors need a dump and restore (docs/upgrading.md).
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
