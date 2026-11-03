@@ -135,7 +135,8 @@ export interface BillingRepo {
   /** Insert or update by (provider, providerSubscriptionId). */
   upsertSubscription(input: SubscriptionUpsert): Promise<Subscription>;
   getSubscription(provider: PaidProvider, providerSubscriptionId: string): Promise<Subscription | null>;
-  listSubscriptions(query: ListQuery & { userId?: string; status?: SubscriptionStatus }): Promise<Page<Subscription>>;
+  /** `orgId`: a string for that organisation's, null for personal ones only, absent for all. */
+  listSubscriptions(query: ListQuery & { userId?: string; orgId?: string | null; status?: SubscriptionStatus }): Promise<Page<Subscription>>;
   /** Insert or update (refund flag) by (provider, providerOrderId). */
   recordPurchase(input: PurchaseInput): Promise<Purchase>;
   listPurchases(query: ListQuery & { userId?: string }): Promise<Page<Purchase>>;

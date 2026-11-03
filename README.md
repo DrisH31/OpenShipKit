@@ -509,7 +509,7 @@ Honest limits, so you know what you'd add:
 | Not included | What that means for you |
 |---|---|
 | More than one language | Every word is English; there's no locale switch |
-| Billing per organisation, and SSO | Teams are in (`OPENSHIPKIT_TENANCY=org`: organisations, roles, invitations), but subscriptions still belong to a person, and there's no SSO |
+| SSO | Teams are in (`OPENSHIPKIT_TENANCY=org`: organisations, roles, invitations, per-seat billing), but there's no single sign-on (SAML/OIDC) |
 | Payment providers other than Polar | Stripe or Razorpay means a new billing adapter |
 | More than one app replica out of the box | Turn on the Redis module first ([modules/](modules/README.md)) |
 | Someone to look after the server | Updates, backups and restore rehearsals are yours ([deploy/](deploy/README.md)) |

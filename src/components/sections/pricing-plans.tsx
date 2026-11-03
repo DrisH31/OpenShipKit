@@ -96,7 +96,7 @@ function PriceLine({ plan, price }: { plan: Plan; price: PlanPrice | null }) {
   return (
     <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
       <span className="figure text-h2 leading-none text-ink">{formatPrice(price.amountCents, price.currency)}</span>
-      <span className="text-small text-ink-2">{PERIOD[price.interval]}</span>
+      <span className="text-small text-ink-2">{price.perSeat ? `per seat, ${PERIOD[price.interval]}` : PERIOD[price.interval]}</span>
       {price.interval === "year" && (
         <span className="w-full text-caption text-ink-3">
           {formatPrice(Math.round(price.amountCents / 12), price.currency)} a month, billed yearly

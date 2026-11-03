@@ -478,6 +478,27 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
 
     // ------------------------------------------------------------ billing
     describe("billing", () => {
+      it("keeps an organisation's subscription and its seats apart from personal ones", async () => {
+        const buyer = await newUser();
+        const org = await store.orgs.create({ name: "Paying", slug: uniq("pay-"), ownerId: buyer.id });
+        const personal = await store.billing.upsertSubscription(subscription(buyer.id));
+        const forOrg = await store.billing.upsertSubscription({ ...subscription(buyer.id), orgId: org.id, seats: 5 });
+        expect(personal).toMatchObject({ orgId: null, seats: null });
+        expect(forOrg).toMatchObject({ orgId: org.id, seats: 5 });
+
+        const ids = async (q: { orgId?: string | null }) => (await store.billing.listSubscriptions({ userId: buyer.id, ...q })).items.map((s) => s.id).sort();
+        expect(await ids({})).toEqual([personal.id, forOrg.id].sort());
+        expect(await ids({ orgId: null })).toEqual([personal.id]);
+        expect(await ids({ orgId: org.id })).toEqual([forOrg.id]);
+        expect((await store.billing.listSubscriptions({ orgId: "not-an-id" })).items).toEqual([]);
+
+        // Seats change with the subscription; deleting the organisation leaves its subscription bound to it,
+        // never turned into the buyer's personal plan.
+        expect(await store.billing.upsertSubscription({ ...subscription(buyer.id), providerSubscriptionId: forOrg.providerSubscriptionId, orgId: org.id, seats: 8 })).toMatchObject({ seats: 8 });
+        await store.orgs.delete(org.id);
+        expect(await ids({ orgId: null })).toEqual([personal.id]);
+      });
+
       it("upserts subscriptions by (provider, providerSubscriptionId)", async () => {
         const u = await newUser();
         const input = subscription(u.id);

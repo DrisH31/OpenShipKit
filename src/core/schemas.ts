@@ -102,6 +102,7 @@ export const priceSchema = z.object({
   amountCents: z.number().int().min(0).max(100_000_000),
   currency: z.string().length(3).toLowerCase().default("usd"),
   polarProductId: z.string().max(100).nullable().default(null).describe("The Polar product this price checks out"),
+  perSeat: z.boolean().optional().describe("Charged per seat (teams): the Polar product uses seat-based pricing. Recurring prices only"),
 });
 
 export const planSchema = z.object({

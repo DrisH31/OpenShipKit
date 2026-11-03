@@ -186,8 +186,10 @@ async function assertNothingRenews(user: User, self: boolean): Promise<void> {
   throw new ServiceError(
     "conflict",
     self
-      ? "You have a paid plan that would keep renewing. Cancel it in Billing first, then delete your account."
-      : `${user.email} has a ${renewing.planKey ?? "paid"} subscription that would keep renewing. Cancel it in your Polar dashboard first, then delete the account.`,
+      ? renewing.orgId
+        ? "You pay for an organisation's plan that would keep renewing. Cancel it in Billing first (or let it lapse), then delete your account."
+        : "You have a paid plan that would keep renewing. Cancel it in Billing first, then delete your account."
+      : `${user.email} has a ${renewing.planKey ?? "paid"} subscription${renewing.orgId ? " for an organisation" : ""} that would keep renewing. Cancel it in your Polar dashboard first, then delete the account.`,
   );
 }
 

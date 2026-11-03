@@ -153,6 +153,8 @@ const NOT_WRITES = new Set([
   "listMyOrgs",
   "listMembers",
   "listInvitations",
+  // The billing page's read of the organisation's plan and seats (src/server/services/billing.ts).
+  "getOrgBillingView",
 ]);
 
 describe("every write service is guarded", () => {
@@ -221,6 +223,8 @@ async function refusals(actor: Actor): Promise<[string, () => Promise<unknown>][
     ["deleteMedia", () => media.deleteMedia("/uploads/2026/10/x.png", actor)],
     ["startCheckout", () => billing.startCheckout(demoUser, "pro", "month")],
     ["openPortal", () => billing.openPortal(demoUser)],
+    ["startOrgCheckout", () => billing.startOrgCheckout(demoUser, "o1", "pro", "month")],
+    ["openOrgPortal", () => billing.openOrgPortal(demoUser, "o1")],
     ["createOrg", () => orgs.createOrg(demoUser, { name: "Demo Co" })],
     ["updateOrg", () => orgs.updateOrg(demoUser, "o1", { name: "x" })],
     ["deleteOrg", () => orgs.deleteOrg(demoUser, "o1")],

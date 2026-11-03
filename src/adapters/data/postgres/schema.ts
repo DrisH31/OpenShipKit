@@ -171,11 +171,19 @@ export const subscriptions = pgTable(
     status: text("status").$type<SubscriptionStatus>().notNull(),
     currentPeriodEnd: ts("current_period_end"),
     cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    /**
+     * The organisation it pays for, or null for a personal plan. Deliberately NOT a foreign key:
+     * deleting an organisation must not turn its subscription into the buyer's personal plan (a
+     * null here), so the id stays, pointing nowhere, and grants nothing.
+     */
+    orgId: uuid("org_id"),
+    seats: integer("seats"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     unique("subscriptions_provider_ref_key").on(t.provider, t.providerSubscriptionId),
+    index("subscriptions_org_idx").on(t.orgId).where(sql`org_id is not null`),
     index("subscriptions_user_updated_idx").on(t.userId, t.updatedAt, t.id),
     index("subscriptions_status_updated_idx").on(t.status, t.updatedAt, t.id),
     index("subscriptions_updated_idx").on(t.updatedAt, t.id),

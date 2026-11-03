@@ -111,6 +111,8 @@ function sub(over: Partial<Subscription>): Subscription {
     status: "active",
     currentPeriodEnd: future(10),
     cancelAtPeriodEnd: false,
+    orgId: null,
+    seats: null,
     createdAt: past(30),
     updatedAt: past(1),
     ...over,
@@ -557,6 +559,8 @@ describe("the webhook sink seam", () => {
         productId: "polar_pro_month",
         planKeyHint: null,
         checkoutProductId: null,
+        orgIdHint: null, // a personal checkout names no organisation
+        seats: null,
         interval: "month",
         status: "active",
         currentPeriodEnd: "2031-01-02T03:04:05.123456Z",

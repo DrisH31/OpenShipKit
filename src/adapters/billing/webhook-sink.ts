@@ -29,6 +29,8 @@ import { log as appLog } from "@/server/log";
 import { recordAudit } from "@/server/services/audit";
 import type { BillingWebhookSink, ProviderOrderState, ProviderSubscriptionState, WebhookApplyResult } from "./shared";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function webhookActor(provider: PaidProvider): Actor {
   return { type: "system", id: null, label: `webhook:${provider}` };
 }
@@ -121,12 +123,14 @@ const SUBSCRIPTION_FIELDS = [
   "status",
   "cancelAtPeriodEnd",
   "providerCustomerId",
+  "orgId",
+  "seats",
 ] as const satisfies readonly (keyof SubscriptionUpsert)[];
 
 /** Upsert the canonical subscription state; audit only a real change. Returns whether anything changed. */
 export async function upsertSubscription(input: SubscriptionUpsert): Promise<boolean> {
   const data = await getData();
-  const normalized: SubscriptionUpsert = { ...input, currentPeriodEnd: normalizeInstant(input.currentPeriodEnd) };
+  const normalized: SubscriptionUpsert = { ...input, orgId: input.orgId ?? null, seats: input.seats ?? null, currentPeriodEnd: normalizeInstant(input.currentPeriodEnd) };
   const before = await data.billing.getSubscription(normalized.provider, normalized.providerSubscriptionId);
   const changed =
     !before ||
@@ -220,6 +224,10 @@ async function applySubscription(state: ProviderSubscriptionState): Promise<Webh
     status: state.status,
     currentPeriodEnd: state.currentPeriodEnd,
     cancelAtPeriodEnd: state.cancelAtPeriodEnd,
+    // Bound to the organisation our checkout named, whether or not it still exists: a deleted
+    // organisation's subscription must grant nothing, never become the buyer's personal plan.
+    orgId: state.orgIdHint && UUID.test(state.orgIdHint) ? state.orgIdHint : null,
+    seats: state.seats ?? null,
   });
   return changed ? "applied" : "unchanged";
 }

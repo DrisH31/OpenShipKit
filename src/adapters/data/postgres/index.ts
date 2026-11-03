@@ -243,6 +243,8 @@ const toSubscription = (r: SubscriptionRow): Subscription => ({
   status: r.status,
   currentPeriodEnd: isoOrNull(r.currentPeriodEnd),
   cancelAtPeriodEnd: r.cancelAtPeriodEnd,
+  orgId: r.orgId,
+  seats: r.seats,
   createdAt: iso(r.createdAt),
   updatedAt: iso(r.updatedAt),
 });
@@ -725,7 +727,10 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           status: input.status,
           currentPeriodEnd: toDate(input.currentPeriodEnd, "currentPeriodEnd"),
           cancelAtPeriodEnd: input.cancelAtPeriodEnd,
+          orgId: input.orgId ?? null,
+          seats: input.seats ?? null,
         };
+        if (values.orgId !== null && !isUuid(values.orgId)) throw new DataError("invalid", `orgId is not an id: "${values.orgId}"`);
         const [row] = await write("subscription", () =>
           db()
             .insert(subscriptions)
@@ -746,7 +751,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .limit(1);
         return row ? toSubscription(row) : null;
       },
-      async listSubscriptions({ userId, status, limit, cursor }) {
+      async listSubscriptions({ userId, orgId, status, limit, cursor }) {
         const size = clampLimit(limit);
         const c = decodeCursor(cursor);
         if (userId !== undefined && !isUuid(userId)) return { items: [], nextCursor: null };
@@ -756,6 +761,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .where(
             and(
               userId ? eq(subscriptions.userId, userId) : undefined,
+              orgId === null ? isNull(subscriptions.orgId) : orgId !== undefined ? (isUuid(orgId) ? eq(subscriptions.orgId, orgId) : sql`false`) : undefined,
               status ? eq(subscriptions.status, status) : undefined,
               afterCursor(subscriptions.updatedAt, subscriptions.id, c),
             ),

@@ -89,6 +89,10 @@ export interface ProviderSubscriptionState {
   planKeyHint: string | null;
   /** The product id our checkout sold, from the same metadata. Binds planKeyHint to that product. */
   checkoutProductId: string | null;
+  /** The organisation our checkout bought it for (metadata), or null for a personal plan. */
+  orgIdHint?: string | null;
+  /** Seats on a seat-based subscription; null otherwise. */
+  seats?: number | null;
   /** The provider's own billing interval, used only when the product isn't on any plan. */
   interval: PriceInterval | null;
   status: SubscriptionStatus;

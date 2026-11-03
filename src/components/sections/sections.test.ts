@@ -131,7 +131,7 @@ describe("plan cards", () => {
     // A renewing Pro subscriber: Lifetime would leave the subscription renewing.
     const pro: Subscription = {
       id: "s1", userId: "u1", provider: "polar", providerSubscriptionId: "ps1", providerCustomerId: null, planKey: "pro",
-      interval: "month", status: "active", currentPeriodEnd: "2026-11-01T00:00:00.000Z", cancelAtPeriodEnd: false,
+      interval: "month", status: "active", currentPeriodEnd: "2026-11-01T00:00:00.000Z", cancelAtPeriodEnd: false, orgId: null, seats: null,
       createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z",
     };
     const subscriber = renderToStaticMarkup(

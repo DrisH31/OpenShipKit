@@ -76,9 +76,36 @@ preference. Your own tables should carry an `org_id` (with
 `on delete cascade`) and filter by it in every query. The membership check
 above is what makes that filter safe.
 
+## Billing per organisation
+
+With teams on, the organisation holds the plan, and everyone in it shares it:
+
+- **Gates:** `requirePlan(user, ["pro"])` checks the plan of the
+  organisation the person is working in. Someone in no organisation is sent
+  to the Team page.
+- **The billing page:** it shows the organisation's plan, seats and
+  payments. Any member can look, but only an owner can buy. An
+  organisation's plan is a subscription (monthly or yearly), one at a time;
+  changes go through Manage billing.
+- **Kept separate:** a subscription bought for an organisation never gives
+  the buyer a personal plan. If the organisation is deleted, its
+  subscription stays bound to it and grants nothing. And an organisation
+  can't be deleted while its subscription would keep renewing.
+
+**Per seat.** Tick **Charged per seat** on a price in `/admin/plans`, and
+give it a Polar product with seat-based pricing. A checkout then buys one
+seat per member and open invitation. The verified webhook records the seats,
+and inviting or accepting stops at that number ("All 5 seats are in use").
+A resend doesn't take a second seat. Without a per-seat subscription there's
+no seat limit.
+
+**Who pays.** Polar keys a customer by email, so the subscription is billed
+to the owner who bought it, and their Polar customer portal manages it. The
+checkout's metadata ties it to the organisation, and the webhook reads it from
+there. After an ownership transfer, the billing page and Manage billing say
+who manages payment, until that's changed in Polar.
+
 ## What's next
 
-- **Billing per organisation, per seat.** A subscription belongs to the
-  organisation, and invitations past the seat count are refused (ROADMAP 2.4).
 - **Admin and MCP.** Organisations in `/admin`, MCP tools, and the
   organisation on audit rows (ROADMAP 2.6).

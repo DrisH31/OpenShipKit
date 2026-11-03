@@ -166,6 +166,12 @@ export interface PlanPrice {
   currency: string;
   /** The Polar product this price checks out. Empty until set in /admin/plans. */
   polarProductId: string | null;
+  /**
+   * Charged per seat (OPENSHIPKIT_TENANCY=org): an organisation's checkout buys one seat per
+   * member and pending invitation, and invitations stop at the seat count. The Polar product must
+   * use seat-based pricing. Recurring prices only.
+   */
+  perSeat?: boolean;
 }
 
 export interface Plan {
@@ -233,11 +239,21 @@ export interface Subscription {
   status: SubscriptionStatus;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /**
+   * The organisation it pays for (OPENSHIPKIT_TENANCY=org); null for a person's own plan. userId is
+   * then the owner who bought it. An organisation's subscription never grants its buyer a personal plan.
+   */
+  orgId: string | null;
+  /** Seats bought, for a per-seat price; null otherwise. */
+  seats: number | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type SubscriptionUpsert = Omit<Subscription, "id" | "createdAt" | "updatedAt">;
+export type SubscriptionUpsert = Omit<Subscription, "id" | "createdAt" | "updatedAt" | "orgId" | "seats"> & {
+  orgId?: string | null;
+  seats?: number | null;
+};
 
 export interface Purchase {
   id: string;

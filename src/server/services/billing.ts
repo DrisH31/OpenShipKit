@@ -14,6 +14,14 @@ import "server-only";
 //     a Lifetime buyer passes requirePlan(user, ["pro"]) and is never sold Pro.
 //   - The entitlement shown is the best plan held, not the newest row.
 //
+// Teams (OPENSHIPKIT_TENANCY=org): the organisation holds the subscription.
+// A person's own entitlement reads only their personal rows (orgId null), so a
+// subscription bought for an organisation never grants its buyer a plan.
+// requirePlan(), startCheckout() and openPortal() act for the organisation the
+// person is working in (src/server/orgs.ts), and only an owner may buy or
+// manage (billing.manage). Per-seat prices buy one seat per member and open
+// invitation; the seat limit is enforced in src/server/services/orgs.ts.
+//
 
 import { redirect } from "next/navigation";
 import { comparePlanRank, planCovers, type PlanRef } from "@/core/plans";
@@ -22,7 +30,9 @@ import { getBilling } from "../billing";
 import { assertNotDemo } from "../demo";
 import { getData } from "../data";
 import { siteProfile, siteUrl } from "../env";
+import { currentOrg } from "../orgs";
 import { ServiceError } from "./errors";
+import { liveOrgSubscriptions, orgSeats, requireOrgPermission, teamsEnabled } from "./orgs";
 
 /** Live subscriptions that grant a plan: an entitled status in its period, and a plan to grant. */
 function liveSubscriptions(subscriptions: Subscription[], now: number): (Subscription & { planKey: string })[] {
@@ -84,7 +94,8 @@ export function computeEntitlement(
 
 /** Why a checkout is refused: the reason travels as ServiceError("conflict") `details.reason`. */
 export interface CheckoutRefusal {
-  reason: "already_subscribed" | "already_owned";
+  /** not_owner, org_one_time: an organisation's checkout (teams); the others apply to everyone. */
+  reason: "already_subscribed" | "already_owned" | "not_owner" | "org_one_time";
   /** The full sentence: the error startCheckout throws. */
   message: string;
   /** A few words to show where the checkout button would be ("Included in your Lifetime plan"). */
@@ -150,12 +161,33 @@ export function checkoutRefusal(input: {
 async function billingRows(userId: string) {
   const data = await getData();
   const [subs, purchases, plans] = await Promise.all([
-    data.billing.listSubscriptions({ userId, limit: 50 }),
+    // Personal rows only: an organisation's subscription is the organisation's, not its buyer's.
+    data.billing.listSubscriptions({ userId, orgId: null, limit: 50 }),
     data.billing.listPurchases({ userId, limit: 50 }),
     // Every plan, retired ones too: a customer keeps a plan retired with `active: false`.
     data.plans.list({}),
   ]);
   return { subscriptions: subs.items, purchases: purchases.items, plans };
+}
+
+/** An organisation's rows, in the same shape (organisations buy subscriptions only). */
+async function orgBillingRows(orgId: string) {
+  const data = await getData();
+  const [subs, plans] = await Promise.all([data.billing.listSubscriptions({ orgId, limit: 50 }), data.plans.list({})]);
+  return { subscriptions: subs.items, purchases: [] as Purchase[], plans };
+}
+
+export async function getOrgEntitlement(orgId: string): Promise<Entitlement> {
+  const { subscriptions, purchases, plans } = await orgBillingRows(orgId);
+  return computeEntitlement(subscriptions, purchases, new Date(), plans);
+}
+
+/** hasPlan() for an organisation. */
+export async function hasOrgPlan(orgId: string, planKeys?: string[]): Promise<boolean> {
+  const { subscriptions, purchases, plans } = await orgBillingRows(orgId);
+  const held = grantedPlanKeys(subscriptions, purchases);
+  if (held.length === 0) return false;
+  return !planKeys || held.some((h) => planKeys.some((wanted) => planCovers(h, wanted, plans)));
 }
 
 export async function getEntitlement(userId: string): Promise<Entitlement> {
@@ -185,7 +217,15 @@ export async function hasPlan(userId: string, planKeys?: string[]): Promise<bool
  *   await requirePlan(user, ["pro"]);
  */
 export async function requirePlan(user: User, planKeys?: string[], redirectTo?: string): Promise<void> {
-  if (!(await hasPlan(user.id, planKeys))) redirect(redirectTo ?? (siteProfile() === "site" ? "/dashboard" : "/pricing"));
+  const fallback = redirectTo ?? (siteProfile() === "site" ? "/dashboard" : "/pricing");
+  if (teamsEnabled()) {
+    // With teams, the plan is the organisation's: the one this person is working in.
+    const access = await currentOrg(user);
+    if (!access) redirect("/dashboard/team");
+    if (!(await hasOrgPlan(access.org.id, planKeys))) redirect(fallback);
+    return;
+  }
+  if (!(await hasPlan(user.id, planKeys))) redirect(fallback);
 }
 
 export async function isBillingEnabled(): Promise<boolean> {
@@ -217,6 +257,11 @@ export async function getCheckoutGuard(userId: string): Promise<(planKey: string
  */
 export async function startCheckout(user: User, planKey: string, interval: PriceInterval): Promise<string> {
   assertNotDemo(user);
+  if (teamsEnabled()) {
+    const access = await currentOrg(user);
+    if (!access) throw new ServiceError("conflict", "Create an organisation first: with teams, the organisation holds the plan.", { reason: "no_org" });
+    return startOrgCheckout(user, access.org.id, planKey, interval);
+  }
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured (set BILLING_PROVIDER and its keys)");
   const data = await getData();
@@ -245,10 +290,127 @@ export async function startCheckout(user: User, planKey: string, interval: Price
 
 export async function openPortal(user: User): Promise<string> {
   assertNotDemo(user);
+  if (teamsEnabled()) {
+    const access = await currentOrg(user);
+    if (!access) throw new ServiceError("not_found", "No organisation yet; create one first.");
+    return openOrgPortal(user, access.org.id);
+  }
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
   const customerId = await (await getData()).billing.getCustomerId(user.id, billing.id);
   if (!customerId) throw new ServiceError("not_found", "No billing account yet; subscribe to a plan first");
   const { url } = await billing.createPortal({ user, customerId, returnUrl: `${siteUrl()}/dashboard/billing` });
   return url;
+}
+
+/** A plan and price that can be checked out, or a ServiceError saying why not. */
+async function sellable(planKey: string, interval: PriceInterval): Promise<{ plan: Plan; price: Plan["prices"][number] }> {
+  const plan: Plan | null = await (await getData()).plans.getByKey(planKey);
+  if (!plan || !plan.active) throw new ServiceError("not_found", `No active plan "${planKey}"`);
+  if (plan.contactSales) throw new ServiceError("invalid", "This plan is sold by contacting sales");
+  const price = plan.prices.find((p) => p.interval === interval);
+  if (!price) throw new ServiceError("invalid", `Plan "${planKey}" has no ${interval} price`);
+  if (!price.polarProductId) {
+    throw new ServiceError("unavailable", `Plan "${planKey}" (${interval}) has no Polar product id yet — set it in /admin/plans`);
+  }
+  return { plan, price };
+}
+
+/**
+ * Checkout for an organisation: owners only (billing.manage), subscriptions only, one live
+ * subscription at a time (changes go through the portal). A per-seat price buys a seat for every
+ * member and open invitation. The verified webhook binds the subscription to the organisation
+ * through the checkout's metadata; nothing here grants anything.
+ */
+export async function startOrgCheckout(user: User, orgId: string, planKey: string, interval: PriceInterval): Promise<string> {
+  assertNotDemo(user);
+  const billing = await getBilling();
+  if (!billing) throw new ServiceError("unavailable", "Billing isn't configured (set BILLING_PROVIDER and its keys)");
+  const { org } = await requireOrgPermission(user, orgId, "billing.manage");
+  if (interval === "one_time") throw new ServiceError("invalid", "An organisation's plan is a subscription: choose a monthly or yearly price.");
+  const { plan, price } = await sellable(planKey, interval);
+  if ((await liveOrgSubscriptions(orgId)).some((s) => !s.cancelAtPeriodEnd)) {
+    throw new ServiceError("conflict", `${org.name} already has a subscription. Change or cancel it in Billing.`, { reason: "already_subscribed" });
+  }
+  const seats = price.perSeat ? Math.max(1, (await orgSeats(orgId)).used) : undefined;
+  const customerId = await (await getData()).billing.getCustomerId(user.id, billing.id);
+  const base = siteUrl();
+  const { url } = await billing.createCheckout({
+    user,
+    plan,
+    price,
+    customerId,
+    orgId,
+    ...(seats !== undefined ? { seats } : {}),
+    successUrl: `${base}/dashboard/billing?checkout=success`,
+    cancelUrl: `${base}/pricing?checkout=cancelled`,
+  });
+  return url;
+}
+
+/**
+ * The provider's portal for an organisation's subscription: owners only. Polar ties a subscription
+ * to the customer who paid, so the portal opens for that person; after an ownership transfer, the
+ * new owner is told who manages payment until it's moved in Polar.
+ */
+export async function openOrgPortal(user: User, orgId: string): Promise<string> {
+  assertNotDemo(user);
+  const billing = await getBilling();
+  if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
+  const { org } = await requireOrgPermission(user, orgId, "billing.manage");
+  const subs = (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items;
+  const current = subs[0];
+  if (!current) throw new ServiceError("not_found", `${org.name} has no subscription yet; choose a plan first.`);
+  if (current.userId !== user.id) {
+    const buyer = await (await getData()).users.getById(current.userId);
+    throw new ServiceError("conflict", `Payment for ${org.name} is managed by ${buyer?.email ?? "the owner who subscribed"}. They can change the card or plan, or cancel.`, {
+      reason: "managed_by_other",
+    });
+  }
+  const customerId = current.providerCustomerId ?? (await (await getData()).billing.getCustomerId(user.id, billing.id));
+  if (!customerId) throw new ServiceError("not_found", "No billing account yet; subscribe to a plan first");
+  const { url } = await billing.createPortal({ user, customerId, returnUrl: `${siteUrl()}/dashboard/billing` });
+  return url;
+}
+
+export type OrgBillingView = {
+  org: { id: string; name: string };
+  role: "owner" | "admin" | "member";
+  seats: { limit: number | null; used: number };
+  entitlement: Entitlement;
+  subscriptions: Subscription[];
+  /** Who pays: the owner whose Polar customer holds the subscription, if any. */
+  payerEmail: string | null;
+  /** startOrgCheckout's rule, for the plan cards: the same shape as getCheckoutGuard. */
+  refuse: (planKey: string, interval: PriceInterval) => CheckoutRefusal | null;
+};
+
+/**
+ * The billing page with teams on: the organisation the person is working in.
+ * Null when they belong to none. Any member may look (billing.view); only the
+ * owner gets checkout buttons, and a refusal label otherwise.
+ */
+export async function getOrgBillingView(user: User): Promise<OrgBillingView | null> {
+  const access = await currentOrg(user);
+  if (!access) return null;
+  const { org, role } = await requireOrgPermission(user, access.org.id, "billing.view");
+  const [{ subscriptions, purchases, plans }, seats] = await Promise.all([orgBillingRows(org.id), orgSeats(org.id)]);
+  const payer = subscriptions[0] ? await (await getData()).users.getById(subscriptions[0].userId) : null;
+  const renewing = (await liveOrgSubscriptions(org.id)).some((s) => !s.cancelAtPeriodEnd);
+  const refuse = (planKey: string, interval: PriceInterval): CheckoutRefusal | null => {
+    if (role !== "owner") return { reason: "not_owner", message: "Only an owner can choose the organisation's plan.", label: "Only an owner can buy a plan" };
+    if (interval === "one_time") return { reason: "org_one_time", message: "An organisation's plan is a subscription.", label: "Organisations subscribe monthly or yearly" };
+    if (renewing) return { reason: "already_subscribed", message: `${org.name} already has a subscription.`, label: "Switch in Manage billing" };
+    void planKey;
+    return null;
+  };
+  return {
+    org: { id: org.id, name: org.name },
+    role,
+    seats,
+    entitlement: computeEntitlement(subscriptions, purchases, new Date(), plans),
+    subscriptions,
+    payerEmail: payer?.email ?? null,
+    refuse,
+  };
 }

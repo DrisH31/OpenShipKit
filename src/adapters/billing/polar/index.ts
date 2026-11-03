@@ -104,6 +104,8 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
       productId: sub.product_id,
       planKeyHint: metaString(sub.metadata, "planKey"),
       checkoutProductId: metaString(sub.metadata, "productId"),
+      orgIdHint: metaString(sub.metadata, "orgId"),
+      seats: typeof sub.seats === "number" ? sub.seats : null,
       interval: sub.recurring_interval === "year" ? "year" : sub.recurring_interval === "month" ? "month" : null,
       status: mapStatus(sub.status),
       currentPeriodEnd: sub.ended_at ?? sub.current_period_end ?? null,
@@ -146,7 +148,15 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
         return_url: input.cancelUrl,
         // productId binds planKey to the product sold here: the webhook honours
         // planKey only while the subscription is still on this product.
-        metadata: { userId: user.id, planKey: plan.key, interval: price.interval, productId: price.polarProductId },
+        // orgId binds the subscription to the organisation it's bought for (teams); never trusted from anywhere else.
+        metadata: {
+          userId: user.id,
+          planKey: plan.key,
+          interval: price.interval,
+          productId: price.polarProductId,
+          ...(input.orgId ? { orgId: input.orgId } : {}),
+        },
+        ...(input.seats !== undefined ? { seats: input.seats } : {}),
         allow_discount_codes: true,
         ...(customerId
           ? { customer_id: customerId }

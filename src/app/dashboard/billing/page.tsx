@@ -42,7 +42,8 @@ import { formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS } from "@/lib/status";
 import { requireSaasProfile } from "@/server/profile";
 import { requireUser } from "@/server/session";
-import { getCheckoutGuard, isBillingEnabled, type CheckoutRefusal } from "@/server/services/billing";
+import { getCheckoutGuard, getOrgBillingView, isBillingEnabled, type CheckoutRefusal } from "@/server/services/billing";
+import { teamsEnabled } from "@/server/services/orgs";
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
@@ -70,7 +71,11 @@ function PriceFigure({ price }: { price: PlanPrice }) {
   return (
     <p className="font-display text-h3 font-bold text-ink tabular">
       {formatPrice(price.amountCents, price.currency)}
-      <span className="font-sans text-small font-normal text-ink-3"> {price.interval === "one_time" ? "one-time" : `/ ${price.interval}`}</span>
+      <span className="font-sans text-small font-normal text-ink-3">
+        {" "}
+        {price.perSeat ? "per seat " : ""}
+        {price.interval === "one_time" ? "one-time" : `/ ${price.interval}`}
+      </span>
     </p>
   );
 }
@@ -170,9 +175,37 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const checkout = typeof sp.checkout === "string" ? sp.checkout : null;
   const errorMessage = billingErrorMessage(typeof sp.error === "string" ? sp.error : null);
 
+  // With teams on, everything below is the organisation's (getOrgBillingView): its plan, seats and payments.
+  const teams = teamsEnabled();
+  const orgView = teams ? await getOrgBillingView(user) : null;
+  if (teams && !orgView) {
+    return (
+      <>
+        <PageHeader title="Billing" answer="With teams, plans belong to an organisation." />
+        <EmptyState
+          title="Create an organisation first"
+          body="Your organisation holds the plan, and everyone in it shares it."
+          action={
+            <Link href="/dashboard/team" className="text-small font-semibold text-ink underline underline-offset-4">
+              Go to Team
+            </Link>
+          }
+        />
+      </>
+    );
+  }
+
   // Every plan, retired ones included, for names; only active plans are offered.
-  const [detail, plans, billingOn, refuse] = await Promise.all([getUserDetail(user.id), listPlans(), isBillingEnabled(), getCheckoutGuard(user.id)]);
-  const { entitlement, purchases, subscriptions } = detail;
+  const [detail, plans, billingOn, personalRefuse] = await Promise.all([
+    orgView ? null : getUserDetail(user.id),
+    listPlans(),
+    isBillingEnabled(),
+    orgView ? null : getCheckoutGuard(user.id),
+  ]);
+  const entitlement = orgView ? orgView.entitlement : detail!.entitlement;
+  const subscriptions = orgView ? orgView.subscriptions : detail!.subscriptions;
+  const purchases = orgView ? [] : detail!.purchases;
+  const refuse = orgView ? orgView.refuse : personalRefuse!;
   const plan = plans.find((p) => p.key === entitlement.planKey) ?? null;
   const planName = (key: string | null) => plans.find((p) => p.key === key)?.name ?? key;
   const hasAccount = subscriptions.length > 0 || purchases.length > 0;
@@ -183,10 +216,22 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   return (
     <>
       <PageHeader
-        title="Billing"
-        answer="Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
-        action={billingOn && hasAccount ? <PortalButton /> : undefined}
+        title={orgView ? `Billing · ${orgView.org.name}` : "Billing"}
+        answer={
+          orgView
+            ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments. Payments are handled by Polar, which issues the receipts.`
+            : "Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
+        }
+        action={billingOn && hasAccount && (!orgView || orgView.role === "owner") ? <PortalButton /> : undefined}
       />
+      {orgView ? (
+        <Notice tone="info" title={orgView.seats.limit === null ? `${orgView.seats.used} in the team` : `${orgView.seats.used} of ${orgView.seats.limit} seats in use`}>
+          {orgView.seats.limit === null
+            ? "Members and open invitations. Your plan doesn't limit seats."
+            : "Members and open invitations. To add seats, change the subscription in Manage billing."}
+          {orgView.payerEmail ? ` Payment is managed by ${orgView.payerEmail}.` : null}
+        </Notice>
+      ) : null}
 
       {checkout === "success" ? (
         entitlement.source === "free" ? (

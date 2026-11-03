@@ -12,6 +12,8 @@ export const PLAN_HINTS: Record<string, string> = {
   "prices.*.amountCents": "As you’d write it: 19 or 19.50. Stored in cents (1950), which is what the JSON tab shows.",
   "prices.*.currency": "Three letters, like usd or eur.",
   "prices.*.polarProductId": "From Polar → Products → the product’s id. Empty: this price shows but can’t be bought yet.",
+  "prices.*.perSeat":
+    "With teams on (OPENSHIPKIT_TENANCY=org): an organisation buys one seat per member and open invitation, and invitations stop at the seat count. The Polar product must use seat-based pricing. Monthly or yearly only.",
   highlighted: "Marks the card as the one to pick.",
   contactSales: "Shows a “Contact sales” button (or your button label) that opens the contact form, instead of checkout.",
   ctaLabel: "The button on the card.",
@@ -23,6 +25,7 @@ export const PLAN_HINTS: Record<string, string> = {
 export const PLAN_LABELS: Record<string, string> = {
   "prices.*.amountCents": "Amount",
   "prices.*.polarProductId": "Polar product id",
+  "prices.*.perSeat": "Charged per seat",
   ctaLabel: "Button label",
   contactSales: "Contact sales instead of checkout",
   highlighted: "Highlight this plan",

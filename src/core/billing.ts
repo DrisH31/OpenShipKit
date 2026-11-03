@@ -17,6 +17,13 @@ export interface CheckoutInput {
   price: PlanPrice;
   /** Existing provider customer id for this user, if any. */
   customerId: string | null;
+  /**
+   * The organisation it's bought for (OPENSHIPKIT_TENANCY=org), carried in the checkout's metadata so
+   * the verified webhook binds the subscription to it. Absent for a personal plan.
+   */
+  orgId?: string;
+  /** Seats to buy, for a per-seat price (price.perSeat). */
+  seats?: number;
   successUrl: string;
   cancelUrl: string;
 }

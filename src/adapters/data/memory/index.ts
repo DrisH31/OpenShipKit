@@ -352,7 +352,14 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const id = `${input.provider}:${input.providerSubscriptionId}`;
         const existing = t.subscriptions.get(id);
         const stamp = now();
-        const sub: Subscription = { ...input, id: existing?.id ?? randomUUID(), createdAt: existing?.createdAt ?? stamp, updatedAt: stamp };
+        const sub: Subscription = {
+          ...input,
+          orgId: input.orgId ?? null,
+          seats: input.seats ?? null,
+          id: existing?.id ?? randomUUID(),
+          createdAt: existing?.createdAt ?? stamp,
+          updatedAt: stamp,
+        };
         t.subscriptions.set(id, sub);
         return clone(sub);
       },
@@ -360,9 +367,10 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         const s = t.subscriptions.get(`${provider}:${providerSubscriptionId}`);
         return s ? clone(s) : null;
       },
-      async listSubscriptions({ userId, status, limit, cursor }) {
+      async listSubscriptions({ userId, orgId, status, limit, cursor }) {
         const rows = [...t.subscriptions.values()]
           .filter((s) => !userId || s.userId === userId)
+          .filter((s) => orgId === undefined || s.orgId === orgId)
           .filter((s) => !status || s.status === status)
           .sort(byDesc((s) => s.updatedAt));
         return paginate(rows.map(clone), limit, cursor);

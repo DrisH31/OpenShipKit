@@ -36,8 +36,8 @@ export { formatPrice };
 const SUFFIX: Record<PriceInterval, string> = { month: "/mo", year: "/yr", one_time: " once" };
 
 /** "$19/mo", "$190/yr", "$299 once". */
-export function priceLabel(price: Pick<PlanPrice, "amountCents" | "currency" | "interval">, locale?: string): string {
-  return `${formatPrice(price.amountCents, price.currency, locale)}${SUFFIX[price.interval]}`;
+export function priceLabel(price: Pick<PlanPrice, "amountCents" | "currency" | "interval" | "perSeat">, locale?: string): string {
+  return `${formatPrice(price.amountCents, price.currency, locale)}${price.perSeat ? " per seat" : ""}${SUFFIX[price.interval]}`;
 }
 
 /**

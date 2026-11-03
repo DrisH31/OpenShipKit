@@ -18,7 +18,9 @@ import "server-only";
 // with the invited email address. Inviting the same address again replaces
 // the open invitation (a resend).
 //
-// Seats (Phase 2.4) aren't checked here yet: billing for organisations comes next.
+// Seats: while the organisation's subscription is per seat, members plus open
+// invitations can't exceed the seats it bought (orgSeats). Inviting and
+// accepting both check, because seats can be reduced in the meantime.
 //
 
 import { createHash, randomBytes } from "node:crypto";
@@ -40,7 +42,7 @@ import {
   type OrgRole,
 } from "@/core/orgs";
 import { emailSchema } from "@/core/schemas";
-import type { Actor, User } from "@/core/types";
+import { grantsAccess, type Actor, type Subscription, type User } from "@/core/types";
 import { getData } from "../data";
 import { assertNotDemo } from "../demo";
 import { sendEmail } from "../email";
@@ -94,6 +96,37 @@ export async function listMyOrgs(user: User): Promise<OrgAccess[]> {
   return (await getData()).orgs.listForUser(user.id);
 }
 
+// ---------------------------------------------------------------- seats and the organisation's subscription
+
+/** The organisation's subscriptions that grant a plan right now (an entitled status, in its period, on a plan). */
+export async function liveOrgSubscriptions(orgId: string): Promise<Subscription[]> {
+  const subs = (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items;
+  const now = Date.now();
+  return subs.filter((s) => s.planKey !== null && grantsAccess(s, now));
+}
+
+export type Seats = { limit: number | null; used: number };
+
+/**
+ * Seats in use (members plus open invitations) and the limit: the seats bought on its live per-seat
+ * subscription, or null when it has none (free, or a flat price), which means no limit.
+ */
+export async function orgSeats(orgId: string): Promise<Seats> {
+  const data = await getData();
+  const [members, invitations, live] = await Promise.all([data.orgs.countMembers(orgId), data.orgs.listInvitations(orgId), liveOrgSubscriptions(orgId)]);
+  const bought = live.map((s) => s.seats).filter((n): n is number => typeof n === "number");
+  return { limit: bought.length ? Math.max(...bought) : null, used: members + invitations.length };
+}
+
+async function assertSeatFree(orgId: string, adding: "invite" | "join"): Promise<void> {
+  const { limit, used } = await orgSeats(orgId);
+  // Joining turns an open invitation into a member: it adds nobody to `used`.
+  const after = adding === "invite" ? used + 1 : used;
+  if (limit !== null && after > limit) {
+    throw new ServiceError("conflict", `All ${limit} seats are in use. An owner can add seats in Billing, or remove someone first.`, { reason: "no_seats" });
+  }
+}
+
 // ---------------------------------------------------------------- organisations
 
 const nameSchema = z.string().trim().min(1, "Give it a name.").max(ORG_NAME_MAX, `Use ${ORG_NAME_MAX} characters or fewer.`);
@@ -135,6 +168,9 @@ export async function updateOrg(user: User, orgId: string, input: { name?: strin
 export async function deleteOrg(user: User, orgId: string): Promise<void> {
   assertNotDemo(user);
   const { org } = await requireOrgPermission(user, orgId, "org.delete");
+  if ((await liveOrgSubscriptions(orgId)).some((s) => !s.cancelAtPeriodEnd)) {
+    throw new ServiceError("conflict", `${org.name} has a subscription that would keep renewing. Cancel it in Billing first, then delete the organisation.`);
+  }
   await (await getData()).orgs.delete(orgId);
   await recordAudit(actorOf(user), "org.delete", "org", orgId, org, null);
 }
@@ -222,6 +258,9 @@ export async function inviteMember(user: User, orgId: string, input: { email: st
   if (!canManage(mine, role)) throw new ServiceError("forbidden", `Your role (${mine}) can't invite ${role === "admin" ? "an admin" : "a member"}.`);
   const data = await getData();
   if ((await data.orgs.listMembers(orgId)).some((m) => m.email === email)) throw new ServiceError("conflict", `${email} is already a member.`);
+  // A resend replaces an open invitation to the same address: it doesn't take another seat.
+  const resend = (await data.orgs.listInvitations(orgId)).some((i) => i.email === email);
+  if (!resend) await assertSeatFree(orgId, "invite");
 
   // A second invitation to the same address replaces the first, expired or not: the old link stops working.
   for (const open of await data.orgs.listInvitations(orgId, { all: true })) {
@@ -284,6 +323,7 @@ export async function acceptInvitation(user: User, token: string): Promise<Org> 
   if (inv.email !== user.email.toLowerCase()) {
     throw new ServiceError("forbidden", `This invitation is for ${inv.email}. Sign in with that address to accept it.`);
   }
+  await assertSeatFree(inv.orgId, "join");
   const result = await store(() => data.orgs.acceptInvitation(inv.id, user.id)).catch((error: unknown) => {
     if (error instanceof ServiceError && error.code === "conflict") throw new ServiceError("conflict", "You're already a member of this organisation.");
     throw error;
