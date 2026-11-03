@@ -294,15 +294,13 @@ export async function startCheckout(user: User, planKey: string, interval: Price
 export async function openPortal(user: User): Promise<string> {
   assertNotDemo(user);
   if (teamsEnabled()) {
-    // Whatever this person pays for, wherever it is (even a team they've since left): their portal.
+    // Manage billing is the payer's own portal: everything they pay for (personal, or any team's, even
+    // one they've left). An owner who doesn't pay is told who does on the billing page, not here.
     const billingNow = await getBilling();
-    if (billingNow) {
-      const url = await payersPortal(user, billingNow);
-      if (url) return url;
-    }
-    const access = await currentOrg(user);
-    if (!access) throw new ServiceError("not_found", "You don't pay for anything yet.");
-    return openOrgPortal(user, access.org.id);
+    if (!billingNow) throw new ServiceError("unavailable", "Billing isn't configured");
+    const url = await payersPortal(user, billingNow);
+    if (!url) throw new ServiceError("not_found", "You don't pay for anything, so there's no billing to manage.");
+    return url;
   }
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
@@ -413,8 +411,6 @@ export type OrgBillingView = {
   subscriptions: Subscription[];
   /** Who pays: the person whose Polar customer holds the subscription, if any. */
   payerEmail: string | null;
-  /** This person pays: they get Manage billing whatever their role. */
-  youPay: boolean;
   /** startOrgCheckout's rule, for the plan cards: the same shape as getCheckoutGuard. */
   refuse: (planKey: string, interval: PriceInterval) => CheckoutRefusal | null;
 };
@@ -430,7 +426,10 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
   const { org, role } = await requireOrgPermission(user, access.org.id, "billing.view");
   const [{ subscriptions, purchases, plans }, seats] = await Promise.all([orgBillingRows(org.id), orgSeats(org.id)]);
   const paying = subscriptions.find(isRenewing) ?? subscriptions[0];
-  const payer = paying ? await (await getData()).users.getById(paying.userId) : null;
+  const payerUser = paying ? await (await getData()).users.getById(paying.userId) : null;
+  // A payer who has left is shown as such: their address isn't the business of people who joined since.
+  const payerStillHere = payerUser ? (await (await getData()).orgs.getMember(org.id, payerUser.id)) !== null : false;
+  const payer = payerUser ? { id: payerUser.id, email: payerStillHere ? payerUser.email : "a former member" } : null;
   const renewing = subscriptions.some((s) => isRenewing(s) || (s.planKey !== null && grantsAccess(s)));
   const refuse = (planKey: string, interval: PriceInterval): CheckoutRefusal | null => {
     if (role !== "owner") return { reason: "not_owner", message: "Only an owner can choose the organisation's plan.", label: "Only an owner can buy a plan" };
@@ -446,7 +445,6 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
     entitlement: computeEntitlement(subscriptions, purchases, new Date(), plans),
     subscriptions,
     payerEmail: payer?.email ?? null,
-    youPay: subscriptions.some((s) => s.userId === user.id),
     refuse,
   };
 }

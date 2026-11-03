@@ -380,3 +380,35 @@ describe("the portal answers to whoever pays (review round 2)", () => {
     await expect(orgs.inviteMember(owner, org.id, { email: "same@example.com", role: "member" })).rejects.toMatchObject({ code: "rate_limited" });
   });
 });
+
+describe("Manage billing is your own billing (review round 3)", () => {
+  it("a personal plan from before teams, held by someone now in a team, can still be managed", async () => {
+    const { org } = await teamWith(0);
+    const early = await person("early");
+    await store.orgs.addMember(org.id, early.id, "member");
+    await billingWebhookSink.applySubscription({
+      provider: "polar", providerSubscriptionId: "psub_mine", providerCustomerId: "pcus_early", userIdHints: [early.id],
+      productId: "prod_team_month", planKeyHint: null, checkoutProductId: null, orgIdHint: null, seats: null,
+      interval: "month", status: "active", currentPeriodEnd: PERIOD_END, cancelAtPeriodEnd: false,
+    });
+    expect(await billing.paysForAnything(early)).toBe(true); // the page shows Manage billing
+    await expect(billing.openPortal(early)).resolves.toBe("https://polar.example.com/portal");
+  });
+
+  it("an owner who pays for nothing gets no portal, and the billing page names who pays", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(members[0], org);
+    expect(await billing.paysForAnything(owner)).toBe(false); // no Manage billing for the owner
+    await expect(billing.openPortal(owner)).rejects.toMatchObject({ code: "not_found" });
+    expect((await billing.getOrgBillingView(owner))?.payerEmail).toBe(members[0].email);
+  });
+
+  it("shows a payer who has left as a former member", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(members[0], org, { cancelAtPeriodEnd: true });
+    await orgs.removeMember(owner, org.id, members[0].id);
+    const view = await billing.getOrgBillingView(owner);
+    expect(view?.payerEmail).toBe("a former member");
+    expect(JSON.stringify(view)).not.toContain(members[0].email);
+  });
+});

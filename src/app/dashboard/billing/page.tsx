@@ -197,6 +197,10 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
     );
   }
 
+  // With teams, Manage billing is the person's own billing: shown when they pay for anything (openPortal
+  // opens exactly that). An owner who doesn't pay sees who does in the notice below instead.
+  const showPortal = orgView ? await paysForAnything(user) : null;
+
   // Every plan, retired ones included, for names; only active plans are offered.
   const [detail, plans, billingOn, personalRefuse] = await Promise.all([
     orgView ? null : getUserDetail(user.id),
@@ -224,7 +228,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments. Payments are handled by Polar, which issues the receipts.`
             : "Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
         }
-        action={billingOn && hasAccount && (!orgView || orgView.role === "owner" || orgView.youPay) ? <PortalButton /> : undefined}
+        action={billingOn && (orgView ? showPortal : hasAccount) ? <PortalButton /> : undefined}
       />
       {orgView ? (
         <Notice tone="info" title={orgView.seats.limit === null ? `${orgView.seats.used} in the team` : `${orgView.seats.used} of ${orgView.seats.limit} seats in use`}>

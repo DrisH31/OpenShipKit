@@ -105,7 +105,8 @@ With teams on, the organisation holds the plan, and everyone in it shares it:
   organisation's plan is a subscription (monthly or yearly), one at a time;
   changes go through Manage billing. A new plan can't be bought while the
   current one is still running out its period, so a later resume in Polar
-  can't charge the team twice.
+  can't charge the team twice. The cost is a gap: when the old plan ends, the
+  team is on the free plan until someone buys the new one.
 - **Kept separate:** a subscription bought for an organisation never gives
   the buyer a personal plan. If the organisation is deleted, its
   subscription stays bound to it and grants nothing. And an organisation
@@ -123,8 +124,16 @@ limit.
 **Who pays.** Polar keys a customer by email, so the subscription is billed
 to the owner who bought it, and their Polar customer portal manages it. The
 checkout's metadata ties it to the organisation, and the webhook reads it from
-there. After an ownership transfer, the payer can still open Manage billing,
-and the new owner is told who pays, until that's changed in Polar.
+there. **Manage billing** is always the person's own billing: it shows for
+anyone who pays for something (personal, or any team's, even one they've left)
+and opens their Polar portal. An owner who doesn't pay is told who does. That's
+"a former member" once the payer has left. After an ownership transfer, the
+payer still cancels or changes it from their own Manage billing.
+
+The rules about who may leave or delete trust the subscription rows that
+webhooks wrote. If Polar can't deliver an event, it retries, and every later
+event for the subscription re-fetches its current state. So a lost cancel is
+corrected by the next delivery, not by guessing from dates.
 
 ## For the site admin
 
