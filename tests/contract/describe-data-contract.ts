@@ -1164,6 +1164,13 @@ export function describePostgresBehaviour(name: string, getDb: () => Db) {
   describe(`postgres-only behaviour: ${name}`, () => {
     const store = () => createPostgresStore({ db: getDb() });
 
+    it("reports the newest applied migration: the one this code expects, once migrated", async () => {
+      const { EXPECTED_MIGRATION, schemaState } = await import("@/server/schema-version");
+      const applied = await store().appliedMigration();
+      expect(applied).toBe(EXPECTED_MIGRATION);
+      expect(schemaState(applied)).toBe("current");
+    });
+
     it("rejects an invalid date instead of storing garbage", async () => {
       await expectDataError(store().posts.create({ kind: "post", slug: uniq("bad-"), title: "T", publishedAt: "not a date" }), "invalid");
     });

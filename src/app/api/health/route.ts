@@ -8,6 +8,9 @@
 // this is and the OpenShipKit version. Never a connection string, a key, an
 // error message or a count.
 //
+// `schema` says whether the database has every migration the code expects
+// (src/server/schema-version.ts); "behind" makes it a 503.
+//
 // `jobs.ok` is false when a due job has waited more than JOB_LAG_LIMIT_MS: the
 // runner is stopped (JOBS_RUNNER=off everywhere), stuck, or overwhelmed. It
 // doesn't change the status code: a slow queue is a reason to look, not to take
@@ -20,6 +23,7 @@ import { getData } from "@/server/data";
 import { billingProvider, dataProvider, emailProvider, isDemo, optionalEnv, siteProfile } from "@/server/env";
 import { OPENSHIPKIT_VERSION } from "@/server/mcp/server-info";
 import { log } from "@/server/log";
+import { schemaState, type SchemaState } from "@/server/schema-version";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +50,22 @@ async function checkData(): Promise<{ ok: boolean; ms: number }> {
   }
 }
 
+/**
+ * Whether the database has every migration this code expects. "behind" fails readiness (a deploy
+ * skipped `npm run db:migrate`: queries for new columns would fail); "ahead" (older code on a newer
+ * database, during a rollback) is reported but serves. Null for the in-memory store, which has none.
+ */
+async function checkSchema(): Promise<{ ok: boolean; state: SchemaState } | null> {
+  try {
+    const data = await getData();
+    if (data.id === "memory") return null;
+    const state = schemaState(await data.appliedMigration());
+    return { ok: state !== "behind", state };
+  } catch {
+    return null; // the database check above says why
+  }
+}
+
 /** Whether background jobs keep up: a yes or no, never how many. Null when the queue can't be read. */
 async function checkJobs(): Promise<{ ok: boolean } | null> {
   try {
@@ -68,12 +88,14 @@ function stack() {
 
 export async function GET(): Promise<Response> {
   const data = await checkData();
-  const jobs = data.ok ? await checkJobs() : null;
-  const body = { ok: data.ok, data, jobs, stack: stack(), version: OPENSHIPKIT_VERSION, time: new Date().toISOString() };
-  return NextResponse.json(body, { status: data.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
+  const [jobs, schema] = data.ok ? await Promise.all([checkJobs(), checkSchema()]) : [null, null];
+  const ok = data.ok && schema?.ok !== false;
+  const body = { ok, data, schema, jobs, stack: stack(), version: OPENSHIPKIT_VERSION, time: new Date().toISOString() };
+  return NextResponse.json(body, { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
 }
 
 export async function HEAD(): Promise<Response> {
   const data = await checkData();
-  return new Response(null, { status: data.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
+  const schema = data.ok ? await checkSchema() : null;
+  return new Response(null, { status: data.ok && schema?.ok !== false ? 200 : 503, headers: { "Cache-Control": "no-store" } });
 }

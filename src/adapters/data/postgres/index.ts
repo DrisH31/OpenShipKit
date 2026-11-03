@@ -426,6 +426,14 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
   const store: DataStore = {
     id: "postgres",
 
+    async appliedMigration() {
+      const exists = await db().execute<{ t: string | null }>(sql`select to_regclass('drizzle.__drizzle_migrations')::text as t`);
+      if (!exists.rows[0]?.t) return null;
+      const rows = await db().execute<{ at: string | number | null }>(sql`select max(created_at) as at from drizzle.__drizzle_migrations`);
+      const at = rows.rows[0]?.at;
+      return at === null || at === undefined ? null : Number(at);
+    },
+
     async health() {
       try {
         const started = Date.now();

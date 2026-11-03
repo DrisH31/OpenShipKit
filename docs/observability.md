@@ -116,7 +116,14 @@ party, so the privacy page should say so (AGENTS.md, rule 15).
 | `/api/health` | 200 when the database answers, 503 when it doesn't | Uptime monitors and load balancers (readiness) |
 | `/api/health/live` | 200 whenever the process can answer, without touching the database | Restart policies (liveness): a database blip shouldn't restart a healthy app |
 
-`/api/health` also reports `"jobs": {"ok": false}` when a due background job
+`/api/health` also reports `"schema": {"ok": …, "state": "current" | "behind" | "ahead"}`:
+whether the database has every migration this build expects (the newest entry in
+`drizzle/meta/_journal.json`). **Behind** is a 503: a deploy skipped
+`npm run db:migrate`, and queries for new columns would fail, so a load balancer
+should hold traffic until it runs. **Ahead** (older code on a newer database,
+during a rollback) is reported but serves.
+
+It also reports `"jobs": {"ok": false}` when a due background job
 has waited more than five minutes, because the runner is stopped, stuck or
 behind ([background jobs](jobs.md)). That doesn't change the status code. Add a
 keyword monitor for `"jobs":{"ok":true` to hear about it. The endpoint is public

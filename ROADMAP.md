@@ -22,8 +22,7 @@ A kit can score 9 on completeness and 5 on confidence. Confidence comes first.
 
 ## Phase 1: Production confidence (hardening)
 
-Status: 1.1–1.7 done (November 2026), apart from the migration check in 1.7, which
-moves to 1.8. An independent review of 1.1–1.5 found a leak of query parameters
+Status: done (November 2026), 1.8 included. An independent review of 1.1–1.5 found a leak of query parameters
 into logs and a fail-open authorization test. Both are fixed, with tests that fail
 without the fix.
 
@@ -36,7 +35,7 @@ without the fix.
 | 1.5 | **Email without Resend**: an SMTP adapter (`SMTP_URL`), so mail can go through your own server or any provider | `EMAIL_PROVIDER=smtp`; contract tests for each adapter |
 | 1.6 | **Background jobs in Postgres**: a `jobs` table with `SKIP LOCKED`, retries with backoff, run in-process. No Redis needed | A failed email send is queued and retried; `/admin/jobs` and MCP show and retry failures |
 | 1.7 | **Health in depth**: `/api/health` reports the database and job lag; `/api/health/live` for liveness | Documented in docs/observability.md |
-| 1.8 | **Migrations in health**: `/api/health` says whether the database is on the schema the code expects | A deploy that skipped `db:migrate` shows up in monitoring, not in a 500 |
+| 1.8 | **Migrations in health** (done): `/api/health` says whether the database is on the schema the code expects | A deploy that skipped `db:migrate` is a 503 in monitoring, not a 500 for visitors |
 
 ## Phase 2: Teams and organisations
 

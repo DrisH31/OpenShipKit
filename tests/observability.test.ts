@@ -219,3 +219,13 @@ describe("scrubbing failed queries", () => {
     expect(body).toContain("Failed query");
   });
 });
+
+describe("schema state in /api/health", () => {
+  it("is behind with nothing or an older migration applied, current when equal, ahead after a rollback", async () => {
+    const { schemaState } = await import("@/server/schema-version");
+    expect(schemaState(null, 100)).toBe("behind");
+    expect(schemaState(99, 100)).toBe("behind");
+    expect(schemaState(100, 100)).toBe("current");
+    expect(schemaState(101, 100)).toBe("ahead");
+  });
+});

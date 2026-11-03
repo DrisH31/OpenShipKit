@@ -291,6 +291,12 @@ export interface DataStore {
   readonly id: DataProviderId;
   /** Cheap round-trip; used by /api/health. */
   health(): Promise<{ ok: boolean; detail?: string }>;
+  /**
+   * The newest migration applied to this database, as drizzle records it (the journal's `when`, in
+   * ms), or null when none is recorded or the store has no migrations (memory). /api/health compares
+   * it with the newest migration the code ships.
+   */
+  appliedMigration(): Promise<number | null>;
   users: UsersRepo;
   content: ContentRepo;
   posts: PostsRepo;

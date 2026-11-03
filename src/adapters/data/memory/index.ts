@@ -141,6 +141,9 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
 
   const store: DataStore = {
     id: "memory",
+    async appliedMigration() {
+      return null; // in memory: no migrations to be behind on
+    },
     async health() {
       return { ok: true, detail: "in-memory (demo) — data resets on restart" };
     },
