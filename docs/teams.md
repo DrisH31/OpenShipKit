@@ -45,10 +45,13 @@ Rules the services keep, whatever the page shows:
   with it.
 - **Every change is audited** under the organisation's id (`/admin/audit`).
 - **Whoever pays can't walk away from the bill.** The person paying for a
-  renewing subscription can't leave or be removed until it's cancelled. They
-  can still open Manage billing whatever their role, for example after
-  handing over ownership. Deleting an account is refused while it would take
-  a team with a renewing subscription, or cut short a team's paid time.
+  renewing subscription can't leave or be removed until it's cancelled.
+  Manage billing opens for whoever pays, whatever their role and even if
+  they've since left the team: Polar keys the subscription to them. Deleting
+  an account is refused while it would take a team with a renewing
+  subscription, or cut short an existing team's paid time. "Renewing" has
+  one meaning everywhere (`isRenewing()` in `src/core/types.ts`): the
+  provider will charge again.
 
 ## Invitations
 
@@ -65,8 +68,9 @@ stored, so a database backup can't be used to join anyone's team.
 - If the email can't be sent, the invitation still exists and the service
   returns the link, so it can be passed on another way.
 - **Limits, so invitations can't be used to send spam from your domain.** 30
-  per person per hour, 100 per organisation per day, and at most 100 waiting
-  at once.
+  per person per hour, 100 per organisation per day, 3 per address per hour,
+  and at most 100 waiting at once. The counters live in each app process (like
+  every rate limit here); behind several replicas, see docs/scaling.md.
 
 ## Building on it
 
@@ -93,11 +97,15 @@ With teams on, the organisation holds the plan, and everyone in it shares it:
 - **Gates:** `requirePlan(user, ["pro"])` checks the plan of the
   organisation the person is working in. Someone in no organisation is sent
   to the Team page. A personal plan bought before teams were turned on still
-  counts, so turning teams on cuts nobody off.
+  counts, so turning teams on cuts nobody off. It counts for that person
+  only, in whichever team they work in: it opens their gates, not their
+  teammates'.
 - **The billing page:** it shows the organisation's plan, seats and
   payments. Any member can look, but only an owner can buy. An
   organisation's plan is a subscription (monthly or yearly), one at a time;
-  changes go through Manage billing.
+  changes go through Manage billing. A new plan can't be bought while the
+  current one is still running out its period, so a later resume in Polar
+  can't charge the team twice.
 - **Kept separate:** a subscription bought for an organisation never gives
   the buyer a personal plan. If the organisation is deleted, its
   subscription stays bound to it and grants nothing. And an organisation

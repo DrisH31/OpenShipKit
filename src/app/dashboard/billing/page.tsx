@@ -42,7 +42,7 @@ import { formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS } from "@/lib/status";
 import { requireSaasProfile } from "@/server/profile";
 import { requireUser } from "@/server/session";
-import { getCheckoutGuard, getOrgBillingView, isBillingEnabled, type CheckoutRefusal } from "@/server/services/billing";
+import { getCheckoutGuard, getOrgBillingView, isBillingEnabled, paysForAnything, type CheckoutRefusal } from "@/server/services/billing";
 import { teamsEnabled } from "@/server/services/orgs";
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
@@ -179,9 +179,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const teams = teamsEnabled();
   const orgView = teams ? await getOrgBillingView(user) : null;
   if (teams && !orgView) {
+    // In no team, but perhaps still paying for one they've left: Manage billing stays reachable.
+    const pays = (await isBillingEnabled()) && (await paysForAnything(user));
     return (
       <>
-        <PageHeader title="Billing" answer="With teams, plans belong to an organisation." />
+        <PageHeader title="Billing" answer="With teams, plans belong to an organisation." action={pays ? <PortalButton /> : undefined} />
         <EmptyState
           title="Create an organisation first"
           body="Your organisation holds the plan, and everyone in it shares it."

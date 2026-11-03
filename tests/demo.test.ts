@@ -155,6 +155,7 @@ const NOT_WRITES = new Set([
   "listInvitations",
   // The billing page's read of the organisation's plan and seats (src/server/services/billing.ts).
   "getOrgBillingView",
+  "paysForAnything",
 ]);
 
 describe("every write service is guarded", () => {

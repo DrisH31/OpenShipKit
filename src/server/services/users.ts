@@ -18,7 +18,7 @@ import "server-only";
 //
 
 import { MAX_LIMIT } from "@/core/data";
-import { grantsAccess, type Actor, type Page, type Role, type SubscriptionStatus, type User } from "@/core/types";
+import { grantsAccess, isRenewing, type Actor, type Page, type Role, type User } from "@/core/types";
 import { getAuth } from "../auth";
 import { assertNotDemo } from "../demo";
 import { getData } from "../data";
@@ -177,14 +177,21 @@ export async function updateOwnProfile(user: User, patch: { name?: string | null
 }
 
 /** A subscription the provider will keep charging: not canceled, and not set to end at the period end. */
-const RENEWING: readonly SubscriptionStatus[] = ["trialing", "active", "past_due", "unpaid", "paused"];
 
 async function assertNothingRenews(user: User, self: boolean): Promise<void> {
   const subs = await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 });
   // An organisation's subscription the person paid for, still running out its paid period: deleting
   // the account would delete that row (subscriptions.user_id cascades) and cut the team off early.
   const now = Date.now();
-  const teamTime = subs.items.find((s) => s.orgId !== null && s.cancelAtPeriodEnd && s.planKey !== null && grantsAccess(s, now));
+  const data = await getData();
+  let teamTime: (typeof subs.items)[number] | undefined;
+  for (const s of subs.items) {
+    // Only a team that still exists can be cut off: a deleted team's subscription grants nothing anyway.
+    if (s.orgId !== null && s.cancelAtPeriodEnd && s.planKey !== null && grantsAccess(s, now) && (await data.orgs.get(s.orgId))) {
+      teamTime = s;
+      break;
+    }
+  }
   if (teamTime) {
     const end = teamTime.currentPeriodEnd?.slice(0, 10) ?? null;
     throw new ServiceError(
@@ -194,7 +201,7 @@ async function assertNothingRenews(user: User, self: boolean): Promise<void> {
         : `${user.email} paid for an organisation's plan that is still running${end ? ` until ${end}` : ""}; deleting the account now would end it early for the team. Try again after it ends.`,
     );
   }
-  const renewing = subs.items.find((s) => RENEWING.includes(s.status) && !s.cancelAtPeriodEnd);
+  const renewing = subs.items.find(isRenewing);
   if (!renewing) return;
   throw new ServiceError(
     "conflict",

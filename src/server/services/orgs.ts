@@ -42,7 +42,7 @@ import {
   type OrgRole,
 } from "@/core/orgs";
 import { emailSchema } from "@/core/schemas";
-import { grantsAccess, type Actor, type Subscription, type User } from "@/core/types";
+import { grantsAccess, isRenewing, type Actor, type Subscription, type User } from "@/core/types";
 import { getData } from "../data";
 import { assertNotDemo } from "../demo";
 import { sendEmail } from "../email";
@@ -57,6 +57,7 @@ import { ServiceError, fromDataError, parseInput } from "./errors";
 const INVITES_PER_USER_PER_HOUR = 30;
 const INVITES_PER_ORG_PER_DAY = 100;
 const MAX_OPEN_INVITATIONS = 100;
+const INVITES_PER_ADDRESS_PER_HOUR = 3;
 
 export function teamsEnabled(): boolean {
   return tenancy() === "org";
@@ -132,13 +133,17 @@ async function seatLimitOf(orgId: string): Promise<number | null> {
 const noSeats = (limit: number | null) =>
   new ServiceError("conflict", `All ${limit} seats are in use. An owner can add seats in Billing, or remove someone first.`, { reason: "no_seats" });
 
+/** The organisation's subscriptions the provider will charge again (isRenewing: one definition everywhere). */
+export async function renewingOrgSubscriptions(orgId: string): Promise<Subscription[]> {
+  return (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items.filter(isRenewing);
+}
+
 /**
- * Who pays for the organisation's subscription, while it renews: they can't leave or be removed
- * until it's cancelled, or they'd be charged for a team they're no longer in, with no way to stop it.
+ * Everyone paying for one of the organisation's renewing subscriptions: they can't leave or be
+ * removed until it's cancelled, or they'd be charged for a team they're no longer in.
  */
-async function renewingPayer(orgId: string): Promise<string | null> {
-  const renewing = (await liveOrgSubscriptions(orgId)).find((s) => !s.cancelAtPeriodEnd);
-  return renewing?.userId ?? null;
+async function renewingPayers(orgId: string): Promise<Set<string>> {
+  return new Set((await renewingOrgSubscriptions(orgId)).map((s) => s.userId));
 }
 
 // ---------------------------------------------------------------- organisations
@@ -182,7 +187,7 @@ export async function updateOrg(user: User, orgId: string, input: { name?: strin
 export async function deleteOrg(user: User, orgId: string): Promise<void> {
   assertNotDemo(user);
   const { org } = await requireOrgPermission(user, orgId, "org.delete");
-  if ((await liveOrgSubscriptions(orgId)).some((s) => !s.cancelAtPeriodEnd)) {
+  if ((await renewingOrgSubscriptions(orgId)).length > 0) {
     throw new ServiceError("conflict", `${org.name} has a subscription that would keep renewing. Cancel it in Billing first, then delete the organisation.`);
   }
   await (await getData()).orgs.delete(orgId);
@@ -224,10 +229,12 @@ export async function removeMember(user: User, orgId: string, targetUserId: stri
   const { role: mine } = await requireOrgPermission(user, orgId, "members.remove");
   const target = await targetMember(orgId, targetUserId);
   if (!canManage(mine, target.role)) throw new ServiceError("forbidden", `Your role (${mine}) can't remove a ${target.role}.`);
-  if ((await renewingPayer(orgId)) === targetUserId) {
-    throw new ServiceError("conflict", `${target.email} pays for this organisation's subscription. Cancel it in Billing first, or they'd keep paying for a team they're no longer in.`, {
-      reason: "payer",
-    });
+  if ((await renewingPayers(orgId)).has(targetUserId)) {
+    throw new ServiceError(
+      "conflict",
+      `${target.email} pays for this organisation's subscription. Ask them to cancel it in Manage billing first, or they'd keep paying for a team they're no longer in.`,
+      { reason: "payer" },
+    );
   }
   await (await getData()).orgs.removeMember(orgId, targetUserId);
   await recordAudit(actorOf(user), "org.member.remove", "org", orgId, { userId: targetUserId, role: target.role }, null);
@@ -239,7 +246,7 @@ export async function leaveOrg(user: User, orgId: string): Promise<void> {
   if (role === "owner" && (await ownersOf(orgId)).length === 1) {
     throw new ServiceError("conflict", "You're the only owner. Transfer ownership to someone first, or delete the organisation.");
   }
-  if ((await renewingPayer(orgId)) === user.id) {
+  if ((await renewingPayers(orgId)).has(user.id)) {
     throw new ServiceError("conflict", "You pay for this organisation's subscription. Cancel it in Billing first, then leave.", { reason: "payer" });
   }
   await (await getData()).orgs.removeMember(orgId, user.id);
@@ -282,7 +289,12 @@ export async function inviteMember(user: User, orgId: string, input: { email: st
   if ((await data.orgs.listMembers(orgId)).some((m) => m.email === email)) throw new ServiceError("conflict", `${email} is already a member.`);
   // Invitations send email to any address: limit them, per person and per organisation, so the
   // site's sending domain can't be used to spam (the subject carries the organisation's name).
-  if (!rateLimit(`org:invite:user:${user.id}`, INVITES_PER_USER_PER_HOUR, 60 * 60_000).ok || !rateLimit(`org:invite:org:${orgId}`, INVITES_PER_ORG_PER_DAY, 24 * 60 * 60_000).ok) {
+  if (
+    !rateLimit(`org:invite:user:${user.id}`, INVITES_PER_USER_PER_HOUR, 60 * 60_000).ok ||
+    !rateLimit(`org:invite:org:${orgId}`, INVITES_PER_ORG_PER_DAY, 24 * 60 * 60_000).ok ||
+    // Resends to one address: else repeated resends could mail one person hundreds of times a day.
+    !rateLimit(`org:invite:to:${orgId}:${email}`, INVITES_PER_ADDRESS_PER_HOUR, 60 * 60_000).ok
+  ) {
     throw new ServiceError("rate_limited", "That's a lot of invitations at once. Try again later.");
   }
   const open = await data.orgs.listInvitations(orgId);
@@ -389,7 +401,7 @@ export async function orgsBlockingDeletion(userId: string): Promise<{ blocking: 
     const members = await data.orgs.listMembers(org.id);
     // A team that would go with the account mustn't take a renewing subscription with it: whoever pays
     // (perhaps someone no longer in it) would be charged for nothing.
-    const renewing = (await liveOrgSubscriptions(org.id)).some((s) => !s.cancelAtPeriodEnd);
+    const renewing = (await renewingOrgSubscriptions(org.id)).length > 0;
     if (members.length > 1) {
       if (members.filter((m) => m.role === "owner").length === 1) blocking.push(org);
     } else if (renewing) renewingOrgs.push(org);

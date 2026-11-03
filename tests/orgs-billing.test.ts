@@ -84,7 +84,7 @@ async function person(label: string): Promise<User> {
 const PERIOD_END = new Date(Date.now() + 20 * 86_400_000).toISOString();
 
 /** What a verified Polar webhook for the organisation's subscription hands the sink. */
-async function webhookFor(buyer: User, org: Org | null, over: { seats?: number | null; status?: "active" | "canceled"; id?: string; cancelAtPeriodEnd?: boolean } = {}) {
+async function webhookFor(buyer: User, org: Org | null, over: { seats?: number | null; status?: "active" | "canceled" | "unpaid"; id?: string; cancelAtPeriodEnd?: boolean } = {}) {
   return billingWebhookSink.applySubscription({
     provider: "polar",
     providerSubscriptionId: over.id ?? "psub_org_1",
@@ -338,5 +338,45 @@ describe("seats under concurrency", () => {
     const results = await Promise.allSettled([0, 1, 2].map((i) => orgs.inviteMember(owner, org.id, { email: `race${i}@example.com`, role: "member" })));
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect((await orgs.orgSeats(org.id)).used).toBe(3);
+  });
+});
+
+describe("the portal answers to whoever pays (review round 2)", () => {
+  it("a payer removed after setting it to end, who then resumes it in Polar, can still reach their portal to stop it", async () => {
+    const { owner, org, members } = await teamWith(1);
+    const a = members[0];
+    await webhookFor(a, org, { cancelAtPeriodEnd: true }); // A pays, set to end
+    await orgs.removeMember(owner, org.id, a.id); // allowed: it won't renew
+    await webhookFor(a, org, { cancelAtPeriodEnd: false }); // A resumes it in Polar
+    h.cookie = undefined;
+    await expect(billing.openPortal(a)).resolves.toBe("https://polar.example.com/portal"); // A is in no team, and pays
+    h.cookie = org.id;
+    await expect(billing.openOrgPortal(owner, org.id)).rejects.toMatchObject({ details: { reason: "managed_by_other" }, message: expect.stringContaining(a.email) });
+  });
+
+  it("a team can't buy while a subscription is still running out its period, so a resume can't double-charge it", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(members[0], org, { cancelAtPeriodEnd: true });
+    await expect(billing.startOrgCheckout(owner, org.id, "team", "month")).rejects.toMatchObject({ details: { reason: "already_subscribed" }, message: expect.stringMatching(/runs until/) });
+  });
+
+  it("uses one meaning of renewing: an unpaid subscription still blocks removing its payer and deleting the team", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(members[0], org, { status: "unpaid" });
+    await expect(orgs.removeMember(owner, org.id, members[0].id)).rejects.toMatchObject({ details: { reason: "payer" }, message: expect.stringContaining("Ask them") });
+    await expect(orgs.deleteOrg(owner, org.id)).rejects.toMatchObject({ message: expect.stringMatching(/keep renewing/) });
+  });
+
+  it("deleting an account isn't held up by a team that no longer exists", async () => {
+    const { owner, org } = await teamWith(0);
+    await webhookFor(owner, org, { cancelAtPeriodEnd: true });
+    await orgs.deleteOrg(owner, org.id);
+    await expect(deleteUser(owner.id, self(owner))).resolves.toBeUndefined();
+  });
+
+  it("limits resends to one address", async () => {
+    const { owner, org } = await teamWith(0);
+    for (let i = 0; i < 3; i++) await orgs.inviteMember(owner, org.id, { email: "same@example.com", role: "member" });
+    await expect(orgs.inviteMember(owner, org.id, { email: "same@example.com", role: "member" })).rejects.toMatchObject({ code: "rate_limited" });
   });
 });

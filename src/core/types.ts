@@ -220,6 +220,18 @@ export const PAST_DUE_GRACE_DAYS = 7;
  * every DataStore's stats().activeSubscriptions use this one rule (the Postgres
  * store spells it in SQL).
  */
+/** Statuses in which the provider will charge again unless the subscription is set to end. */
+export const RENEWING_STATUSES: readonly SubscriptionStatus[] = ["trialing", "active", "past_due", "unpaid", "paused"];
+
+/**
+ * The one definition of "still being charged": the provider will bill it again. A renewing status
+ * and not set to end at the period's close, whatever plan it's on. Every rule about who may leave,
+ * delete or buy uses this, so no two of them can disagree.
+ */
+export function isRenewing(sub: Pick<Subscription, "status" | "cancelAtPeriodEnd">): boolean {
+  return RENEWING_STATUSES.includes(sub.status) && !sub.cancelAtPeriodEnd;
+}
+
 export function grantsAccess(sub: Pick<Subscription, "status" | "currentPeriodEnd">, now: number = Date.now()): boolean {
   if (!ENTITLED_STATUSES.includes(sub.status)) return false;
   if (!sub.currentPeriodEnd) return true;
