@@ -823,6 +823,122 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
       expect((await store.stats()).activeSubscriptions).toBe(base.activeSubscriptions + 3);
     });
 
+    // ------------------------------------------------------------ organisations
+    describe("organisations", () => {
+      const days = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
+      const hash = () => uniq("hash-");
+
+      it("creates an organisation with its creator as owner, and keeps slugs unique", async () => {
+        const owner = await newUser();
+        const slug = uniq("acme-");
+        const org = await store.orgs.create({ name: "Acme", slug, ownerId: owner.id });
+        expect(org).toMatchObject({ name: "Acme", slug, createdBy: owner.id });
+        expect(await store.orgs.getBySlug(slug)).toEqual(org);
+        expect(await store.orgs.get(org.id)).toEqual(org);
+        expect(await store.orgs.listForUser(owner.id)).toEqual([{ org, role: "owner" }]);
+        expect(await store.orgs.getMember(org.id, owner.id)).toMatchObject({ role: "owner", email: owner.email, name: owner.name });
+        await expectDataError(store.orgs.create({ name: "Other", slug, ownerId: owner.id }), "conflict");
+        await expectDataError(store.orgs.create({ name: "Ghost", slug: uniq("g-"), ownerId: "00000000-0000-4000-8000-000000000000" }), "invalid");
+        // A failed create leaves nothing behind (no organisation without its owner, or the reverse).
+        expect(await store.orgs.listForUser(owner.id)).toHaveLength(1);
+      });
+
+      it("renames, refuses a taken slug, lists with member counts and search, and treats a bad id as a miss", async () => {
+        const owner = await newUser();
+        const a = await store.orgs.create({ name: "Alpha", slug: uniq("alpha-"), ownerId: owner.id });
+        await tick();
+        const b = await store.orgs.create({ name: "Beta Works", slug: uniq("beta-"), ownerId: owner.id });
+        expect(await store.orgs.update(a.id, { name: "Alpha Two" })).toMatchObject({ name: "Alpha Two", slug: a.slug });
+        await expectDataError(store.orgs.update(a.id, { slug: b.slug }), "conflict");
+        await expectDataError(store.orgs.update("00000000-0000-4000-8000-000000000000", { name: "x" }), "not_found");
+        const found = await store.orgs.list({ search: "beta works" });
+        expect(found.items.map((o) => o.id)).toEqual([b.id]);
+        expect(found.items[0].members).toBe(1);
+        expect((await store.orgs.list({ limit: 1 })).items[0].id).toBe(b.id); // newest first
+        expect(await store.orgs.get("nope")).toBeNull();
+      });
+
+      it("adds members, orders them owner > admin > member, changes roles and removes them", async () => {
+        const [owner, a, b] = [await newUser(), await newUser(), await newUser()];
+        const org = await store.orgs.create({ name: "Team", slug: uniq("team-"), ownerId: owner.id });
+        await tick();
+        await store.orgs.addMember(org.id, a.id, "member");
+        await tick();
+        await store.orgs.addMember(org.id, b.id, "admin");
+        await expectDataError(store.orgs.addMember(org.id, a.id, "admin"), "conflict");
+        expect((await store.orgs.listMembers(org.id)).map((m) => [m.userId, m.role])).toEqual([
+          [owner.id, "owner"],
+          [b.id, "admin"],
+          [a.id, "member"],
+        ]);
+        expect(await store.orgs.countMembers(org.id)).toBe(3);
+        expect(await store.orgs.setMemberRole(org.id, a.id, "admin")).toMatchObject({ role: "admin", email: a.email });
+        await expectDataError(store.orgs.setMemberRole(org.id, "00000000-0000-4000-8000-000000000000", "admin"), "not_found");
+        expect(await store.orgs.removeMember(org.id, a.id)).toBe(true);
+        expect(await store.orgs.removeMember(org.id, a.id)).toBe(false);
+        expect(await store.orgs.getMember(org.id, a.id)).toBeNull();
+        expect(await store.orgs.listForUser(b.id)).toEqual([{ org, role: "admin" }]);
+      });
+
+      it("keeps one open invitation per address, finds it by token hash, lists pending ones, and revokes once", async () => {
+        const owner = await newUser();
+        const org = await store.orgs.create({ name: "Inv", slug: uniq("inv-"), ownerId: owner.id });
+        const tokenHash = hash();
+        const inv = await store.orgs.createInvitation({ orgId: org.id, email: "New.Person@Example.com", role: "member", tokenHash, invitedBy: owner.id, expiresAt: days(7) });
+        expect(inv).toMatchObject({ orgId: org.id, email: "new.person@example.com", role: "member", invitedBy: owner.id, acceptedAt: null, revokedAt: null });
+        expect(inv).not.toHaveProperty("tokenHash");
+        await expectDataError(store.orgs.createInvitation({ orgId: org.id, email: "new.person@example.com", role: "admin", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) }), "conflict");
+        expect(await store.orgs.findInvitationByTokenHash(tokenHash)).toEqual(inv);
+        expect(await store.orgs.findInvitationByTokenHash("unknown")).toBeNull();
+        expect((await store.orgs.listInvitations(org.id)).map((i) => i.id)).toEqual([inv.id]);
+
+        const revoked = await store.orgs.revokeInvitation(inv.id);
+        expect(revoked?.revokedAt).not.toBeNull();
+        expect(await store.orgs.revokeInvitation(inv.id)).toBeNull();
+        expect(await store.orgs.listInvitations(org.id)).toEqual([]);
+        expect((await store.orgs.listInvitations(org.id, { all: true })).map((i) => i.id)).toEqual([inv.id]);
+        // Revoking frees the address.
+        await store.orgs.createInvitation({ orgId: org.id, email: "new.person@example.com", role: "member", tokenHash: hash(), invitedBy: null, expiresAt: days(7) });
+      });
+
+      it("accepts an invitation atomically, once, and never an expired one", async () => {
+        const [owner, joiner, already] = [await newUser(), await newUser(), await newUser()];
+        const org = await store.orgs.create({ name: "Acc", slug: uniq("acc-"), ownerId: owner.id });
+        const inv = await store.orgs.createInvitation({ orgId: org.id, email: joiner.email, role: "admin", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) });
+        const accepted = await store.orgs.acceptInvitation(inv.id, joiner.id);
+        expect(accepted?.member).toMatchObject({ orgId: org.id, userId: joiner.id, role: "admin" });
+        expect(accepted?.invitation.acceptedAt).not.toBeNull();
+        expect(await store.orgs.acceptInvitation(inv.id, joiner.id)).toBeNull();
+
+        // Accepting for someone who is already a member fails as a whole: the invitation stays open.
+        await store.orgs.addMember(org.id, already.id, "member");
+        const second = await store.orgs.createInvitation({ orgId: org.id, email: already.email, role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) });
+        await expectDataError(store.orgs.acceptInvitation(second.id, already.id), "conflict");
+        expect((await store.orgs.getInvitation(second.id))?.acceptedAt).toBeNull();
+
+        const expired = await store.orgs.createInvitation({ orgId: org.id, email: uniq("late") + "@example.com", role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(-1) });
+        expect(await store.orgs.acceptInvitation(expired.id, (await newUser()).id)).toBeNull();
+        expect(await store.orgs.revokeInvitation(expired.id)).toBeNull(); // not pending either
+      });
+
+      it("deleting an organisation takes its members and invitations; deleting a user takes their memberships", async () => {
+        const [owner, member] = [await newUser(), await newUser()];
+        const org = await store.orgs.create({ name: "Del", slug: uniq("del-"), ownerId: owner.id });
+        await store.orgs.addMember(org.id, member.id, "member");
+        const inv = await store.orgs.createInvitation({ orgId: org.id, email: "x@example.com", role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) });
+
+        await store.users.delete(owner.id);
+        expect((await store.orgs.get(org.id))?.createdBy).toBeNull();
+        expect((await store.orgs.getInvitation(inv.id))?.invitedBy).toBeNull();
+        expect((await store.orgs.listMembers(org.id)).map((m) => m.userId)).toEqual([member.id]);
+
+        expect((await store.orgs.delete(org.id))?.id).toBe(org.id);
+        expect(await store.orgs.delete(org.id)).toBeNull();
+        expect(await store.orgs.listForUser(member.id)).toEqual([]);
+        expect(await store.orgs.getInvitation(inv.id)).toBeNull();
+      });
+    });
+
     // ------------------------------------------------------------ jobs
     describe("jobs", () => {
       const soon = (ms: number) => new Date(Date.now() + ms).toISOString();
@@ -990,7 +1106,7 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
 // ---------------------------------------------------------------- SQL-only behaviour
 
 /** Every app table (not the auth_* ones), for truncating between tests. */
-export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log", "jobs"] as const;
+export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log", "jobs", "org_invitations", "org_members", "orgs"] as const;
 
 /** Empty every app table. For a throwaway test database only. */
 export async function truncateAppTables(db: Db): Promise<void> {

@@ -45,7 +45,25 @@ import {
   type User,
 } from "@/core/types";
 import { getDrizzle, type Db } from "./db";
-import { agentKeys, auditLog, billingCustomers, content, feedback, jobs, plans, posts, purchases, subscribers, subscriptions, users, webhookEvents } from "./schema";
+import {
+  agentKeys,
+  auditLog,
+  billingCustomers,
+  content,
+  feedback,
+  jobs,
+  orgInvitations,
+  orgMembers,
+  orgs,
+  plans,
+  posts,
+  purchases,
+  subscribers,
+  subscriptions,
+  users,
+  webhookEvents,
+} from "./schema";
+import type { Org, OrgInvitation, OrgMember, OrgRole } from "@/core/orgs";
 import { log } from "@/server/log";
 
 // ---------------------------------------------------------------- helpers
@@ -277,6 +295,52 @@ const toAgentKey = (r: AgentKeyRow): AgentKey => ({
   lastUsedAt: isoOrNull(r.lastUsedAt),
   revokedAt: isoOrNull(r.revokedAt),
 });
+
+type OrgRow = typeof orgs.$inferSelect;
+type InvitationRow = typeof orgInvitations.$inferSelect;
+
+const toOrg = (r: OrgRow): Org => ({
+  id: r.id,
+  name: r.name,
+  slug: r.slug,
+  createdBy: r.createdBy,
+  createdAt: iso(r.createdAt),
+  updatedAt: iso(r.updatedAt),
+});
+
+const toInvitation = (r: InvitationRow): OrgInvitation => ({
+  id: r.id,
+  orgId: r.orgId,
+  email: r.email,
+  role: r.role,
+  invitedBy: r.invitedBy,
+  createdAt: iso(r.createdAt),
+  expiresAt: iso(r.expiresAt),
+  acceptedAt: isoOrNull(r.acceptedAt),
+  revokedAt: isoOrNull(r.revokedAt),
+});
+
+/** A membership joined to its account: what listMembers and getMember return. */
+const memberColumns = {
+  orgId: orgMembers.orgId,
+  userId: orgMembers.userId,
+  role: orgMembers.role,
+  joinedAt: orgMembers.createdAt,
+  email: users.email,
+  name: users.name,
+};
+const toMember = (r: { orgId: string; userId: string; role: OrgRole; joinedAt: Date; email: string; name: string | null }): OrgMember => ({
+  orgId: r.orgId,
+  userId: r.userId,
+  role: r.role,
+  email: r.email,
+  name: r.name,
+  joinedAt: iso(r.joinedAt),
+});
+/** Owners first, then admins, then members. */
+const ROLE_ORDER = sql`case ${orgMembers.role} when 'owner' then 0 when 'admin' then 1 else 2 end`;
+/** Pending: neither accepted nor revoked, and not past its expiry. */
+const pendingInvitation = sql`(${orgInvitations.acceptedAt} is null and ${orgInvitations.revokedAt} is null and ${orgInvitations.expiresAt} > now())`;
 
 type JobRow = typeof jobs.$inferSelect;
 
@@ -946,6 +1010,177 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
           .limit(size + 1);
         return toPage(rows, size, (r) => r.createdAt, toAudit);
+      },
+    },
+
+    // ------------------------------------------------------------ organisations
+    orgs: {
+      async create({ name, slug, ownerId }) {
+        if (!isUuid(ownerId)) throw new DataError("invalid", `No user ${ownerId}`);
+        return write("organisation", () =>
+          db().transaction(async (tx) => {
+            const [org] = await tx.insert(orgs).values({ name, slug, createdBy: ownerId }).returning();
+            await tx.insert(orgMembers).values({ orgId: org.id, userId: ownerId, role: "owner" });
+            return toOrg(org);
+          }),
+        );
+      },
+      async get(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db().select().from(orgs).where(eq(orgs.id, id)).limit(1);
+        return row ? toOrg(row) : null;
+      },
+      async getBySlug(slug) {
+        const [row] = await db().select().from(orgs).where(eq(orgs.slug, slug)).limit(1);
+        return row ? toOrg(row) : null;
+      },
+      async update(id, patch) {
+        if (!isUuid(id)) throw new DataError("not_found", `No organisation ${id}`);
+        const set: Settable<OrgRow> = { updatedAt: now };
+        if (patch.name !== undefined) set.name = patch.name;
+        if (patch.slug !== undefined) set.slug = patch.slug;
+        const [row] = await write("organisation", () => db().update(orgs).set(set).where(eq(orgs.id, id)).returning());
+        if (!row) throw new DataError("not_found", `No organisation ${id}`);
+        return toOrg(row);
+      },
+      async delete(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db().delete(orgs).where(eq(orgs.id, id)).returning();
+        return row ? toOrg(row) : null;
+      },
+      async list({ search, limit, cursor }) {
+        const size = clampLimit(limit);
+        const c = decodeCursor(cursor);
+        const q = search?.trim();
+        const rows = await db()
+          .select({ ...getTableColumns(orgs), members: sql<number>`(select count(*) from ${orgMembers} where ${orgMembers.orgId} = ${orgs.id})::int` })
+          .from(orgs)
+          .where(
+            and(
+              q ? or(ilike(orgs.name, containsPattern(q)), ilike(orgs.slug, containsPattern(q))) : undefined,
+              afterCursor(orgs.createdAt, orgs.id, c),
+            ),
+          )
+          .orderBy(desc(orgs.createdAt), desc(orgs.id))
+          .limit(size + 1);
+        return toPage(rows, size, (r) => r.createdAt, ({ members, ...r }) => ({ ...toOrg(r), members: Number(members) }));
+      },
+      async listForUser(userId) {
+        if (!isUuid(userId)) return [];
+        const rows = await db()
+          .select({ org: orgs, role: orgMembers.role })
+          .from(orgMembers)
+          .innerJoin(orgs, eq(orgs.id, orgMembers.orgId))
+          .where(eq(orgMembers.userId, userId))
+          .orderBy(asc(orgMembers.createdAt), asc(orgs.id));
+        return rows.map((r) => ({ org: toOrg(r.org), role: r.role }));
+      },
+      async getMember(orgId, userId) {
+        if (!isUuid(orgId) || !isUuid(userId)) return null;
+        const [row] = await db()
+          .select(memberColumns)
+          .from(orgMembers)
+          .innerJoin(users, eq(users.id, orgMembers.userId))
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+          .limit(1);
+        return row ? toMember(row) : null;
+      },
+      async listMembers(orgId) {
+        if (!isUuid(orgId)) return [];
+        const rows = await db()
+          .select(memberColumns)
+          .from(orgMembers)
+          .innerJoin(users, eq(users.id, orgMembers.userId))
+          .where(eq(orgMembers.orgId, orgId))
+          .orderBy(ROLE_ORDER, asc(orgMembers.createdAt), asc(orgMembers.userId));
+        return rows.map(toMember);
+      },
+      async countMembers(orgId) {
+        if (!isUuid(orgId)) return 0;
+        const [row] = await db().select({ n: sql<number>`count(*)::int` }).from(orgMembers).where(eq(orgMembers.orgId, orgId));
+        return Number(row?.n ?? 0);
+      },
+      async addMember(orgId, userId, role) {
+        if (!isUuid(orgId) || !isUuid(userId)) throw new DataError("invalid", "No such organisation or user");
+        await write("membership", () => db().insert(orgMembers).values({ orgId, userId, role }));
+        return (await store.orgs.getMember(orgId, userId))!;
+      },
+      async setMemberRole(orgId, userId, role) {
+        if (!isUuid(orgId) || !isUuid(userId)) throw new DataError("not_found", "No such membership");
+        const rows = await db()
+          .update(orgMembers)
+          .set({ role })
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+          .returning({ userId: orgMembers.userId });
+        if (rows.length === 0) throw new DataError("not_found", "No such membership");
+        return (await store.orgs.getMember(orgId, userId))!;
+      },
+      async removeMember(orgId, userId) {
+        if (!isUuid(orgId) || !isUuid(userId)) return false;
+        const rows = await db()
+          .delete(orgMembers)
+          .where(and(eq(orgMembers.orgId, orgId), eq(orgMembers.userId, userId)))
+          .returning({ userId: orgMembers.userId });
+        return rows.length > 0;
+      },
+      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt }) {
+        if (!isUuid(orgId)) throw new DataError("invalid", `No organisation ${orgId}`);
+        if (invitedBy !== null && !isUuid(invitedBy)) throw new DataError("invalid", `No user ${invitedBy}`);
+        const [row] = await write("invitation", () =>
+          db()
+            .insert(orgInvitations)
+            .values({ orgId, email: email.trim().toLowerCase(), role, tokenHash, invitedBy, expiresAt: toDate(expiresAt, "expiresAt")! })
+            .returning(),
+        );
+        return toInvitation(row);
+      },
+      async getInvitation(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db().select().from(orgInvitations).where(eq(orgInvitations.id, id)).limit(1);
+        return row ? toInvitation(row) : null;
+      },
+      async findInvitationByTokenHash(tokenHash) {
+        const [row] = await db().select().from(orgInvitations).where(eq(orgInvitations.tokenHash, tokenHash)).limit(1);
+        return row ? toInvitation(row) : null;
+      },
+      async listInvitations(orgId, opts = {}) {
+        if (!isUuid(orgId)) return [];
+        const rows = await db()
+          .select()
+          .from(orgInvitations)
+          .where(and(eq(orgInvitations.orgId, orgId), opts.all ? undefined : pendingInvitation))
+          .orderBy(desc(orgInvitations.createdAt), desc(orgInvitations.id));
+        return rows.map(toInvitation);
+      },
+      async revokeInvitation(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db()
+          .update(orgInvitations)
+          .set({ revokedAt: now })
+          .where(and(eq(orgInvitations.id, id), pendingInvitation))
+          .returning();
+        return row ? toInvitation(row) : null;
+      },
+      async acceptInvitation(id, userId) {
+        if (!isUuid(id) || !isUuid(userId)) return null;
+        return write("membership", () =>
+          db().transaction(async (tx) => {
+            const [inv] = await tx
+              .update(orgInvitations)
+              .set({ acceptedAt: now })
+              .where(and(eq(orgInvitations.id, id), pendingInvitation))
+              .returning();
+            if (!inv) return null;
+            await tx.insert(orgMembers).values({ orgId: inv.orgId, userId, role: inv.role });
+            const [m] = await tx
+              .select(memberColumns)
+              .from(orgMembers)
+              .innerJoin(users, eq(users.id, orgMembers.userId))
+              .where(and(eq(orgMembers.orgId, inv.orgId), eq(orgMembers.userId, userId)))
+              .limit(1);
+            return { invitation: toInvitation(inv), member: toMember(m) };
+          }),
+        );
       },
     },
 

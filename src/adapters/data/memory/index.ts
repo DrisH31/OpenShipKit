@@ -30,6 +30,7 @@ import type {
 } from "@/core/types";
 import { grantsAccess, growthDays } from "@/core/types";
 import { SEED } from "@/content/seed";
+import { invitationState, type Org, type OrgInvitation, type OrgMember, type OrgRole } from "@/core/orgs";
 
 interface Tables {
   users: Map<string, User>;
@@ -45,6 +46,10 @@ interface Tables {
   agentKeys: Map<string, AgentKey & { keyHash: string }>;
   audit: Map<string, AuditEntry>;
   jobs: Map<string, Job>;
+  orgs: Map<string, Org>;
+  /** `${orgId}:${userId}` → membership (role and when it began). */
+  orgMembers: Map<string, { orgId: string; userId: string; role: OrgRole; joinedAt: string }>;
+  invitations: Map<string, OrgInvitation & { tokenHash: string }>;
 }
 
 const now = () => new Date().toISOString();
@@ -83,6 +88,9 @@ function freshTables(): Tables {
     agentKeys: new Map(),
     audit: new Map(),
     jobs: new Map(),
+    orgs: new Map(),
+    orgMembers: new Map(),
+    invitations: new Map(),
   };
   const stamp = now();
   for (const p of SEED.plans) {
@@ -120,6 +128,13 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
   const t = opts.fresh ? freshTables() : (g.__openshipkitMemory ??= freshTables());
 
   const findUser = (pred: (u: User) => boolean) => [...t.users.values()].find(pred) ?? null;
+
+  /** A membership joined to its account, like the Postgres store's join. */
+  const memberOf = (m: { orgId: string; userId: string; role: OrgRole; joinedAt: string } | undefined): OrgMember | null => {
+    const u = m ? t.users.get(m.userId) : undefined;
+    return m && u ? { orgId: m.orgId, userId: m.userId, role: m.role, email: u.email, name: u.name, joinedAt: m.joinedAt } : null;
+  };
+  const publicInvitation = ({ tokenHash: _hash, ...rest }: OrgInvitation & { tokenHash: string }): OrgInvitation => clone(rest); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   const store: DataStore = {
     id: "memory",
@@ -212,6 +227,9 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         for (const k of [...t.customers.keys()]) if (k.endsWith(`:${id}`)) t.customers.delete(k);
         // Like the Postgres foreign key (on delete set null): the key row stays, with no creator.
         for (const k of t.agentKeys.values()) if (k.createdBy === id) k.createdBy = null;
+        for (const [k, m] of t.orgMembers) if (m.userId === id) t.orgMembers.delete(k);
+        for (const o of t.orgs.values()) if (o.createdBy === id) o.createdBy = null;
+        for (const i of t.invitations.values()) if (i.invitedBy === id) i.invitedBy = null;
       },
     },
 
@@ -498,6 +516,131 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
           .filter((e) => !entityId || e.entityId === entityId)
           .sort(byDesc((e) => e.createdAt));
         return paginate(rows.map(clone), limit, cursor);
+      },
+    },
+
+    orgs: {
+      async create({ name, slug, ownerId }) {
+        if (!t.users.has(ownerId)) throw new DataError("invalid", `No user ${ownerId}`);
+        if ([...t.orgs.values()].some((o) => o.slug === slug)) throw new DataError("conflict", "organisation: a row with the same unique key already exists");
+        const stamp = now();
+        const org: Org = { id: randomUUID(), name, slug, createdBy: ownerId, createdAt: stamp, updatedAt: stamp };
+        t.orgs.set(org.id, org);
+        t.orgMembers.set(`${org.id}:${ownerId}`, { orgId: org.id, userId: ownerId, role: "owner", joinedAt: stamp });
+        return clone(org);
+      },
+      async get(id) {
+        const o = t.orgs.get(id);
+        return o ? clone(o) : null;
+      },
+      async getBySlug(slug) {
+        const o = [...t.orgs.values()].find((x) => x.slug === slug);
+        return o ? clone(o) : null;
+      },
+      async update(id, patch) {
+        const o = t.orgs.get(id);
+        if (!o) throw new DataError("not_found", `No organisation ${id}`);
+        if (patch.slug !== undefined && [...t.orgs.values()].some((x) => x.slug === patch.slug && x.id !== id)) {
+          throw new DataError("conflict", "organisation: a row with the same unique key already exists");
+        }
+        Object.assign(o, { ...(patch.name !== undefined ? { name: patch.name } : {}), ...(patch.slug !== undefined ? { slug: patch.slug } : {}), updatedAt: now() });
+        return clone(o);
+      },
+      async delete(id) {
+        const o = t.orgs.get(id);
+        if (!o) return null;
+        t.orgs.delete(id);
+        for (const [k, m] of t.orgMembers) if (m.orgId === id) t.orgMembers.delete(k);
+        for (const [k, i] of t.invitations) if (i.orgId === id) t.invitations.delete(k);
+        return clone(o);
+      },
+      async list({ search, limit, cursor }) {
+        const q = search?.trim().toLowerCase();
+        const rows = [...t.orgs.values()]
+          .filter((o) => !q || o.name.toLowerCase().includes(q) || o.slug.includes(q))
+          .sort(byDesc((o) => o.createdAt))
+          .map((o) => ({ ...clone(o), members: [...t.orgMembers.values()].filter((m) => m.orgId === o.id).length }));
+        return paginate(rows, limit, cursor);
+      },
+      async listForUser(userId) {
+        return [...t.orgMembers.values()]
+          .filter((m) => m.userId === userId && t.orgs.has(m.orgId))
+          .sort((a, b) => (a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : a.orgId < b.orgId ? -1 : 1))
+          .map((m) => ({ org: clone(t.orgs.get(m.orgId)!), role: m.role }));
+      },
+      async getMember(orgId, userId) {
+        return memberOf(t.orgMembers.get(`${orgId}:${userId}`));
+      },
+      async listMembers(orgId) {
+        const rank: Record<OrgRole, number> = { owner: 0, admin: 1, member: 2 };
+        return [...t.orgMembers.values()]
+          .filter((m) => m.orgId === orgId)
+          .sort((a, b) => rank[a.role] - rank[b.role] || (a.joinedAt < b.joinedAt ? -1 : a.joinedAt > b.joinedAt ? 1 : a.userId < b.userId ? -1 : 1))
+          .map((m) => memberOf(m)!)
+          .filter(Boolean);
+      },
+      async countMembers(orgId) {
+        return [...t.orgMembers.values()].filter((m) => m.orgId === orgId).length;
+      },
+      async addMember(orgId, userId, role) {
+        if (!t.orgs.has(orgId) || !t.users.has(userId)) throw new DataError("invalid", "No such organisation or user");
+        const k = `${orgId}:${userId}`;
+        if (t.orgMembers.has(k)) throw new DataError("conflict", "membership: a row with the same unique key already exists");
+        t.orgMembers.set(k, { orgId, userId, role, joinedAt: now() });
+        return memberOf(t.orgMembers.get(k))!;
+      },
+      async setMemberRole(orgId, userId, role) {
+        const m = t.orgMembers.get(`${orgId}:${userId}`);
+        if (!m) throw new DataError("not_found", "No such membership");
+        m.role = role;
+        return memberOf(m)!;
+      },
+      async removeMember(orgId, userId) {
+        return t.orgMembers.delete(`${orgId}:${userId}`);
+      },
+      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt }) {
+        if (!t.orgs.has(orgId)) throw new DataError("invalid", `No organisation ${orgId}`);
+        if (invitedBy !== null && !t.users.has(invitedBy)) throw new DataError("invalid", `No user ${invitedBy}`);
+        if (Number.isNaN(Date.parse(expiresAt))) throw new DataError("invalid", `expiresAt is not a valid date: "${expiresAt}"`);
+        const e = email.trim().toLowerCase();
+        const all = [...t.invitations.values()];
+        if (all.some((i) => i.tokenHash === tokenHash) || all.some((i) => i.orgId === orgId && i.email === e && !i.acceptedAt && !i.revokedAt)) {
+          throw new DataError("conflict", "invitation: a row with the same unique key already exists");
+        }
+        const inv = { id: randomUUID(), orgId, email: e, role, tokenHash, invitedBy, createdAt: now(), expiresAt: new Date(expiresAt).toISOString(), acceptedAt: null, revokedAt: null };
+        t.invitations.set(inv.id, inv);
+        return publicInvitation(inv);
+      },
+      async getInvitation(id) {
+        const i = t.invitations.get(id);
+        return i ? publicInvitation(i) : null;
+      },
+      async findInvitationByTokenHash(tokenHash) {
+        const i = [...t.invitations.values()].find((x) => x.tokenHash === tokenHash);
+        return i ? publicInvitation(i) : null;
+      },
+      async listInvitations(orgId, opts = {}) {
+        return [...t.invitations.values()]
+          .filter((i) => i.orgId === orgId && (opts.all || invitationState(i) === "pending"))
+          .sort(byDesc((i) => i.createdAt))
+          .map(publicInvitation);
+      },
+      async revokeInvitation(id) {
+        const i = t.invitations.get(id);
+        if (!i || invitationState(i) !== "pending") return null;
+        i.revokedAt = now();
+        return publicInvitation(i);
+      },
+      async acceptInvitation(id, userId) {
+        const i = t.invitations.get(id);
+        if (!i || invitationState(i) !== "pending") return null;
+        const k = `${i.orgId}:${userId}`;
+        if (!t.users.has(userId)) throw new DataError("invalid", `No user ${userId}`);
+        if (t.orgMembers.has(k)) throw new DataError("conflict", "membership: a row with the same unique key already exists");
+        const stamp = now();
+        i.acceptedAt = stamp;
+        t.orgMembers.set(k, { orgId: i.orgId, userId, role: i.role, joinedAt: stamp });
+        return { invitation: publicInvitation(i), member: memberOf(t.orgMembers.get(k))! };
       },
     },
 

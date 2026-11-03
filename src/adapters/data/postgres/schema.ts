@@ -49,6 +49,7 @@ import type {
   SubscriberStatus,
   SubscriptionStatus,
 } from "@/core/types";
+import type { OrgRole } from "@/core/orgs";
 
 type PaidProvider = "polar";
 
@@ -323,6 +324,68 @@ export const auditLog = pgTable(
   (t) => [
     index("audit_log_created_idx").on(t.createdAt, t.id),
     index("audit_log_entity_created_idx").on(t.entity, t.entityId, t.createdAt, t.id),
+  ],
+);
+
+// ---------------------------------------------------------------- organisations (OPENSHIPKIT_TENANCY=org)
+
+export const orgs = pgTable(
+  "orgs",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    slug: text("slug").notNull(),
+    // SET NULL: the organisation outlives the account that created it.
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [unique("orgs_slug_key").on(t.slug), index("orgs_created_idx").on(t.createdAt, t.id)],
+);
+
+export const orgMembers = pgTable(
+  "org_members",
+  {
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").$type<OrgRole>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ name: "org_members_pkey", columns: [t.orgId, t.userId] }),
+    index("org_members_user_idx").on(t.userId),
+    check("org_members_role_check", sql`${t.role} in ('owner', 'admin', 'member')`),
+  ],
+);
+
+export const orgInvitations = pgTable(
+  "org_invitations",
+  {
+    id: id(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").$type<"admin" | "member">().notNull(),
+    /** SHA-256 of the link's token; the token itself is only in the email. */
+    tokenHash: text("token_hash").notNull(),
+    invitedBy: uuid("invited_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    expiresAt: ts("expires_at").notNull(),
+    acceptedAt: ts("accepted_at"),
+    revokedAt: ts("revoked_at"),
+  },
+  (t) => [
+    unique("org_invitations_token_hash_key").on(t.tokenHash),
+    // One open invitation per address per organisation. Expiry is checked by time, not here: an
+    // expired-but-open row still holds the address until it is revoked or replaced (the service does that).
+    uniqueIndex("org_invitations_open_key").on(t.orgId, t.email).where(sql`accepted_at is null and revoked_at is null`),
+    index("org_invitations_org_idx").on(t.orgId, t.createdAt),
+    check("org_invitations_role_check", sql`${t.role} in ('admin', 'member')`),
   ],
 );
 

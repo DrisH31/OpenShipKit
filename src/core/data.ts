@@ -65,6 +65,7 @@ import type {
   User,
   UserPatch,
 } from "./types";
+import type { Org, OrgInvitation, OrgMember, OrgRole } from "./orgs";
 
 export type PaidProvider = Exclude<BillingProviderId, "none">;
 
@@ -195,6 +196,49 @@ export interface AuditRepo {
  * Every way a job ends (succeeded, failed, abandoned) deletes a sensitive
  * job's payload, and nothing else does.
  */
+/**
+ * Organisations (src/core/orgs.ts). The repository keeps the shapes and the
+ * unique keys; who may do what, and the last-owner rule, are the service's
+ * (src/server/services/orgs.ts), so both stores enforce them the same way.
+ *
+ *  - slug is unique; a clash on create or update throws DataError("conflict").
+ *  - (orgId, userId) is unique: one membership per person per organisation.
+ *  - One pending invitation per (orgId, email); a second throws "conflict".
+ *    Accepted, revoked or expired ones free the address.
+ *  - Deleting an organisation deletes its members and invitations. Deleting a
+ *    user deletes their memberships and sets createdBy / invitedBy to null.
+ *  - acceptInvitation() is atomic: the member is added and the invitation marked
+ *    accepted together, or neither.
+ */
+export interface OrgsRepo {
+  /** Creates the organisation with `ownerId` as its owner, in one step. */
+  create(input: { name: string; slug: string; ownerId: string }): Promise<Org>;
+  get(id: string): Promise<Org | null>;
+  getBySlug(slug: string): Promise<Org | null>;
+  update(id: string, patch: { name?: string; slug?: string }): Promise<Org>;
+  delete(id: string): Promise<Org | null>;
+  /** Every organisation, newest first; `search` matches the name or slug. For the site admin. */
+  list(query: ListQuery & { search?: string }): Promise<Page<Org & { members: number }>>;
+  /** The organisations a user belongs to, oldest membership first, with their role in each. */
+  listForUser(userId: string): Promise<{ org: Org; role: OrgRole }[]>;
+  getMember(orgId: string, userId: string): Promise<OrgMember | null>;
+  /** Owners first, then admins, then members; oldest first within a role. */
+  listMembers(orgId: string): Promise<OrgMember[]>;
+  countMembers(orgId: string): Promise<number>;
+  addMember(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
+  setMemberRole(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
+  removeMember(orgId: string, userId: string): Promise<boolean>;
+  createInvitation(input: { orgId: string; email: string; role: OrgInvitation["role"]; tokenHash: string; invitedBy: string | null; expiresAt: string }): Promise<OrgInvitation>;
+  getInvitation(id: string): Promise<OrgInvitation | null>;
+  findInvitationByTokenHash(tokenHash: string): Promise<OrgInvitation | null>;
+  /** Pending ones only unless `all`; newest first. */
+  listInvitations(orgId: string, opts?: { all?: boolean }): Promise<OrgInvitation[]>;
+  /** Null when it isn't pending any more (accepted, revoked or expired). */
+  revokeInvitation(id: string): Promise<OrgInvitation | null>;
+  /** Null when it isn't pending any more; DataError("conflict") when the user is already a member. */
+  acceptInvitation(id: string, userId: string): Promise<{ invitation: OrgInvitation; member: OrgMember } | null>;
+}
+
 /** What JobsRepo.failAbandoned() records as the job's lastError. */
 export const ABANDONED_ERROR =
   "The lease on its last attempt ran out: the worker stopped, or was still running it. A late success is no longer recorded.";
@@ -241,6 +285,7 @@ export interface DataStore {
   agentKeys: AgentKeysRepo;
   audit: AuditRepo;
   jobs: JobsRepo;
+  orgs: OrgsRepo;
   stats(): Promise<Stats>;
   /** New accounts and subscribers per UTC day over the last `days` days (1–90), ending today. */
   growth(days: number, now?: Date): Promise<Growth>;
