@@ -28,6 +28,7 @@ import { recordAudit } from "./audit";
 import { getEntitlement } from "./billing";
 import { ServiceError } from "./errors";
 import { log } from "@/server/log";
+import { orgsBlockingDeletion } from "./orgs";
 
 export async function listUsers(query: { search?: string; role?: Role; limit?: number; cursor?: string | null }): Promise<Page<User>> {
   return (await getData()).users.list(query);
@@ -207,10 +208,21 @@ export async function deleteUser(id: string, actor: Actor): Promise<void> {
     const before = await requireUserRow(id);
     await assertNotLastAdmin(before);
     await assertNothingRenews(before, actor.type === "user" && actor.id === id);
+    // An organisation must keep an owner: refuse while this is the only one of a team with others in it.
+    const { blocking, soleOwned } = await orgsBlockingDeletion(id);
+    if (blocking.length > 0) {
+      const names = blocking.map((o) => `“${o.name}”`).join(", ");
+      throw new ServiceError("conflict", `${before.email} is the only owner of ${names}. Transfer ownership first, so the team keeps someone in charge.`);
+    }
     const auth = await getAuth();
     // Before the row goes: deleting the user clears agent_keys.created_by.
     await revokeKeysMintedBy(id, actor, "deleted");
     if (auth.deleteIdentity && before.authProvider === auth.id) await auth.deleteIdentity(before.authProviderUserId);
+    // Organisations they own alone go with them.
+    for (const org of soleOwned) {
+      await (await getData()).orgs.delete(org.id);
+      await recordAudit(actor, "org.delete", "org", org.id, org, null);
+    }
     await (await getData()).users.delete(id);
     await recordAudit(actor, "user.delete", "user", id, before, null);
   });

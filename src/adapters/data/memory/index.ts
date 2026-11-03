@@ -627,7 +627,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       },
       async revokeInvitation(id) {
         const i = t.invitations.get(id);
-        if (!i || invitationState(i) !== "pending") return null;
+        if (!i || i.acceptedAt || i.revokedAt) return null;
         i.revokedAt = now();
         return publicInvitation(i);
       },

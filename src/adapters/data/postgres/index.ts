@@ -1157,7 +1157,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         const [row] = await db()
           .update(orgInvitations)
           .set({ revokedAt: now })
-          .where(and(eq(orgInvitations.id, id), pendingInvitation))
+          .where(and(eq(orgInvitations.id, id), isNull(orgInvitations.acceptedAt), isNull(orgInvitations.revokedAt)))
           .returning();
         return row ? toInvitation(row) : null;
       },

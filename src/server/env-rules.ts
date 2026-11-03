@@ -13,6 +13,7 @@
 // are returned that the caller didn't pass in.
 //
 
+import type { Tenancy } from "@/core/orgs";
 import type { SiteProfile } from "@/core/profile";
 import type { BillingProviderId, DataProviderId, EmailProviderId } from "@/core/types";
 
@@ -42,6 +43,11 @@ export function resolveDataProvider(env: EnvRecord): DataProviderId {
  */
 export function resolveProfile(env: EnvRecord): SiteProfile {
   return oneOf(env, "OPENSHIPKIT_PROFILE", ["saas", "site"] as const, "saas");
+}
+
+/** OPENSHIPKIT_TENANCY: personal (default: every account stands alone) | org (teams; src/core/orgs.ts). */
+export function resolveTenancy(env: EnvRecord): Tenancy {
+  return oneOf(env, "OPENSHIPKIT_TENANCY", ["personal", "org"] as const, "personal");
 }
 
 /**

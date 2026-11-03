@@ -260,6 +260,24 @@ export async function welcomeTemplate(input: { name?: string | null; dashboardUr
   };
 }
 
+export async function orgInvitationTemplate(input: { orgName: string; inviterName: string | null; role: "admin" | "member"; url: string; expiresInDays: number }): Promise<EmailContent> {
+  const product = await productName();
+  const who = input.inviterName ? `${input.inviterName} invited you` : "You've been invited";
+  return {
+    subject: `Join ${input.orgName} on ${product}`,
+    ...renderEmail({
+      productName: product,
+      preheader: `${who} to join ${input.orgName}.`,
+      heading: `Join ${input.orgName}`,
+      paragraphs: [
+        `${who} to join ${input.orgName} on ${product} as ${input.role === "admin" ? "an admin" : "a member"}.`,
+        `The link works for ${input.expiresInDays} days, for an account with this email address. If you weren't expecting it, you can ignore this email.`,
+      ],
+      action: { label: `Join ${input.orgName}`, url: input.url },
+    }),
+  };
+}
+
 /** What changed on the account, for securityNoticeTemplate. */
 export type SecurityNoticeKind = "password-changed" | "password-reset" | "two-factor-enabled" | "two-factor-disabled";
 

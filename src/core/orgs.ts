@@ -110,17 +110,18 @@ export function can(role: OrgRole, action: OrgAction): boolean {
 }
 
 /**
- * Whether `actor` may change `target`'s membership (remove them, or set a role).
- * An admin manages members only; owners manage anyone. Nobody manages someone
- * above themselves, and an admin can't make anyone an owner.
+ * Whether `actor` may change `target`'s membership (remove them, or give them
+ * `newRole`), or, with target = the role on offer, invite someone with it.
+ * Admins manage members only, and only as members: making an admin is an
+ * owner's call, so admin rights don't spread without one. Owners manage
+ * admins and members. Nobody gets "owner" this way: ownership moves with
+ * transferOwnership.
  */
 export function canManage(actor: OrgRole, target: OrgRole, newRole?: OrgRole): boolean {
-  if (RANK[actor] < RANK.admin) return false;
-  if (RANK[target] > RANK[actor]) return false;
-  if (actor === "admin" && target !== "member") return false;
-  if (newRole !== undefined && RANK[newRole] > RANK[actor]) return false;
-  if (newRole === "owner") return false; // ownership moves with transferOwnership
-  return true;
+  if (newRole === "owner") return false;
+  if (actor === "owner") return target !== "owner";
+  if (actor === "admin") return target === "member" && (newRole === undefined || newRole === "member");
+  return false;
 }
 
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

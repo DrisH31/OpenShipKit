@@ -144,7 +144,16 @@ function actorTakingFunctions(): { file: string; name: string; body: string }[] 
  * Take an Actor or a User but write nothing a demo visitor could start:
  * the audit sink (only ever called after a guarded write), and a read gate.
  */
-const NOT_WRITES = new Set(["recordAudit", "requirePlan"]);
+const NOT_WRITES = new Set([
+  "recordAudit",
+  "requirePlan",
+  // Team reads and the gates writes call: membership checks that write nothing (src/server/services/orgs.ts).
+  "orgAccess",
+  "requireOrgPermission",
+  "listMyOrgs",
+  "listMembers",
+  "listInvitations",
+]);
 
 describe("every write service is guarded", () => {
   it("finds the write services (the scan works)", () => {
@@ -183,6 +192,7 @@ async function refusals(actor: Actor): Promise<[string, () => Promise<unknown>][
   const community = await import("@/server/services/community");
   const media = await import("@/server/services/media");
   const billing = await import("@/server/services/billing");
+  const orgs = await import("@/server/services/orgs");
   const plan = { key: "pro", name: "Pro", prices: [], features: [], active: true, order: 0 } as never;
   return [
     ["updateContent", () => content.updateContent("hero", {}, actor)],
@@ -211,6 +221,16 @@ async function refusals(actor: Actor): Promise<[string, () => Promise<unknown>][
     ["deleteMedia", () => media.deleteMedia("/uploads/2026/10/x.png", actor)],
     ["startCheckout", () => billing.startCheckout(demoUser, "pro", "month")],
     ["openPortal", () => billing.openPortal(demoUser)],
+    ["createOrg", () => orgs.createOrg(demoUser, { name: "Demo Co" })],
+    ["updateOrg", () => orgs.updateOrg(demoUser, "o1", { name: "x" })],
+    ["deleteOrg", () => orgs.deleteOrg(demoUser, "o1")],
+    ["setMemberRole", () => orgs.setMemberRole(demoUser, "o1", "u1", "member")],
+    ["removeMember", () => orgs.removeMember(demoUser, "o1", "u1")],
+    ["leaveOrg", () => orgs.leaveOrg(demoUser, "o1")],
+    ["transferOwnership", () => orgs.transferOwnership(demoUser, "o1", "u1")],
+    ["inviteMember", () => orgs.inviteMember(demoUser, "o1", { email: "a@example.com", role: "member" })],
+    ["revokeInvitation", () => orgs.revokeInvitation(demoUser, "o1", "i1")],
+    ["acceptInvitation", () => orgs.acceptInvitation(demoUser, "token")],
   ];
 }
 

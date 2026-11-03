@@ -27,6 +27,7 @@ import "server-only";
 // no secrets. .env.example lists every variable.
 //
 
+import type { Tenancy } from "@/core/orgs";
 import type { SiteProfile } from "@/core/profile";
 import type { BillingProviderId, DataProviderId, EmailProviderId } from "@/core/types";
 import { resolveSupportUrl } from "@/shared/support";
@@ -38,6 +39,7 @@ import {
   resolveDataProvider,
   resolveEmailProvider,
   resolveProfile,
+  resolveTenancy,
   resolveSiteUrl,
   type DataMode,
 } from "./env-rules";
@@ -72,6 +74,11 @@ export function dataMode(): DataMode {
 /** OPENSHIPKIT_PROFILE: "saas" (default) or "site" (no pricing, billing or plans). Pass it down; never re-read env in a component. */
 export function siteProfile(): SiteProfile {
   return resolveProfile(process.env);
+}
+
+/** OPENSHIPKIT_TENANCY: "personal" (default) or "org" (teams). Pass it down; never re-read env in a component. */
+export function tenancy(): Tenancy {
+  return resolveTenancy(process.env);
 }
 
 /** Polar or none; none under the site profile whatever keys are set (env-rules.ts). */

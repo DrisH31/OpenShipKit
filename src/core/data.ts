@@ -233,7 +233,7 @@ export interface OrgsRepo {
   findInvitationByTokenHash(tokenHash: string): Promise<OrgInvitation | null>;
   /** Pending ones only unless `all`; newest first. */
   listInvitations(orgId: string, opts?: { all?: boolean }): Promise<OrgInvitation[]>;
-  /** Null when it isn't pending any more (accepted, revoked or expired). */
+  /** Closes an open invitation (not accepted, not revoked), expired ones included: that frees the address. Null otherwise. */
   revokeInvitation(id: string): Promise<OrgInvitation | null>;
   /** Null when it isn't pending any more; DataError("conflict") when the user is already a member. */
   acceptInvitation(id: string, userId: string): Promise<{ invitation: OrgInvitation; member: OrgMember } | null>;

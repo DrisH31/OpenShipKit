@@ -918,7 +918,9 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
 
         const expired = await store.orgs.createInvitation({ orgId: org.id, email: uniq("late") + "@example.com", role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(-1) });
         expect(await store.orgs.acceptInvitation(expired.id, (await newUser()).id)).toBeNull();
-        expect(await store.orgs.revokeInvitation(expired.id)).toBeNull(); // not pending either
+        // Revoking closes an expired one too, which frees its address for a new invitation.
+        expect((await store.orgs.revokeInvitation(expired.id))?.revokedAt).not.toBeNull();
+        await store.orgs.createInvitation({ orgId: org.id, email: expired.email, role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) });
       });
 
       it("deleting an organisation takes its members and invitations; deleting a user takes their memberships", async () => {
