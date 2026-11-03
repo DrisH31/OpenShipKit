@@ -12,7 +12,8 @@ import "server-only";
 //
 
 import { z } from "zod";
-import { defineJob } from "./define";
+import { isPermanentEmailError } from "@/core/email";
+import { PermanentJobError, defineJob } from "./define";
 
 const emailMessageSchema = z.strictObject({
   to: z.string().min(3).max(320),
@@ -32,6 +33,12 @@ export const emailJob = defineJob({
   sensitive: true,
   run: async (message) => {
     const { deliverEmail } = await import("../email");
-    await deliverEmail(message);
+    try {
+      await deliverEmail(message);
+    } catch (error) {
+      // A wrong password or a refused address won't fix itself: stop now, not after five tries.
+      if (isPermanentEmailError(error)) throw new PermanentJobError((error as Error).message);
+      throw error;
+    }
   },
 });

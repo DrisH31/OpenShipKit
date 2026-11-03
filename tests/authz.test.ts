@@ -30,8 +30,8 @@
 // ROUTES / PUBLIC_ACTIONS with the reason it needs no session.
 //
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
@@ -139,12 +139,38 @@ function functionsIn(statements: readonly ts.Statement[]): Map<string, FnNode> {
   return out;
 }
 
-type Export = { name: string; fn?: FnNode; problem?: string };
+type Export = { name: string; fn?: FnNode; scope?: Scope; problem?: string };
+type Scope = Map<string, FnNode>;
 
-/** Every value export of a file. Anything that isn't a function defined in this file comes back with a problem. */
-function exportsOf(sf: ts.SourceFile): Export[] {
+/**
+ * The file a relative or "@/" import names, if it is in this repository: a module's
+ * route handler (modules/README.md mounts one with `export { POST } from "…/modules/…"`).
+ */
+function resolveImport(fromFile: string, specifier: string): string | null {
+  const base = specifier.startsWith("@/") ? join(SRC, specifier.slice(2)) : specifier.startsWith(".") ? join(dirname(fromFile), specifier) : null;
+  if (!base) return null;
+  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+    if (existsSync(candidate) && statSync(candidate).isFile()) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Every value export of a file. A function defined here is analysed here; a
+ * re-export from another file in the repository is followed once and that
+ * file's function is analysed with that file's helpers. Anything else comes
+ * back with a problem: it fails, it never passes unread.
+ */
+function exportsOf(sf: ts.SourceFile, follow = true): Export[] {
   const local = functionsIn(sf.statements);
   const out: Export[] = [];
+  const reexport = (name: string, imported: string, from: string): Export => {
+    const target = follow ? resolveImport(sf.fileName, from) : null;
+    if (!target) return { name, problem: `is re-exported from "${from}", which can't be read` };
+    const tsf = parse(target);
+    const hit = exportsOf(tsf, false).find((e) => e.name === imported);
+    return hit?.fn ? { name, fn: hit.fn, scope: functionsIn(tsf.statements) } : { name, problem: `is re-exported from "${from}", where ${imported} isn't a function defined in that file` };
+  };
   for (const s of sf.statements) {
     if (ts.isFunctionDeclaration(s) && hasModifier(s, ts.SyntaxKind.ExportKeyword)) {
       const name = hasModifier(s, ts.SyntaxKind.DefaultKeyword) ? "default" : (s.name?.text ?? "default");
@@ -159,8 +185,8 @@ function exportsOf(sf: ts.SourceFile): Export[] {
     } else if (ts.isExportDeclaration(s) && !s.isTypeOnly) {
       if (s.moduleSpecifier) {
         const from = (s.moduleSpecifier as ts.StringLiteral).text;
-        if (!s.exportClause || !ts.isNamedExports(s.exportClause)) out.push({ name: "*", problem: `is re-exported from "${from}"` });
-        else for (const e of s.exportClause.elements) if (!e.isTypeOnly) out.push({ name: e.name.text, problem: `is re-exported from "${from}"` });
+        if (!s.exportClause || !ts.isNamedExports(s.exportClause)) out.push({ name: "*", problem: `is every export of "${from}", which can't be checked one by one` });
+        else for (const e of s.exportClause.elements) if (!e.isTypeOnly) out.push(reexport(e.name.text, (e.propertyName ?? e.name).text, from));
       } else if (s.exportClause && ts.isNamedExports(s.exportClause)) {
         for (const e of s.exportClause.elements) {
           if (e.isTypeOnly) continue;
@@ -177,35 +203,47 @@ function exportsOf(sf: ts.SourceFile): Export[] {
   return out;
 }
 
-/** Names of the calls a function makes, in evaluation order (receiver and arguments before the call), not entering nested functions. */
-function callsInOrder(body: ts.Node): string[] {
-  const names: string[] = [];
+type Call = { name: string; node: ts.CallExpression };
+
+/** The calls under `root`, in evaluation order (receiver and arguments before the call), not entering nested functions. */
+function callsInOrder(root: ts.Node): Call[] {
+  const calls: Call[] = [];
   const visit = (n: ts.Node) => {
-    if (n !== body && isFnNode(n)) return; // a callback runs later, if ever
+    if (n !== root && isFnNode(n)) return; // a callback runs later, if ever
     if (ts.isCallExpression(n)) {
       const e = n.expression;
       if (ts.isPropertyAccessExpression(e)) visit(e.expression);
       for (const a of n.arguments) visit(a);
-      names.push(ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : "(an expression)");
+      calls.push({ name: ts.isIdentifier(e) ? e.text : ts.isPropertyAccessExpression(e) ? e.name.text : "(an expression)", node: n });
       return;
     }
     n.forEachChild(visit);
   };
-  visit(body); // an expression body (`() => wipe()`) is itself a call
-  return names;
+  visit(root);
+  return calls;
 }
 
-/** Whether `getCurrentUser()`'s result is checked in this function: a null check, and for admin the role. */
-function checksSession(fn: FnNode, guard: Exclude<Guard, "public">): boolean {
+/** Awaited, or returned (an expression body counts): an unawaited guard's rejection is never seen. */
+function awaitedOrReturned(call: ts.CallExpression, fn: FnNode): boolean {
+  let n: ts.Node = call;
+  while (ts.isParenthesizedExpression(n.parent)) n = n.parent;
+  return ts.isAwaitExpression(n.parent) || ts.isReturnStatement(n.parent) || n.parent === fn;
+}
+
+/**
+ * A session read that counts as a guard only with its result checked in the same function:
+ * getCurrentUser() then a null check (and for admin, the role); apiUser() (modules/shared/api.ts)
+ * then `instanceof Response`.
+ */
+function checksSession(fn: FnNode, name: "getCurrentUser" | "apiUser", guard: Exclude<Guard, "public">): boolean {
   const text = fn.body?.getText() ?? "";
-  const m = /(?:const|let)\s+(\w+)\s*=\s*await\s+getCurrentUser\(/.exec(text);
+  const m = new RegExp(`(?:const|let)\\s+(\\w+)\\s*=\\s*await\\s+${name}\\(`).exec(text);
   if (!m) return false;
   const v = m[1];
+  if (name === "apiUser") return guard === "user" && new RegExp(`\\b${v}\\s+instanceof\\s+Response\\b`).test(text);
   const nullCheck = new RegExp(`!\\s*${v}\\b|\\b${v}\\s*[=!]==?\\s*null`).test(text);
   return guard === "admin" ? nullCheck && new RegExp(`\\b${v}\\.role\\s*!==\\s*"admin"`).test(text) : nullCheck;
 }
-
-type Scope = Map<string, FnNode>;
 
 /** A call that can't write: on the safe list, or a local helper whose own calls are all safe. */
 function isSafe(name: string, scope: Scope, seen: Set<FnNode>): boolean {
@@ -213,24 +251,52 @@ function isSafe(name: string, scope: Scope, seen: Set<FnNode>): boolean {
   const fn = scope.get(name);
   if (!fn || seen.has(fn) || !fn.body) return false;
   seen.add(fn);
-  return callsInOrder(fn.body).every((n) => isSafe(n, scope, seen));
+  return callsInOrder(fn.body).every((c) => isSafe(c.name, scope, seen));
 }
 
-/** Null when `fn` guards before anything else; otherwise why not. */
+const SESSION_READS = new Set(["getCurrentUser", "apiUser"]);
+
+/**
+ * Null when `fn` guards before anything else; otherwise why not. The guard must
+ * be awaited (or returned) in a top-level statement of the function: one
+ * inside an if, a try or a loop may not run, or may have its refusal swallowed.
+ */
 function guardProblem(fn: FnNode, guard: Exclude<Guard, "public">, fileScope: Scope, seen = new Set<FnNode>()): string | null {
-  if (!fn.body) return "has no body to check";
+  const body = fn.body;
+  if (!body) return "has no body to check";
   if (seen.has(fn)) return "calls itself before any guard";
   seen.add(fn);
-  const scope: Scope = new Map([...fileScope, ...(ts.isBlock(fn.body) ? functionsIn(fn.body.statements) : [])]);
+  const scope: Scope = new Map([...fileScope, ...(ts.isBlock(body) ? functionsIn(body.statements) : [])]);
   const guards = guard === "admin" ? ADMIN_GUARDS : USER_GUARDS;
   const want = guard === "admin" ? "requireAdmin()" : "requireUser()";
-  for (const name of callsInOrder(fn.body)) {
-    if (guards.has(name)) return null;
-    if (name === "getCurrentUser") return checksSession(fn, guard) ? null : `reads the session with getCurrentUser() but doesn't check it${guard === "admin" ? " (and its role)" : ""}`;
-    const helper = scope.get(name);
-    if (helper && guardProblem(helper, guard, fileScope, seen) === null) return null;
-    if (isSafe(name, scope, new Set())) continue;
-    return `calls ${name}() before ${want}`;
+  // A try block's statements run in order like the function's own; its catch is where a refusal could vanish.
+  const statements: { node: ts.Node; inTry: boolean }[] = [];
+  for (const st of ts.isBlock(body) ? body.statements : [body]) {
+    if (ts.isTryStatement(st)) {
+      for (const inner of st.tryBlock.statements) statements.push({ node: inner, inTry: true });
+      if (st.catchClause) statements.push({ node: st.catchClause, inTry: false });
+      if (st.finallyBlock) statements.push({ node: st.finallyBlock, inTry: false });
+    } else statements.push({ node: st, inTry: false });
+  }
+  for (const { node: statement, inTry } of statements) {
+    const plain = !ts.isBlock(body) || ts.isVariableStatement(statement) || ts.isExpressionStatement(statement) || ts.isReturnStatement(statement);
+    for (const { name, node } of callsInOrder(statement)) {
+      const helper = scope.get(name);
+      const isGuard = guards.has(name) || SESSION_READS.has(name) || (helper !== undefined && guardProblem(helper, guard, fileScope, seen) === null);
+      if (isGuard) {
+        if (!plain) return `calls ${name}() only inside a condition or loop, so it may not run`;
+        // requireAdmin() refuses by throwing (notFound, redirect): a catch around it can swallow that.
+        // A session read returns null instead, and its check (below) is what refuses.
+        if (inTry && !SESSION_READS.has(name)) return `calls ${name}() inside a try, whose catch can swallow its refusal`;
+        if (!awaitedOrReturned(node, fn)) return `calls ${name}() without awaiting it, so its refusal is never seen`;
+        if (SESSION_READS.has(name) && !checksSession(fn, name as "getCurrentUser" | "apiUser", guard)) {
+          return `reads the session with ${name}() but doesn't check it${guard === "admin" ? " (and its role)" : ""}`;
+        }
+        return null;
+      }
+      if (isSafe(name, scope, new Set())) continue;
+      return `calls ${name}() before ${want}`;
+    }
   }
   return `doesn't call ${want}`;
 }
@@ -278,7 +344,7 @@ function problemsIn(file: string, sf: ts.SourceFile): string[] {
       for (const e of exportsOf(sf)) {
         if (!e.fn) problems.push(`${path}: server action ${e.name} ${e.problem}, so its guard can't be checked`);
         else {
-          const why = guardProblem(e.fn, area, fileScope);
+          const why = guardProblem(e.fn, area, e.scope ?? fileScope);
           if (why) problems.push(`${path}: server action ${e.name}() ${why}`);
         }
       }
@@ -306,7 +372,7 @@ function problemsIn(file: string, sf: ts.SourceFile): string[] {
         if (!HTTP_METHODS.has(e.name) && e.name !== "*") continue;
         if (!e.fn) problems.push(`${path}: ${e.name} ${e.problem}, so its guard can't be checked: define the handler in this file`);
         else {
-          const why = guardProblem(e.fn, entry.guard, fileScope);
+          const why = guardProblem(e.fn, entry.guard, e.scope ?? fileScope);
           if (why) problems.push(`${path}: ${e.name} ${why}`);
         }
       }
@@ -320,6 +386,20 @@ describe("authorization", () => {
 
   it("every admin and dashboard page, server action and route handler calls its guard first", () => {
     const problems = files.flatMap((file) => problemsIn(file, parse(file)));
+    expect(problems).toEqual([]);
+  });
+
+  it("every opt-in module's route handler guards before it works, mounted or not", () => {
+    const routes = walk(join(ROOT, "modules")).filter((f) => /\/routes\/[^/]+\.ts$/.test(rel(f)));
+    expect(routes.length).toBeGreaterThan(0);
+    const problems = routes.flatMap((file) => {
+      const sf = parse(file);
+      return exportsOf(sf)
+        .filter((e) => HTTP_METHODS.has(e.name))
+        .map((e) => (e.fn ? guardProblem(e.fn, "user", functionsIn(sf.statements)) : (e.problem ?? "unreadable")))
+        .filter((why): why is string => why !== null)
+        .map((why) => `${rel(file)}: ${why}`);
+    });
     expect(problems).toEqual([]);
   });
 
@@ -377,7 +457,7 @@ describe("authorization", () => {
 
     it("exports it can't read fail instead of passing", () => {
       expect(check("src/app/api/admin/media/route.ts", `export { POST } from "@/modules/x/route";`)).toEqual([
-        'src/app/api/admin/media/route.ts: POST is re-exported from "@/modules/x/route", so its guard can\'t be checked: define the handler in this file',
+        'src/app/api/admin/media/route.ts: POST is re-exported from "@/modules/x/route", which can\'t be read, so its guard can\'t be checked: define the handler in this file',
       ]);
       expect(check("src/app/api/admin/media/route.ts", `export * from "@/modules/x/route";`)).toHaveLength(1);
       expect(check("src/app/api/admin/media/route.ts", `export const POST = withX(async () => {});`)).toHaveLength(1);
@@ -387,6 +467,33 @@ describe("authorization", () => {
       expect(check("src/app/admin/x/actions.ts", `"use server"; export { nuke } from "./elsewhere";`)).toHaveLength(1);
       // Non-method exports of a route (runtime, dynamic) are fine.
       expect(check("src/app/api/admin/media/route.ts", `export const runtime = "nodejs"; export async function POST() { await requireAdmin(); }`)).toEqual([]);
+    });
+
+    it("a guard that isn't awaited, is conditional, or sits in a try with a catch doesn't count", () => {
+      expect(check("src/app/admin/x/actions.ts", `"use server"; export async function a() { requireAdmin(); await deleteAll(); }`)).toEqual([
+        "src/app/admin/x/actions.ts: server action a() calls requireAdmin() without awaiting it, so its refusal is never seen",
+      ]);
+      expect(check("src/app/admin/x/actions.ts", `"use server"; export async function a(f: boolean) { if (f) await requireAdmin(); await wipe(); }`)).toEqual([
+        "src/app/admin/x/actions.ts: server action a() calls requireAdmin() only inside a condition or loop, so it may not run",
+      ]);
+      expect(check("src/app/admin/x/actions.ts", `"use server"; export async function a() { try { await requireAdmin(); } catch {} await wipe(); }`)).toEqual([
+        "src/app/admin/x/actions.ts: server action a() calls requireAdmin() inside a try, whose catch can swallow its refusal",
+      ]);
+      // A checked session read inside a try is fine: it returns null rather than throwing.
+      expect(check("src/app/api/billing/portal/route.ts", `export async function POST() { try { const u = await getCurrentUser(); if (!u) return no(); await go(u); } catch { return err(); } }`)).toEqual([]);
+    });
+
+    it("follows a re-export into the module file, and checks apiUser() and its Response check there", () => {
+      // A route listed as needing a user (same folder depth as a real module mount) re-exporting a real module handler.
+      const at = "src/app/api/billing/checkout/route.ts";
+      expect(check(at, `export { POST } from "../../../../../modules/ai/routes/chat";`)).toEqual([]);
+      expect(check(at, `export { POST } from "../../../../../modules/nope/route";`)).toEqual([
+        `${at}: POST is re-exported from "../../../../../modules/nope/route", which can't be read, so its guard can't be checked: define the handler in this file`,
+      ]);
+      // apiUser() without its instanceof Response check isn't a guard.
+      expect(check(at, `export async function POST(r: Request) { const u = await apiUser(r); await go(u); }`)).toEqual([
+        `${at}: POST reads the session with apiUser() but doesn't check it`,
+      ]);
     });
 
     it("getCurrentUser() only counts with its result checked (and the role, for admin)", () => {

@@ -7,16 +7,17 @@ import "server-only";
 // (development: copy sign-up and reset links from the terminal). Templates live
 // in src/server/email-templates.ts.
 //
-// It sends straight away. If that fails (a provider outage, a rate limit, an
-// SMTP server that's down), the message is queued as an email.send background
-// job (src/server/jobs/email.ts) and retried for a few minutes, and the caller
-// sees success: the email is on its way. Only when it can't even be queued
-// does sendEmail throw. Every message gets an idempotency key before the
+// It sends straight away. If that fails for a reason that can pass (a provider
+// outage, a rate limit, an SMTP server that's down), the message is queued as
+// an email.send background job (src/server/jobs/email.ts) and retried for a few
+// minutes, and the caller sees success: the email is on its way. A refusal
+// that retrying can't fix (a wrong password, a refused address: the adapter's
+// EmailDeliveryError says `permanent`) is thrown, as is a failure to queue. Every message gets an idempotency key before the
 // first attempt, so a retry is never a second Resend delivery.
 //
 
 import { randomUUID } from "node:crypto";
-import type { EmailMessage, EmailProvider } from "@/core/email";
+import { isPermanentEmailError, type EmailMessage, type EmailProvider } from "@/core/email";
 import { emailProvider } from "./env";
 import { log } from "./log";
 
@@ -45,6 +46,7 @@ export async function sendEmail(message: EmailMessage): Promise<{ id: string | n
   try {
     return await deliverEmail(keyed);
   } catch (error) {
+    if (isPermanentEmailError(error)) throw error;
     try {
       const { enqueueJob } = await import("./jobs");
       const { emailJob } = await import("./jobs/email");

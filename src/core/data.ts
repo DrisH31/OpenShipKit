@@ -186,26 +186,37 @@ export interface AuditRepo {
 /**
  * The background job queue (src/server/jobs). Claims are leases: a running
  * job whose lockedUntil has passed is due again, so a crashed worker's jobs
- * aren't lost. complete() and fail() take the attempt number from the claim
- * and do nothing (null/false) when it no longer matches, so a worker whose
- * lease expired can't overwrite the outcome of the worker that took over.
+ * aren't lost, until it has used its maxAttempts: then failAbandoned() ends
+ * it, so a job that kills its worker can't restart the app forever.
+ * complete() and fail() take the attempt number from the claim and do
+ * nothing (null/false) when it no longer matches, so a worker whose lease
+ * expired can't overwrite the outcome of the worker that took over.
+ *
+ * Every way a job ends (succeeded, failed, abandoned) deletes a sensitive
+ * job's payload, and nothing else does.
  */
+/** What JobsRepo.failAbandoned() records as the job's lastError. */
+export const ABANDONED_ERROR = "The worker running its last attempt stopped before it finished (the lease ran out).";
+
 export interface JobsRepo {
   /** With a `key`, a queued or running job with the same key comes back instead (`created: false`). */
   enqueue(input: JobInput): Promise<{ job: Job; created: boolean }>;
   /**
    * Up to `limit` due jobs, oldest runAt first, marked running with attempts + 1
-   * and lockedUntil = now + leaseMs. Concurrent claims never return the same job.
+   * and lockedUntil = now + leaseMs. Due: queued with runAt passed, or running
+   * with its lease expired and attempts left. Concurrent claims never return the same job.
    */
   claim(input: { limit: number; leaseMs: number }): Promise<Job[]>;
-  /** Marks a claimed job succeeded. `dropPayload` nulls the payload. False when the claim is stale. */
-  complete(id: string, attempt: number, opts?: { dropPayload?: boolean }): Promise<boolean>;
+  /** Running jobs whose lease expired on their last attempt, marked failed. Returns them. */
+  failAbandoned(): Promise<Job[]>;
+  /** Marks a claimed job succeeded. False when the claim is stale. */
+  complete(id: string, attempt: number): Promise<boolean>;
   /**
    * Records a failed attempt: back to queued at `retryAt` while attempts < maxAttempts
    * (and retryAt isn't null), else failed. Null when the claim is stale.
    */
-  fail(id: string, attempt: number, input: { error: string; retryAt: string | null; dropPayload?: boolean }): Promise<Job | null>;
-  /** A failed job back to queued, due now, with its attempts reset. Null unless it is failed. */
+  fail(id: string, attempt: number, input: { error: string; retryAt: string | null }): Promise<Job | null>;
+  /** A failed job back to queued, due now, with its attempts reset. Null unless it is failed and still has its payload. */
   retry(id: string): Promise<Job | null>;
   get(id: string): Promise<Job | null>;
   /** Newest first. */

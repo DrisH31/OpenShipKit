@@ -108,12 +108,19 @@ describe("SMTP provider", () => {
       /SMTP didn't send the email \(EAUTH, SMTP 535\): Invalid login\. Check the user name and password in SMTP_URL/,
     );
     expect(calls).toHaveLength(1);
+    const error = await createSmtpProvider({ transport: fakeTransport(smtpError({ code: "EAUTH", responseCode: 535, message: "x" })).transport, retryDelayMs: 0 })
+      .send(message)
+      .catch((e: unknown) => e);
+    expect(error).toMatchObject({ name: "EmailDeliveryError", permanent: true });
   });
 
-  it("gives up after the one retry", async () => {
+  it("gives up after the one retry, calling it transient so the queue tries later", async () => {
     const down = () => smtpError({ code: "ETIMEDOUT", message: "timed out" });
     const { transport, calls } = fakeTransport(down(), down(), "<never@acme.test>");
-    await expect(createSmtpProvider({ transport, retryDelayMs: 0 }).send(message)).rejects.toThrow(/ETIMEDOUT.*check the host and port/);
+    await expect(createSmtpProvider({ transport, retryDelayMs: 0 }).send(message)).rejects.toMatchObject({
+      permanent: false,
+      message: expect.stringMatching(/ETIMEDOUT.*check the host and port/),
+    });
     expect(calls).toHaveLength(2);
   });
 

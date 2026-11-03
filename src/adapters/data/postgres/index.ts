@@ -20,7 +20,7 @@ import "server-only";
 
 import { and, arrayContains, asc, desc, eq, getTableColumns, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
-import { DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
+import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
 import {
   ENTITLED_STATUSES,
   PAST_DUE_GRACE_DAYS,
@@ -291,13 +291,18 @@ const toJob = (r: JobRow): Job => ({
   lockedUntil: isoOrNull(r.lockedUntil),
   lastError: r.lastError,
   key: r.key,
+  sensitive: r.sensitive,
   createdAt: iso(r.createdAt),
   updatedAt: iso(r.updatedAt),
   finishedAt: isoOrNull(r.finishedAt),
 });
 
-/** Queued and due, or running with an expired lease (its worker died). */
-const dueJob = sql`((${jobs.status} = 'queued' and ${jobs.runAt} <= now()) or (${jobs.status} = 'running' and ${jobs.lockedUntil} < now()))`;
+/** Queued and due, or running with an expired lease (its worker died) and attempts left. */
+const dueJob = sql`((${jobs.status} = 'queued' and ${jobs.runAt} <= now()) or (${jobs.status} = 'running' and ${jobs.lockedUntil} < now() and ${jobs.attempts} < ${jobs.maxAttempts}))`;
+
+/** The payload as it should be once the job has ended: gone if it was sensitive. */
+const endedPayload = sql`case when ${jobs.sensitive} then null else ${jobs.payload} end`;
+
 
 const toAudit = (r: AuditRow): AuditEntry => ({
   id: r.id,
@@ -946,13 +951,14 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
 
     // ------------------------------------------------------------ jobs
     jobs: {
-      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null }) {
+      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null, sensitive = false }) {
         if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new DataError("invalid", "maxAttempts must be a whole number of at least 1");
         const values = {
           kind,
           payload: jsonValue(payload),
           maxAttempts,
           key,
+          sensitive,
           ...(runAt ? { runAt: toDate(runAt, "runAt")! } : {}),
         };
         if (key === null) {
@@ -999,18 +1005,24 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .returning();
         return rows.map(toJob).sort((a, b) => (a.runAt < b.runAt ? -1 : a.runAt > b.runAt ? 1 : a.id < b.id ? -1 : 1));
       },
-      async complete(id, attempt, opts = {}) {
-        if (!isUuid(id)) return false;
-        const set: Settable<JobRow> = { status: "succeeded", lockedUntil: null, finishedAt: now, updatedAt: now };
-        if (opts.dropPayload) set.payload = null;
+      async failAbandoned() {
         const rows = await db()
           .update(jobs)
-          .set(set)
+          .set({ status: "failed", lockedUntil: null, lastError: ABANDONED_ERROR, finishedAt: now, updatedAt: now, payload: endedPayload })
+          .where(and(eq(jobs.status, "running"), sql`${jobs.lockedUntil} < now()`, sql`${jobs.attempts} >= ${jobs.maxAttempts}`))
+          .returning();
+        return rows.map(toJob);
+      },
+      async complete(id, attempt) {
+        if (!isUuid(id)) return false;
+        const rows = await db()
+          .update(jobs)
+          .set({ status: "succeeded", lockedUntil: null, finishedAt: now, updatedAt: now, payload: endedPayload })
           .where(and(eq(jobs.id, id), eq(jobs.status, "running"), eq(jobs.attempts, attempt)))
           .returning({ id: jobs.id });
         return rows.length > 0;
       },
-      async fail(id, attempt, { error, retryAt, dropPayload }) {
+      async fail(id, attempt, { error, retryAt }) {
         if (!isUuid(id)) return null;
         const retry = retryAt ? toDate(retryAt, "retryAt")! : null;
         const again = retry ? sql`${jobs.attempts} < ${jobs.maxAttempts}` : sql`false`;
@@ -1024,7 +1036,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         };
         if (retry) set.runAt = sql`case when ${again} then ${retry}::timestamptz else ${jobs.runAt} end`;
         // A sensitive job keeps its payload while it may still run, and loses it once it can't.
-        if (dropPayload) set.payload = sql`case when ${terminal} then null else ${jobs.payload} end`;
+        set.payload = sql`case when ${terminal} then ${endedPayload} else ${jobs.payload} end`;
         const [row] = await db()
           .update(jobs)
           .set(set)
@@ -1037,7 +1049,8 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         const [row] = await db()
           .update(jobs)
           .set({ status: "queued", attempts: 0, runAt: now, lockedUntil: null, finishedAt: null, updatedAt: now })
-          .where(and(eq(jobs.id, id), eq(jobs.status, "failed")))
+          // A sensitive job's payload is gone once it fails: there is nothing left to run.
+          .where(and(eq(jobs.id, id), eq(jobs.status, "failed"), eq(jobs.sensitive, false)))
           .returning();
         return row ? toJob(row) : null;
       },

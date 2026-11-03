@@ -9,6 +9,7 @@ CREATE TABLE "jobs" (
 	"locked_until" timestamp (3) with time zone,
 	"last_error" text,
 	"key" text,
+	"sensitive" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"finished_at" timestamp (3) with time zone,

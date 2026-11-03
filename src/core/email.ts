@@ -21,6 +21,24 @@ export interface EmailMessage {
   idempotencyKey?: string;
 }
 
+/**
+ * A provider's refusal. `permanent` means trying again can't help (a wrong
+ * password, a refused address, a bad API key): sendEmail() reports it to the
+ * caller instead of queuing a retry. Anything else a provider throws counts as
+ * transient (an outage, a timeout, a rate limit).
+ */
+export class EmailDeliveryError extends Error {
+  constructor(
+    message: string,
+    readonly permanent: boolean,
+  ) {
+    super(message);
+    this.name = "EmailDeliveryError";
+  }
+}
+
+export const isPermanentEmailError = (error: unknown): boolean => error instanceof EmailDeliveryError && error.permanent;
+
 export interface EmailProvider {
   readonly id: EmailProviderId;
   send(message: EmailMessage): Promise<{ id: string | null }>;

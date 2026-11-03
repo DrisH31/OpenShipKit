@@ -75,6 +75,11 @@ Each README has the exact steps; they always have this shape:
    export const dynamic = "force-dynamic";
    ```
 
+   Then list the route in `ROUTES` in `tests/authz.test.ts` with
+   `guard: "user"`. The test follows the re-export into `modules/` and fails
+   unless the handler awaits `apiUser()` and checks `instanceof Response`
+   before it does anything else.
+
 4. **Set its variables** in `.env.local` (development) or your server’s
    environment, and add the README’s block to `.env.example`.
 

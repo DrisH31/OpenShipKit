@@ -341,6 +341,8 @@ export const jobs = pgTable(
     lockedUntil: ts("locked_until"),
     lastError: text("last_error"),
     key: text("key"),
+    /** The payload holds something that mustn't outlive the job (a live sign-in link): deleted when the job ends. */
+    sensitive: boolean("sensitive").notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
     finishedAt: ts("finished_at"),

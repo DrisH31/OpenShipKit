@@ -28,7 +28,7 @@ import "server-only";
 //
 
 import { createTransport } from "nodemailer";
-import type { EmailMessage, EmailProvider } from "@/core/email";
+import { EmailDeliveryError, type EmailMessage, type EmailProvider } from "@/core/email";
 import { emailFrom, requireEnv } from "@/server/env";
 import { parseSmtpUrl } from "@/server/env-rules";
 import { redact } from "../redact";
@@ -122,7 +122,7 @@ export function createSmtpProvider(options: SmtpProviderOptions = {}): EmailProv
       const detail = [e.code, e.responseCode ? `SMTP ${e.responseCode}` : null].filter(Boolean).join(", ");
       const text = redact(e.message ?? "unknown error").trim();
       const sentence = /[.!?]$/.test(text) ? text : `${text}.`;
-      throw new Error(`SMTP didn't send the email${detail ? ` (${detail})` : ""}: ${sentence}${hintFor(e)}`);
+      throw new EmailDeliveryError(`SMTP didn't send the email${detail ? ` (${detail})` : ""}: ${sentence}${hintFor(e)}`, !isTransient(e));
     },
   };
 }

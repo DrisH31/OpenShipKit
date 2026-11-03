@@ -12,7 +12,7 @@ import "server-only";
 //
 
 import { randomUUID } from "node:crypto";
-import { DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
+import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore, type PaidProvider } from "@/core/data";
 import type {
   AgentKey,
   AuditEntry,
@@ -502,7 +502,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
     },
 
     jobs: {
-      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null }) {
+      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null, sensitive = false }) {
         if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new DataError("invalid", "maxAttempts must be a whole number of at least 1");
         if (runAt !== undefined && Number.isNaN(Date.parse(runAt))) throw new DataError("invalid", `runAt is not a valid date: "${runAt}"`);
         if (key !== null) {
@@ -521,6 +521,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
           lockedUntil: null,
           lastError: null,
           key,
+          sensitive,
           createdAt: stamp,
           updatedAt: stamp,
           finishedAt: null,
@@ -531,7 +532,11 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       async claim({ limit, leaseMs }) {
         const at = Date.now();
         const due = [...t.jobs.values()]
-          .filter((j) => (j.status === "queued" && Date.parse(j.runAt) <= at) || (j.status === "running" && j.lockedUntil !== null && Date.parse(j.lockedUntil) < at))
+          .filter(
+            (j) =>
+              (j.status === "queued" && Date.parse(j.runAt) <= at) ||
+              (j.status === "running" && j.lockedUntil !== null && Date.parse(j.lockedUntil) < at && j.attempts < j.maxAttempts),
+          )
           .sort((a, b) => (a.runAt < b.runAt ? -1 : a.runAt > b.runAt ? 1 : a.id < b.id ? -1 : 1))
           .slice(0, Math.max(1, Math.min(Math.floor(limit), 50)));
         const stamp = new Date(at).toISOString();
@@ -543,15 +548,27 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         }
         return due.map(clone);
       },
-      async complete(id, attempt, opts = {}) {
+      async failAbandoned() {
+        const at = Date.now();
+        const stamp = new Date(at).toISOString();
+        const ended: Job[] = [];
+        for (const j of t.jobs.values()) {
+          if (j.status !== "running" || j.lockedUntil === null || Date.parse(j.lockedUntil) >= at || j.attempts < j.maxAttempts) continue;
+          Object.assign(j, { status: "failed", lockedUntil: null, lastError: ABANDONED_ERROR, finishedAt: stamp, updatedAt: stamp });
+          if (j.sensitive) j.payload = null;
+          ended.push(clone(j));
+        }
+        return ended;
+      },
+      async complete(id, attempt) {
         const j = t.jobs.get(id);
         if (!j || j.status !== "running" || j.attempts !== attempt) return false;
         const stamp = now();
         Object.assign(j, { status: "succeeded", lockedUntil: null, finishedAt: stamp, updatedAt: stamp });
-        if (opts.dropPayload) j.payload = null;
+        if (j.sensitive) j.payload = null;
         return true;
       },
-      async fail(id, attempt, { error, retryAt, dropPayload }) {
+      async fail(id, attempt, { error, retryAt }) {
         const j = t.jobs.get(id);
         if (!j || j.status !== "running" || j.attempts !== attempt) return null;
         if (retryAt !== null && Number.isNaN(Date.parse(retryAt))) throw new DataError("invalid", `retryAt is not a valid date: "${retryAt}"`);
@@ -563,12 +580,12 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         j.lastError = error.slice(0, 2_000);
         j.finishedAt = again ? null : stamp;
         j.updatedAt = stamp;
-        if (dropPayload && !again) j.payload = null;
+        if (j.sensitive && !again) j.payload = null;
         return clone(j);
       },
       async retry(id) {
         const j = t.jobs.get(id);
-        if (!j || j.status !== "failed") return null;
+        if (!j || j.status !== "failed" || j.sensitive) return null;
         const stamp = now();
         Object.assign(j, { status: "queued", attempts: 0, runAt: stamp, lockedUntil: null, finishedAt: null, updatedAt: stamp });
         return clone(j);

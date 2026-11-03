@@ -322,7 +322,7 @@ export interface Job {
   id: string;
   /** Which handler runs it ("email.send"): src/server/jobs/registry.ts. */
   kind: string;
-  /** The handler's input, as JSON. Null once a sensitive job has finished. */
+  /** The handler's input, as JSON. Null once a sensitive job has ended (succeeded or failed for good). */
   payload: unknown;
   status: JobStatus;
   /** Claims so far, the current one included. */
@@ -335,6 +335,8 @@ export interface Job {
   lastError: string | null;
   /** Dedupes: one queued or running job per key. Null for none. */
   key: string | null;
+  /** The payload is deleted when the job ends, so it can't be retried by hand afterwards. */
+  sensitive: boolean;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -348,6 +350,8 @@ export interface JobInput {
   /** Default 5. */
   maxAttempts?: number;
   key?: string | null;
+  /** Default false. */
+  sensitive?: boolean;
 }
 
 export interface JobCounts {

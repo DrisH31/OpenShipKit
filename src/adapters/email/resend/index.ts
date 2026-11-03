@@ -20,7 +20,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { Resend, type CreateEmailOptions, type CreateEmailRequestOptions, type CreateEmailResponse, type ErrorResponse } from "resend";
-import type { EmailMessage, EmailProvider } from "@/core/email";
+import { EmailDeliveryError, type EmailMessage, type EmailProvider } from "@/core/email";
 import { emailFrom, isProduction, requireEnv } from "@/server/env";
 import { log } from "@/server/log";
 import { redact } from "../redact";
@@ -102,8 +102,9 @@ export function createResendProvider(options: ResendProviderOptions = {}): Email
       }
       if (result.error) {
         const { name, statusCode } = result.error;
-        throw new Error(
+        throw new EmailDeliveryError(
           `Resend didn't send the email (${name}${statusCode ? `, HTTP ${statusCode}` : ""}): ${redact(result.error.message)}${hintFor(result.error)}`,
+          !isTransient(result.error),
         );
       }
       return { id: result.data?.id ?? null };

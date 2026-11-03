@@ -16,11 +16,14 @@ import "server-only";
 //  - A failed attempt retries with exponential backoff (backoffMs) until the
 //    definition's maxAttempts, then stays `failed` for a person to look at and
 //    retry (retryFailedJob, /admin/jobs, MCP jobs_retry).
-//  - An attempt that runs past JOB_TIMEOUT_MS counts as failed. JavaScript can't
-//    stop the work itself, so the lease is longer than the timeout and a slow job
-//    isn't taken over while it still runs.
+//  - A job whose last attempt dies with its worker is failed when its lease
+//    ends (failAbandoned), so a job that crashes the process can't restart it forever.
+//  - An attempt still running after JOB_TIMEOUT_MS is reported and left to
+//    finish: it keeps its claim and its outcome is recorded when it settles.
+//    If it outlives the lease, another worker may run it again (at least once).
 //  - Finished jobs are pruned after RETENTION_DAYS. A sensitive job's payload is
-//    deleted as soon as it can no longer run (./define.ts).
+//    deleted when the job ends, however it ends (./define.ts), so it can't be
+//    retried by hand afterwards: the work it carried (a sign-in link) is gone.
 //
 // Job rows are operational state, like rate-limit counters: they aren't
 // audited. A person retrying a job is (retryFailedJob).
@@ -34,6 +37,7 @@ import { getData } from "../data";
 import { assertNotDemo } from "../demo";
 import { optionalEnv } from "../env";
 import { log } from "../log";
+import { scrubText } from "../scrub";
 import { recordAudit } from "../services/audit";
 import { ServiceError } from "../services/errors";
 import { PermanentJobError, type JobDefinition } from "./define";
@@ -72,61 +76,93 @@ export async function enqueueJob<T>(
   return (await getData()).jobs.enqueue({
     kind: definition.kind,
     payload: parsed.data,
+    sensitive: definition.sensitive === true,
     maxAttempts: definition.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
     runAt: options.runAt?.toISOString(),
     key: options.key ?? null,
   });
 }
 
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+/** Whether `work` settles within `ms`: its outcome if it did, null if it is still running. */
+async function within(work: Promise<void>, ms: number): Promise<{ error: unknown } | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`timed out after ${Math.round(ms / 1000)} s`)), ms);
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
   });
-  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+  try {
+    return await Promise.race([work.then(() => ({ error: undefined }), (error: unknown) => ({ error })), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
-export type RunSummary = { claimed: number; succeeded: number; retrying: number; failed: number; stale: number };
+export type RunSummary = { claimed: number; succeeded: number; retrying: number; failed: number; stale: number; slow: number; abandoned: number };
 
-/** Claims up to `limit` due jobs and runs them. One runner tick; exported for tests and scripts. */
+/**
+ * One runner tick: ends jobs whose last attempt died with its worker, then claims
+ * up to `limit` due jobs and runs them. Exported for tests and scripts.
+ *
+ * An attempt still running after `timeoutMs` is left alone: it keeps its claim,
+ * and its outcome is recorded whenever it settles. JavaScript can't stop the
+ * work, so releasing the job would run it twice side by side. Only once the
+ * lease (LEASE_MS, longer than the timeout) runs out can another worker take
+ * it over, and then the late outcome is refused (fenced on the attempt).
+ */
 export async function runDueJobs(
   options: { definitions?: readonly AnyDefinition[]; limit?: number; timeoutMs?: number; now?: () => number } = {},
 ): Promise<RunSummary> {
   const definitions = byKind(options.definitions ?? JOB_DEFINITIONS);
   const now = options.now ?? Date.now;
   const store = (await getData()).jobs;
+  const summary: RunSummary = { claimed: 0, succeeded: 0, retrying: 0, failed: 0, stale: 0, slow: 0, abandoned: 0 };
+
+  for (const job of await store.failAbandoned()) {
+    summary.abandoned += 1;
+    log.error("jobs", `${job.kind} ${job.id} failed for good: its worker stopped during the last attempt (${job.attempts} of ${job.maxAttempts})`);
+  }
+
   const claimed = await store.claim({ limit: options.limit ?? BATCH, leaseMs: LEASE_MS });
-  const summary: RunSummary = { claimed: claimed.length, succeeded: 0, retrying: 0, failed: 0, stale: 0 };
+  summary.claimed = claimed.length;
+
+  /** Records how an attempt ended. Fenced: a stale claim changes nothing. */
+  const record = async (job: Job, error: unknown): Promise<"succeeded" | "retrying" | "failed" | "stale"> => {
+    if (error === undefined) return (await store.complete(job.id, job.attempts)) ? "succeeded" : "stale";
+    const permanent = error instanceof PermanentJobError;
+    const message = scrubText(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
+    const retryAt = permanent ? null : new Date(now() + backoffMs(job.attempts)).toISOString();
+    const after = await store.fail(job.id, job.attempts, { error: message, retryAt });
+    if (!after) return "stale";
+    const where = `${job.kind} ${job.id} (attempt ${job.attempts} of ${job.maxAttempts})`;
+    if (after.status === "failed") {
+      log.error("jobs", `${where} failed for good`, error);
+      return "failed";
+    }
+    log.warn("jobs", `${where} failed; retrying at ${after.runAt}`, message);
+    return "retrying";
+  };
 
   await Promise.all(
     claimed.map(async (job) => {
       const definition = definitions.get(job.kind);
-      const sensitive = definition?.sensitive === true;
-      try {
-        if (!definition) throw new PermanentJobError(`no job is defined for kind "${job.kind}"`);
+      let work: Promise<void>;
+      if (!definition) work = Promise.reject(new PermanentJobError(`no job is defined for kind "${job.kind}"`));
+      else {
         const parsed = definition.schema.safeParse(job.payload);
-        if (!parsed.success) throw new PermanentJobError(`invalid payload: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
-        await withTimeout(definition.run(parsed.data), options.timeoutMs ?? JOB_TIMEOUT_MS);
-        if (await store.complete(job.id, job.attempts, { dropPayload: sensitive })) summary.succeeded += 1;
-        else summary.stale += 1;
-      } catch (error) {
-        const permanent = error instanceof PermanentJobError;
-        const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-        const retryAt = permanent ? null : new Date(now() + backoffMs(job.attempts)).toISOString();
-        const after = await store.fail(job.id, job.attempts, { error: message, retryAt, dropPayload: sensitive });
-        if (!after) {
-          summary.stale += 1;
-          return;
-        }
-        const where = `${job.kind} ${job.id} (attempt ${job.attempts} of ${job.maxAttempts})`;
-        if (after.status === "failed") {
-          summary.failed += 1;
-          log.error("jobs", `${where} failed for good`, error);
-        } else {
-          summary.retrying += 1;
-          log.warn("jobs", `${where} failed; retrying at ${after.runAt}`, message);
-        }
+        work = parsed.success
+          ? Promise.resolve().then(() => definition.run(parsed.data))
+          : Promise.reject(new PermanentJobError(`invalid payload: ${parsed.error.issues.map((i) => i.message).join("; ")}`));
       }
+      const outcome = await within(work, options.timeoutMs ?? JOB_TIMEOUT_MS);
+      if (outcome === null) {
+        summary.slow += 1;
+        log.warn("jobs", `${job.kind} ${job.id} is still running after ${Math.round((options.timeoutMs ?? JOB_TIMEOUT_MS) / 1000)} s; it keeps its claim until it finishes or the lease ends`);
+        void work.then(
+          () => record(job, undefined),
+          (error: unknown) => record(job, error),
+        ).catch((error: unknown) => log.warn("jobs", `couldn't record the outcome of ${job.kind} ${job.id}`, error instanceof Error ? error.message : error));
+        return;
+      }
+      summary[await record(job, outcome.error)] += 1;
     }),
   );
   return summary;
@@ -179,7 +215,11 @@ export function startJobRunner(): void {
   schedule(1_000);
 }
 
-/** Stops claiming new jobs. Jobs already running finish (or time out) on their own. */
+/**
+ * Stops claiming new jobs. It doesn't wait for running ones: Next's own SIGTERM
+ * handler exits the process at once, and a job cut off there is due again when
+ * its lease ends (or failed, if that was its last attempt).
+ */
 export function stopJobRunner(): void {
   const state = (globalThis as unknown as { __openshipkitJobRunner?: RunnerState }).__openshipkitJobRunner;
   if (!state) return;
@@ -204,6 +244,9 @@ export async function retryFailedJob(id: string, actor: Actor): Promise<Job> {
   const before = await data.jobs.get(id);
   if (!before) throw new ServiceError("not_found", "No such job.");
   if (before.status !== "failed") throw new ServiceError("conflict", `Only a failed job can be retried; this one is ${before.status}.`);
+  if (before.sensitive) {
+    throw new ServiceError("conflict", "This job's contents were deleted when it failed (it held something private, such as a sign-in link), so it can't run again.");
+  }
   const after = await data.jobs.retry(id);
   if (!after) throw new ServiceError("conflict", "The job changed while you were looking at it. Reload and try again.");
   await recordAudit(actor, "job.retry", "job", id, { status: before.status, attempts: before.attempts }, { status: after.status, attempts: after.attempts });

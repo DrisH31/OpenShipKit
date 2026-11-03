@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "@/adapters/data/memory";
 import type { DataStore } from "@/core/data";
-import type { EmailMessage } from "@/core/email";
+import { EmailDeliveryError, type EmailMessage } from "@/core/email";
 
 let store: DataStore;
 vi.mock("@/server/data", () => ({ getData: async () => store }));
@@ -71,6 +71,21 @@ describe("sendEmail with the queue behind it", () => {
     await sendEmail({ ...reset, idempotencyKey: "welcome-user-1" });
     const [job] = (await store.jobs.list({})).items;
     expect((job.payload as EmailMessage).idempotencyKey).toBe("welcome-user-1");
+  });
+
+  it("throws a permanent refusal at once instead of queuing a retry that can't work", async () => {
+    provider.answers = [new EmailDeliveryError("SMTP didn't send the email (EAUTH, SMTP 535): Invalid login.", true)];
+    await expect(sendEmail(reset)).rejects.toThrow(/EAUTH/);
+    expect((await store.jobs.counts()).queued).toBe(0);
+  });
+
+  it("stops a queued retry at a permanent refusal instead of trying five times", async () => {
+    provider.answers = [new Error("timeout"), new EmailDeliveryError("Resend didn't send the email (invalid_api_key)", true)];
+    await sendEmail(reset);
+    await runDueJobs();
+    const [job] = (await store.jobs.list({})).items;
+    expect(job).toMatchObject({ status: "failed", attempts: 1, payload: null });
+    expect(job.lastError).toMatch(/^PermanentJobError: Resend didn't send the email/);
   });
 
   it("throws the send's own error when even the queue is unavailable", async () => {

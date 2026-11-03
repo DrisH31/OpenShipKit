@@ -104,10 +104,33 @@ describe("job runner", () => {
     expect((await store.jobs.get(c.job.id))?.lastError).toMatch(/invalid payload/);
   });
 
-  it("counts an attempt that runs too long as failed", async () => {
+  it("leaves an attempt that runs too long holding its claim, and records its outcome when it settles", async () => {
     const { job } = await enqueueJob(slow, {});
-    expect(await runDueJobs({ definitions: ALL, timeoutMs: 20 })).toMatchObject({ retrying: 1 });
-    expect((await store.jobs.get(job.id))?.lastError).toMatch(/timed out/);
+    expect(await runDueJobs({ definitions: ALL, timeoutMs: 20 })).toMatchObject({ slow: 1, retrying: 0 });
+    expect(await store.jobs.get(job.id)).toMatchObject({ status: "running", attempts: 1 });
+    expect(await runDueJobs({ definitions: ALL })).toMatchObject({ claimed: 0 }); // not released: it can't run twice side by side
+    await vi.waitFor(async () => expect((await store.jobs.get(job.id))?.status).toBe("succeeded"), { timeout: 2_000 });
+  });
+
+  it("fails a job whose last attempt died with its worker, and reports it", async () => {
+    const errors = vi.spyOn(console, "error");
+    const { job } = await store.jobs.enqueue({ kind: "test.echo", payload: { n: 1 }, maxAttempts: 1 });
+    await store.jobs.claim({ limit: 1, leaseMs: 1 }); // a worker that claims it, then dies
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await runDueJobs({ definitions: ALL })).toMatchObject({ abandoned: 1, claimed: 0 });
+    expect((await store.jobs.get(job.id))?.status).toBe("failed");
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("its worker stopped during the last attempt"))).toBe(true);
+  });
+
+  it("stores the last error scrubbed of a failed query's parameters", async () => {
+    const leaky = defineJob({
+      kind: "test.leaky",
+      schema: z.object({}),
+      run: async () => Promise.reject(new Error('Failed query: select 1 where t = $1\nparams: sess_SECRET')),
+    });
+    const { job } = await enqueueJob(leaky, {});
+    await runDueJobs({ definitions: [leaky] });
+    expect((await store.jobs.get(job.id))?.lastError).toBe("Error: Failed query: select 1 where t = $1\nparams: [redacted]");
   });
 
   it("deletes a sensitive job's payload once it finishes, and keeps an ordinary one's", async () => {
@@ -136,6 +159,15 @@ describe("retrying a failed job by hand", () => {
     expect(after).toMatchObject({ status: "queued", attempts: 0 });
     const [entry] = (await store.audit.list({ entity: "job", entityId: job.id })).items;
     expect(entry).toMatchObject({ action: "job.retry", actor: { label: "admin@example.com" }, before: { status: "failed" }, after: { status: "queued" } });
+  });
+
+  it("refuses a sensitive job: its contents were deleted when it failed", async () => {
+    const one = defineJob({ kind: "test.secret-once", schema: z.object({ link: z.string() }), sensitive: true, maxAttempts: 1, run: async () => Promise.reject(new Error("down")) });
+    const { job } = await enqueueJob(one, { link: "https://example.com/r?t=1" });
+    await runDueJobs({ definitions: [one] });
+    expect(await store.jobs.get(job.id)).toMatchObject({ status: "failed", payload: null, sensitive: true });
+    await expect(retryFailedJob(job.id, admin)).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/contents were deleted/) });
+    expect((await store.audit.list({ entity: "job", entityId: job.id })).items).toEqual([]);
   });
 
   it("refuses a job that isn't failed, and one that doesn't exist", async () => {

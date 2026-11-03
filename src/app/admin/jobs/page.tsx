@@ -115,7 +115,9 @@ export default async function JobsPage({ searchParams }: { searchParams: Promise
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{when(job)}</TableCell>
                     <TableCell className="w-px px-4 text-right">
-                      {job.status === "failed" ? (
+                      {job.status === "failed" && job.sensitive ? (
+                        <span className="text-caption text-ink-3">Contents deleted; can’t be retried</span>
+                      ) : job.status === "failed" ? (
                         <ActionForm action={retryJobAction} className="inline-flex flex-col items-end gap-1">
                           <input type="hidden" name="id" value={job.id} />
                           <SubmitButton variant="outline" size="sm" aria-label={`Retry ${job.kind} job`}>

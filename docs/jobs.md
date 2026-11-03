@@ -15,22 +15,34 @@ seconds. Today the app queues one kind itself, an email whose first send failed.
   before it acts.
 - **Retries with backoff.** A failed attempt runs again after 30 s, then 1, 2
   and 4 minutes, doubling up to an hour, until the job's `maxAttempts`. Then it
-  stays **failed** for a person to look at.
+  stays **failed** for a person to look at. A job that throws
+  `PermanentJobError` fails at once.
+- **No endless crashes.** A job whose worker dies on every attempt (it runs the
+  process out of memory, say) is taken over only while it has attempts left.
+  After its last one, it's marked failed when the lease runs out.
 - **Visible.** `/admin/jobs` lists failed and waiting jobs with their last
-  error and a **Retry** button, which is audited. Agents get `jobs_list` and
+  error and a **Retry** button, which is audited. A sensitive job can't be
+  retried: its contents were deleted when it failed. Agents get `jobs_list` and
   `job_retry` ([MCP](mcp.md)). `/api/health` reports `jobs.ok: false` when a
   due job has waited more than five minutes ([observability](observability.md#health)).
 - **Tidy.** Finished jobs are deleted after 14 days. A *sensitive* job's payload
   (a queued email holds a live sign-in link) is deleted the moment it succeeds
   or fails for good.
-- **Bounded.** An attempt that runs over two minutes counts as failed.
+- **Slow jobs.** An attempt still running after two minutes is logged and
+  left to finish: it keeps its claim, and its outcome is recorded when it ends.
+  It isn't handed to another worker while it may still be running. If it
+  outlives the five-minute lease, though, it can be.
+- **Shutdown.** Stopping the app (SIGTERM) ends the process at once. A job cut
+  off then is due again when its lease ends, or failed if that was its last attempt.
 
 ## Email retries
 
 `sendEmail()` sends straight away, exactly as before. Only when the provider
-fails (Resend down, a rate limit, your SMTP server unreachable) does it queue
-an `email.send` job and return, so the person filling in the form never sees an
-error. The retry uses the same idempotency key as the first attempt, so Resend
+fails for a reason that can pass (Resend down, a rate limit, your SMTP server
+unreachable) does it queue an `email.send` job and return, so the person
+filling in the form never sees an error. A refusal that retrying can't fix (a
+wrong SMTP password or API key, a refused address) is thrown at once, like
+before the queue existed, and is in the log. The retry uses the same idempotency key as the first attempt, so Resend
 delivers the message at most once. Retries stop after about eight minutes:
 sign-in and reset links expire, and a dead link arriving an hour later helps
 nobody.
