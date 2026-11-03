@@ -25,8 +25,10 @@
 //   7. clean up: delete the post (and check it 404s), put the section back
 //      exactly as it was, close the contact message (feedback has no delete),
 //      delete the account — which revokes the key it minted (checked: the key
-//      is refused afterwards). Audit-log entries stay: the log is append-only
-//      by design. --keep skips the clean-up, to look at what it made.
+//      is refused afterwards). When the account is the site's only admin (a
+//      fresh database, as in CI) the app refuses that by design: the run warns
+//      and lists the account as left over. Audit-log entries stay: the log is
+//      append-only by design. --keep skips the clean-up, to look at what it made.
 //
 // The admin forms are submitted WITHOUT JavaScript: the page's own
 // <form> (server action fields included) posted as multipart, as a browser with
@@ -675,7 +677,14 @@ async function cleanUp(): Promise<void> {
       const res = await submit(admin, at, form, { confirm: options.email });
       const to = res.headers.get("location") ?? "";
       if (res.status < 300 || res.status >= 400) {
-        const said = textOf(await res.text()).match(/(?:The last admin|For your safety|You can’t|Type your email)[^.]{0,160}\./)?.[0];
+        const said = textOf(await res.text()).match(/(?:This is the only admin|The last admin|For your safety|You can’t|Type your email)[^.;]{0,160}[.;]/)?.[0];
+        // On a fresh database (CI's) the run's ADMIN_EMAILS account is the site's
+        // only admin, and the app refuses to delete the last admin by design
+        // (services/users.ts). That refusal is the right answer, not a failure:
+        // the account and its key stay, and are listed below as left over.
+        if (said?.startsWith("This is the only admin")) {
+          return [true, `kept: it is the site’s only admin, which can’t be deleted (by design). Its key stays too`, true];
+        }
         return [false, `HTTP ${res.status}${said ? `: “${said}”` : ""}`];
       }
       leftovers.delete("account");
