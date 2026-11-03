@@ -194,10 +194,33 @@ export interface Plan {
   trialDays: number | null;
   active: boolean;
   sortOrder: number;
+  /**
+   * What the plan allows, by metric: { projects: 3, api_calls: 10000, seats: 5 }. A metric that isn't
+   * listed is unlimited. src/server/services/usage.ts checks them (requireWithinLimit).
+   */
+  limits: PlanLimits;
   updatedAt: string;
 }
 
-export type PlanInput = Omit<Plan, "id" | "updatedAt">;
+/** Metric (lower-case words joined by underscores) → the most allowed. Absent: unlimited. */
+export type PlanLimits = Record<string, number>;
+
+export type PlanInput = Omit<Plan, "id" | "updatedAt" | "limits"> & { limits?: PlanLimits };
+
+// ---------------------------------------------------------------- usage
+
+/** Who usage is counted for: a person, or with teams on, their organisation. */
+export type UsageSubject = { type: "user" | "org"; id: string };
+
+export interface UsageEvent {
+  id: string;
+  subject: UsageSubject;
+  metric: string;
+  quantity: number;
+  /** Dedupes: a second event with the same key for the same subject is ignored. */
+  key: string | null;
+  occurredAt: string;
+}
 
 // ---------------------------------------------------------------- billing
 

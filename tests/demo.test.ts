@@ -157,6 +157,8 @@ const NOT_WRITES = new Set([
   "getOrgBillingView",
   "paysForAnything",
   "listCancellable",
+  // Whose plan limits apply to what a person is doing (src/server/services/usage.ts): a read.
+  "usageSubject",
 ]);
 
 describe("every write service is guarded", () => {

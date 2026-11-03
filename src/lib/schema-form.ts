@@ -16,6 +16,7 @@
 //                       of small records (a link: label + href) is one grid
 //                       row per item (compactFields)
 //   object            → its fields, in schema order
+//   record (z.record) of numbers or one-line strings → map: name/value rows
 //   anything else     → a raw-JSON box for that subtree (never silently dropped)
 //
 // Validation stays on the server: the service parses with the real zod schema
@@ -26,6 +27,8 @@
 export type JsonSchema = {
   type?: string | string[];
   properties?: Record<string, JsonSchema>;
+  propertyNames?: JsonSchema;
+  additionalProperties?: JsonSchema | boolean;
   required?: string[];
   items?: JsonSchema | JsonSchema[];
   anyOf?: JsonSchema[];
@@ -64,6 +67,8 @@ export type FieldNode =
   | (Meta & { kind: "object"; fields: { key: string; required: boolean; node: FieldNode }[] })
   | (Meta & { kind: "nullable"; inner: FieldNode })
   | (Meta & { kind: "array"; item: FieldNode; minItems?: number; maxItems?: number })
+  /** A record keyed by name (a plan's limits: { api_calls: 10000 }): rows of a name and a number or one-line string. */
+  | (Meta & { kind: "map"; keyPattern?: string; keyMaxLength?: number; value: Extract<FieldNode, { kind: "number" | "string" }> })
   | (Meta & { kind: "json" });
 
 /** Longer than this and a string gets a textarea. */
@@ -174,6 +179,13 @@ export function toFieldNode(schema: JsonSchema, root: JsonSchema = schema, depth
       return { kind: "array", item: toFieldNode(item, root, depth + 1), minItems: s.minItems, maxItems: s.maxItems, ...m };
     }
     case "object": {
+      if (!s.properties && typeof s.additionalProperties === "object") {
+        const value = toFieldNode(s.additionalProperties, root, depth + 1);
+        const names = s.propertyNames ? resolveRef(s.propertyNames, root) : {};
+        if (value.kind === "number" || (value.kind === "string" && !value.multiline)) {
+          return { kind: "map", keyPattern: names.pattern, keyMaxLength: names.maxLength, value, ...m };
+        }
+      }
       if (!s.properties) return { kind: "json", ...m };
       const required = new Set(s.required ?? []);
       return {
@@ -214,6 +226,8 @@ export function defaultFor(node: FieldNode): unknown {
       return null;
     case "array":
       return Array.from({ length: node.minItems ?? 0 }, () => defaultFor(node.item));
+    case "map":
+      return {};
     case "json":
       return null;
   }

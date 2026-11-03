@@ -464,6 +464,7 @@ the site is still named OpenShipKit.
 | [Modules](docs/modules/README.md) | Opt-in AI, document search (RAG) and Redis, off until enabled |
 | [Security](docs/security.md) | The security model |
 | [Teams](docs/teams.md) | Organisations, roles, invitations (OPENSHIPKIT_TENANCY=org) |
+| [Usage and limits](docs/usage.md) | Plan limits, usage metering, metered prices on Polar or Stripe |
 | [Background jobs](docs/jobs.md) | The Postgres job queue: retries, email retries, adding a job |
 | [Observability](docs/observability.md) | Structured logs, optional self-hosted error tracking, health |
 | [Upgrading](docs/upgrading.md) | Pulling template updates, Next.js patches, Postgres majors |

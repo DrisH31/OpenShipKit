@@ -149,6 +149,7 @@ export const plans = pgTable(
     trialDays: integer("trial_days"),
     active: boolean("active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    limits: jsonb("limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
     updatedAt: updatedAt(),
   },
   (t) => [unique("plans_key_key").on(t.key), index("plans_sort_idx").on(t.sortOrder, t.key)],
@@ -394,6 +395,29 @@ export const orgInvitations = pgTable(
     uniqueIndex("org_invitations_open_key").on(t.orgId, t.email).where(sql`accepted_at is null and revoked_at is null`),
     index("org_invitations_org_idx").on(t.orgId, t.createdAt),
     check("org_invitations_role_check", sql`${t.role} in ('admin', 'member')`),
+  ],
+);
+
+// ---------------------------------------------------------------- usage
+
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: id(),
+    // A user's or an organisation's id; not a foreign key, so history outlives either.
+    subjectType: text("subject_type").$type<"user" | "org">().notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    metric: text("metric").notNull(),
+    quantity: bigint("quantity", { mode: "number" }).notNull(),
+    key: text("key"),
+    occurredAt: ts("occurred_at").notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("usage_events_sum_idx").on(t.subjectType, t.subjectId, t.metric, t.occurredAt),
+    uniqueIndex("usage_events_key_key").on(t.subjectType, t.subjectId, t.key).where(sql`key is not null`),
+    check("usage_events_subject_check", sql`${t.subjectType} in ('user', 'org')`),
+    check("usage_events_quantity_check", sql`${t.quantity} >= 0`),
   ],
 );
 

@@ -94,6 +94,10 @@ export function checkProductionEnv(): void {
       if (!env(name)) fatal.push(`BILLING_PROVIDER is ${paid} but ${name} is not set (docs/billing.md).`);
     }
   }
+  // Metered metrics with no meters to send them to: counted and limited here, never charged.
+  if (env("BILLING_METERED_METRICS") && paid !== "polar" && paid !== "stripe") {
+    log.warn("openshipkit", `BILLING_METERED_METRICS is set but billing is ${paid ?? "off"}: usage is counted here and never reported. Metered prices need Polar or Stripe (docs/usage.md).`);
+  }
   // Uploads in a bucket: every variable it needs, now rather than at the first upload.
   if (rule(() => resolveMediaStorage(process.env)) === "s3") {
     for (const name of ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]) {

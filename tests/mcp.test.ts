@@ -148,7 +148,7 @@ describe("tool registry", () => {
       "plans_list", "plan_get", "plan_upsert", "plan_update", "plan_delete",
       "feedback_list", "feedback_update", "audit_list", "audit_restore", "render_markdown_preview",
       "users_list", "user_get", "user_set_role", "user_set_banned", "subscribers_list", "subscriber_unsubscribe",
-      "agent_keys_list", "agent_key_revoke",
+      "agent_keys_list", "agent_key_revoke", "usage_get",
     ]) expect(names.has(name), name).toBe(true);
   });
 
@@ -454,6 +454,7 @@ describe("plans", () => {
       { prices: [{ ...price, amountCents: 100 }] },
       { prices: [] },
       { trialDays: 30 },
+      { limits: { seats: 500 } },
     ]) {
       const refused = await call(writer, "plan_update", { key: "team", ...change });
       expect(refused.structuredContent, JSON.stringify(change)).toMatchObject(forbidden);
@@ -557,6 +558,19 @@ describe("admin tools", () => {
     expect(await authenticateMcp(rawKeys.get(reader.key.id)!)).toBeNull();
     const after = await ok<{ items: { id: string; active: boolean }[] }>(admin, "agent_keys_list");
     expect(after.items.find((k) => k.id === reader.key.id)?.active).toBe(false);
+  });
+
+  it("usage_get reads one customer's usage against their plan's limits, admin only", async () => {
+    const identity = { provider: "better-auth" as const, providerUserId: "p2", email: "metered@example.com", name: "M", image: null, emailVerified: true };
+    const u = await store.users.upsertFromIdentity(identity, { makeAdmin: false });
+    for (const p of await store.plans.list({})) await store.plans.delete(p.key);
+    await store.plans.upsert({ key: "free", name: "Free", description: "", features: [], prices: [], highlighted: false, contactSales: false, ctaLabel: "Go", trialDays: null, active: true, sortOrder: 0, limits: { api_calls: 100 } });
+    await store.usage.record({ subject: { type: "user", id: u.id }, metric: "api_calls", quantity: 7, key: null });
+    const got = await ok<{ subject: { email: string }; plan: string; lines: unknown[] }>(admin, "usage_get", { user: "metered@example.com" });
+    expect(got).toMatchObject({ subject: { email: "metered@example.com" }, plan: "free", lines: [{ metric: "api_calls", used: 7, limit: 100 }] });
+    expect((await call(admin, "usage_get", {})).structuredContent).toMatchObject({ error: "invalid" });
+    expect((await call(admin, "usage_get", { user: "nobody@example.com" })).structuredContent).toMatchObject({ error: "not_found" });
+    expect((await call(writer, "usage_get", { user: "metered@example.com" })).structuredContent).toMatchObject({ error: "forbidden" });
   });
 
   it("manages the email list", async () => {

@@ -844,6 +844,44 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
       expect((await store.stats()).activeSubscriptions).toBe(base.activeSubscriptions + 3);
     });
 
+    // ------------------------------------------------------------ usage
+    describe("usage", () => {
+      const at = (iso: string) => new Date(iso).toISOString();
+      it("records, sums a metric over [from, to), totals every metric, and keeps subjects apart", async () => {
+        const u = await newUser();
+        const me = { type: "user" as const, id: u.id };
+        const other = { type: "org" as const, id: u.id }; // same id, different subject type
+        await store.usage.record({ subject: me, metric: "api_calls", quantity: 3, occurredAt: at("2026-11-01T00:00:00Z") });
+        await store.usage.record({ subject: me, metric: "api_calls", quantity: 4, occurredAt: at("2026-11-15T12:00:00Z") });
+        await store.usage.record({ subject: me, metric: "api_calls", quantity: 100, occurredAt: at("2026-12-01T00:00:00Z") }); // next period
+        await store.usage.record({ subject: me, metric: "emails", quantity: 2, occurredAt: at("2026-11-02T00:00:00Z") });
+        await store.usage.record({ subject: other, metric: "api_calls", quantity: 50, occurredAt: at("2026-11-02T00:00:00Z") });
+        expect(await store.usage.sum(me, "api_calls", at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z"))).toBe(7);
+        expect(await store.usage.totals(me, at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z"))).toEqual({ api_calls: 7, emails: 2 });
+        expect(await store.usage.sum(other, "api_calls", at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z"))).toBe(50);
+        expect(await store.usage.sum(me, "nothing", at("2026-11-01T00:00:00Z"), at("2026-12-01T00:00:00Z"))).toBe(0);
+      });
+
+      it("records once per key per subject, and refuses a negative or fractional quantity", async () => {
+        const me = { type: "user" as const, id: (await newUser()).id };
+        const first = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, key: "req_1" });
+        const again = await store.usage.record({ subject: me, metric: "api_calls", quantity: 1, key: "req_1" });
+        expect(first.created).toBe(true);
+        expect(again).toMatchObject({ created: false, event: { id: first.event.id } });
+        const now = new Date();
+        expect(await store.usage.sum(me, "api_calls", new Date(now.getTime() - 60_000).toISOString(), new Date(now.getTime() + 60_000).toISOString())).toBe(1);
+        await expectDataError(store.usage.record({ subject: me, metric: "api_calls", quantity: -1 }), "invalid");
+        await expectDataError(store.usage.record({ subject: me, metric: "api_calls", quantity: 1.5 }), "invalid");
+      });
+
+      it("stores a plan's limits", async () => {
+        const saved = await store.plans.upsert({ ...plan(uniq("lim-")), limits: { api_calls: 1000, seats: 5 } });
+        expect(saved.limits).toEqual({ api_calls: 1000, seats: 5 });
+        expect((await store.plans.getByKey(saved.key))?.limits).toEqual({ api_calls: 1000, seats: 5 });
+        expect((await store.plans.upsert(plan(uniq("nolim-")))).limits).toEqual({});
+      });
+    });
+
     // ------------------------------------------------------------ organisations
     describe("organisations", () => {
       const days = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
@@ -1147,7 +1185,7 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
 // ---------------------------------------------------------------- SQL-only behaviour
 
 /** Every app table (not the auth_* ones), for truncating between tests. */
-export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log", "jobs", "org_invitations", "org_members", "orgs"] as const;
+export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log", "jobs", "org_invitations", "org_members", "orgs", "usage_events"] as const;
 
 /** Empty every app table. For a throwaway test database only. */
 export async function truncateAppTables(db: Db): Promise<void> {

@@ -61,7 +61,7 @@ function post(over: Partial<Post> = {}): Post {
 }
 
 const plans: Plan[] = [
-  { id: "1", key: "free", name: "Free", description: "", features: [], prices: [], highlighted: false, contactSales: false, ctaLabel: "Start", trialDays: null, active: true, sortOrder: 0, updatedAt: "" },
+  { id: "1", key: "free", name: "Free", description: "", features: [], prices: [], highlighted: false, contactSales: false, ctaLabel: "Start", trialDays: null, active: true, sortOrder: 0, limits: {}, updatedAt: "" },
   {
     id: "2",
     key: "pro",
@@ -77,10 +77,10 @@ const plans: Plan[] = [
     ctaLabel: "Upgrade",
     trialDays: 14,
     active: true,
-    sortOrder: 1,
+    sortOrder: 1, limits: {},
     updatedAt: "",
   },
-  { id: "3", key: "ent", name: "Enterprise", description: "", features: [], prices: [], highlighted: false, contactSales: true, ctaLabel: "Talk", trialDays: null, active: true, sortOrder: 2, updatedAt: "" },
+  { id: "3", key: "ent", name: "Enterprise", description: "", features: [], prices: [], highlighted: false, contactSales: true, ctaLabel: "Talk", trialDays: null, active: true, sortOrder: 2, limits: {}, updatedAt: "" },
 ];
 
 describe("pageMetadata", () => {

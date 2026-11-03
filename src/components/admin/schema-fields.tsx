@@ -17,6 +17,9 @@
 //            Rows keep a stable React key, so after a move or a remove focus
 //            follows the row (or lands on the nearest control that still
 //            works) and a polite status says where it went.
+//   map    → a record keyed by name (a plan's limits): one row per entry,
+//            a name and a value, with remove and "Add"; a blank name is a
+//            row still being typed and isn't saved
 //   nullable string/number → the same input, empty = null
 //   nullable object → "Include …" checkbox, then its fields
 //   json   → a raw JSON box for that subtree (never silently dropped)
@@ -606,6 +609,102 @@ function ArrayInput({ node, path, value, onChange, label }: Props & { node: Extr
   );
 }
 
+/** A record keyed by name: rows of name → value. Rows live in local state, so a half-typed name doesn't reorder or drop them. */
+function MapInput({ node, path, value, onChange, label }: Props & { node: Extract<FieldNode, { kind: "map" }> }) {
+  const ctx = useContext(EditorCtx);
+  const f = useField(path);
+  const rec = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  const [rows, setRows] = useState(() => Object.entries(rec).map(([k, v]) => ({ id: newRowKey(), name: k, value: v })));
+  const name = f.labelFor(label);
+  const hint = f.hint ?? node.description;
+  const headingId = useId();
+  const numeric = node.value.kind === "number";
+
+  const emit = (next: typeof rows) => {
+    setRows(next);
+    // Later rows win on a repeated name; the duplicate is flagged below.
+    onChange(path, Object.fromEntries(next.filter((r) => r.name.trim()).map((r) => [r.name.trim(), r.value])));
+  };
+  const seen = new Map<string, number>();
+  for (const r of rows) if (r.name.trim()) seen.set(r.name.trim(), (seen.get(r.name.trim()) ?? 0) + 1);
+
+  return (
+    <fieldset className="flex min-w-0 flex-col gap-3 rounded-lg border border-line p-4" aria-labelledby={headingId} aria-describedby={describedBy(hint && `${f.id}-hint`, f.messages.length > 0 && `${f.id}-err`)}>
+      <legend id={headingId} className="px-1 text-small font-semibold text-ink">
+        {name}
+      </legend>
+      {hint ? (
+        <p id={`${f.id}-hint`} className="-mt-1 text-caption text-ink-3">
+          {hint}
+        </p>
+      ) : null}
+      <Issues id={`${f.id}-err`} messages={f.messages} />
+      {rows.length === 0 ? <p className="text-caption text-ink-3">None yet.</p> : null}
+      <ul className="flex flex-col gap-3">
+        {rows.map((row, i) => {
+          const rowId = `${f.id}-row-${i}`;
+          const key = row.name.trim();
+          const messages = key ? messagesAt(ctx, [...path, key]) : [];
+          const dup = key && (seen.get(key) ?? 0) > 1;
+          return (
+            <li key={row.id} id={rowId} className="grid gap-2 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_auto] sm:items-end">
+              <div className="flex flex-col gap-1">
+                <label htmlFor={`${rowId}-name`} className="text-caption font-semibold text-ink-2">
+                  Name<span className="sr-only">, {i + 1}</span>
+                </label>
+                <Input
+                  id={`${rowId}-name`}
+                  value={row.name}
+                  maxLength={node.keyMaxLength}
+                  pattern={node.keyPattern}
+                  spellCheck={false}
+                  readOnly={f.readOnly}
+                  className="font-mono"
+                  aria-invalid={dup || messages.length ? true : undefined}
+                  onChange={(e) => emit(rows.map((r) => (r.id === row.id ? { ...r, name: e.target.value } : r)))}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor={`${rowId}-value`} className="text-caption font-semibold text-ink-2">
+                  Value<span className="sr-only">, {key || i + 1}</span>
+                </label>
+                <Input
+                  id={`${rowId}-value`}
+                  type={numeric ? "number" : "text"}
+                  inputMode={numeric ? "numeric" : undefined}
+                  step={numeric && node.value.kind === "number" && !node.value.integer ? "any" : 1}
+                  min={node.value.kind === "number" ? node.value.minimum : undefined}
+                  max={node.value.kind === "number" ? node.value.maximum : undefined}
+                  value={numeric ? (typeof row.value === "number" && Number.isFinite(row.value) ? row.value : "") : String(row.value ?? "")}
+                  readOnly={f.readOnly}
+                  aria-invalid={messages.length ? true : undefined}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    const next = numeric ? (raw === "" ? undefined : Number(raw)) : raw;
+                    emit(rows.map((r) => (r.id === row.id ? { ...r, value: next } : r)));
+                  }}
+                />
+              </div>
+              <Button type="button" variant="ghost" size="icon" className="size-11" disabled={f.readOnly} aria-label={`Remove ${key || `row ${i + 1}`}`} onClick={() => emit(rows.filter((r) => r.id !== row.id))}>
+                <Trash2Icon aria-hidden />
+              </Button>
+              {dup ? <p className="text-small text-danger sm:col-span-3">“{key}” is listed twice: only the last one is kept.</p> : null}
+              <div className="sm:col-span-3">
+                <Issues id={`${rowId}-err`} messages={messages} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <div>
+        <Button type="button" variant="outline" size="sm" disabled={f.readOnly} onClick={() => setRows([...rows, { id: newRowKey(), name: "", value: numeric ? 0 : "" }])}>
+          <PlusIcon aria-hidden /> Add
+        </Button>
+      </div>
+    </fieldset>
+  );
+}
+
 function ObjectInput({ node, path, value, onChange, label, nested = true }: Props & { node: Extract<FieldNode, { kind: "object" }>; nested?: boolean }) {
   const f = useField(path);
   const rec = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -692,6 +791,8 @@ export function FieldEditor(props: Props & { nested?: boolean }) {
       return <ObjectInput {...props} node={node} />;
     case "nullable":
       return <NullableInput {...props} node={node} />;
+    case "map":
+      return <MapInput {...props} node={node} />;
     case "json":
       return <JsonInput {...props} />;
   }

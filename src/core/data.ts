@@ -57,6 +57,8 @@ import type {
   PurchaseInput,
   Role,
   Stats,
+  UsageEvent,
+  UsageSubject,
   Subscriber,
   SubscriberStatus,
   Subscription,
@@ -255,6 +257,18 @@ export interface OrgsRepo {
   acceptInvitation(id: string, userId: string, opts?: { seatLimit?: number | null }): Promise<{ invitation: OrgInvitation; member: OrgMember } | null>;
 }
 
+/**
+ * Usage events (src/server/services/usage.ts): append-only. A `key` makes recording idempotent
+ * per subject: the same key twice records once (`created: false`).
+ */
+export interface UsageRepo {
+  record(input: { subject: UsageSubject; metric: string; quantity: number; key?: string | null; occurredAt?: string }): Promise<{ event: UsageEvent; created: boolean }>;
+  /** The total quantity for one metric in [from, to). */
+  sum(subject: UsageSubject, metric: string, from: string, to: string): Promise<number>;
+  /** Every metric's total in [from, to). */
+  totals(subject: UsageSubject, from: string, to: string): Promise<Record<string, number>>;
+}
+
 /** What JobsRepo.failAbandoned() records as the job's lastError. */
 export const ABANDONED_ERROR =
   "The lease on its last attempt ran out: the worker stopped, or was still running it. A late success is no longer recorded.";
@@ -308,6 +322,7 @@ export interface DataStore {
   audit: AuditRepo;
   jobs: JobsRepo;
   orgs: OrgsRepo;
+  usage: UsageRepo;
   stats(): Promise<Stats>;
   /** New accounts and subscribers per UTC day over the last `days` days (1–90), ending today. */
   growth(days: number, now?: Date): Promise<Growth>;

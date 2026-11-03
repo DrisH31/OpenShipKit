@@ -97,6 +97,9 @@ export const postCreateSchema = z.object({
 export const postUpdateSchema = z.object(postFields).partial();
 
 
+/** A usage metric's name: lower-case words joined by underscores. */
+export const METRIC_RE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+
 export const priceSchema = z.object({
   interval: z.enum(["month", "year", "one_time"]),
   amountCents: z.number().int().min(0).max(100_000_000),
@@ -119,8 +122,11 @@ export const planSchema = z.object({
   trialDays: z.number().int().min(1).max(365).nullable().default(null),
   active: z.boolean().default(true),
   sortOrder: z.number().int().min(0).max(1000).default(0),
+  limits: z
+    .record(z.string().regex(METRIC_RE, "Use lower-case words joined by underscores: api_calls").max(40), z.number().int().min(0).max(1_000_000_000))
+    .default({})
+    .describe("What the plan allows, by metric: { projects: 3, api_calls: 10000, seats: 5 }. A metric that isn't listed is unlimited."),
 });
-
 export const feedbackCreateSchema = z.object({
   kind: z.enum(["bug", "feature", "general", "contact"]),
   title: z.string().max(140).nullable().default(null),

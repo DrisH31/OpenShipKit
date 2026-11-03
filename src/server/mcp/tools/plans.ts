@@ -25,7 +25,7 @@ import { changesBilling, definedOnly, patchShape, requireScope } from "./shared"
 
 const planKey = slugSchema.describe("The plan's key, e.g. free, pro");
 
-const BILLING_CHANGE = "Changing a plan's prices, Polar product ids or trial";
+const BILLING_CHANGE = "Changing a plan's prices, provider ids, trial or limits";
 
 const PRICE_NOTE =
   "amountCents is what /pricing shows. What a customer is charged is set on the Polar product in polarProductId; if a price changed, the matching Polar product must be changed by someone with Polar access.";
@@ -34,7 +34,7 @@ export const plansList = defineTool({
   name: "plans_list",
   title: "List plans",
   description:
-    "List the pricing plans in display order, inactive ones included unless activeOnly is true. Each plan has key, name, description, features, prices (interval, amountCents, currency, polarProductId), highlighted, contactSales, ctaLabel, trialDays, active and sortOrder.",
+    "List the pricing plans in display order, inactive ones included unless activeOnly is true. Each plan has key, name, description, features, prices (interval, amountCents, currency, polarProductId), highlighted, contactSales, ctaLabel, trialDays, limits (by metric; unlisted = unlimited), active and sortOrder.",
   scope: "read",
   annotations: READ_ONLY,
   input: z.strictObject({ activeOnly: z.boolean().optional().describe("Only plans shown on /pricing; default false") }),
@@ -61,7 +61,7 @@ export const planUpsert = defineTool({
   name: "plan_upsert",
   title: "Create or replace a plan",
   description:
-    "Create a plan, or replace an existing one with the same key, from a complete definition. Fields you omit take their defaults (not the old values), so to change a few fields of an existing plan use plan_update. Prices: amountCents in minor units ($24.00 → 2400), at most one per interval (month, year, one_time); no prices = a free plan. Leave polarProductId null unless the person gave you the id. With a write key, prices and trialDays must match what is stored (none, for a new plan); setting or changing them needs an admin key. Returns the saved plan.",
+    "Create a plan, or replace an existing one with the same key, from a complete definition. Fields you omit take their defaults (not the old values), so to change a few fields of an existing plan use plan_update. Prices: amountCents in minor units ($24.00 → 2400), at most one per interval (month, year, one_time); no prices = a free plan. Leave polarProductId null unless the person gave you the id. limits: what the plan allows by metric ({ api_calls: 10000, projects: 3, seats: 5 }; a metric not listed is unlimited). With a write key, prices, trialDays and limits must match what is stored (none, for a new plan); setting or changing them needs an admin key. Returns the saved plan.",
   scope: "write",
   annotations: WRITE_IDEMPOTENT,
   input: z.strictObject(planSchema.shape),
@@ -78,17 +78,21 @@ export const planUpdate = defineTool({
   name: "plan_update",
   title: "Edit a plan",
   description:
-    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices or trialDays needs an admin key; a write key edits the copy, features, highlighted, contactSales, ctaLabel, active and sortOrder. Returns the saved plan.",
+    "Change some fields of an existing plan by key; fields you leave out keep their value. Top-level fields replace whole: to change one price, send the full prices array (read it with plan_get first); to edit one feature line, send the full features list. Changing prices, trialDays or limits needs an admin key; a write key edits the copy, features, highlighted, contactSales, ctaLabel, active and sortOrder. Returns the saved plan.",
   scope: "write",
   annotations: WRITE_IDEMPOTENT,
   input: z.strictObject({ key: planKey, ...patchShape(planFields) }),
   async run({ key, ...changes }, ctx) {
     const patch = definedOnly(changes);
     if (Object.keys(patch).length === 0) throw new ServiceError("invalid", "Pass at least one field to change");
-    if (patch.prices !== undefined || patch.trialDays !== undefined) {
+    if (patch.prices !== undefined || patch.trialDays !== undefined || patch.limits !== undefined) {
       const current = await getPlan(key);
       if (!current) throw new ServiceError("not_found", `No plan "${key}". plans_list shows the keys.`);
-      const next = { prices: patch.prices ?? current.prices, trialDays: patch.trialDays !== undefined ? patch.trialDays : current.trialDays };
+      const next = {
+        prices: patch.prices ?? current.prices,
+        trialDays: patch.trialDays !== undefined ? patch.trialDays : current.trialDays,
+        limits: patch.limits ?? current.limits,
+      };
       if (changesBilling(current, next)) requireScope(ctx, "admin", BILLING_CHANGE);
     }
     const plan = await patchPlan(key, patch, ctx.actor);

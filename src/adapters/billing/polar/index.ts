@@ -45,6 +45,7 @@ export interface PolarClient {
   };
   subscriptions: { get(id: string): Promise<models.Subscription> };
   orders: { get(id: string): Promise<models.Order> };
+  events: { ingest(body: models.EventsIngest): Promise<models.EventsIngestResponse> };
 }
 
 export interface PolarProviderOptions {
@@ -171,6 +172,12 @@ export function createPolarProvider(options: PolarProviderOptions = {}): Billing
     async createPortal({ customerId, returnUrl }) {
       const session = await polar().customerSessions.create({ customer_id: customerId, return_url: returnUrl });
       return { url: session.customer_portal_url };
+    },
+
+    // A Polar meter filters on the event name (the metric) and sums metadata.quantity. external_id
+    // makes a retried job a duplicate Polar skips, not a second charge.
+    async reportUsage({ id, customerId, metric, quantity, occurredAt }) {
+      await polar().events.ingest({ events: [{ name: metric, customer_id: customerId, external_id: id, timestamp: occurredAt, metadata: { quantity } }] });
     },
 
     async handleWebhook(request: Request) {

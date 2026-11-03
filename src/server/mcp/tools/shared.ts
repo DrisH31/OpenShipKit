@@ -10,7 +10,7 @@ import "server-only";
 import { z } from "zod";
 import { siteSchema } from "@/core/content";
 import { DEFAULT_CONTENT } from "@/content/defaults";
-import type { AgentScope, AuditEntry, Feedback, Plan, PlanPrice, Post, PostPatch } from "@/core/types";
+import type { AgentScope, AuditEntry, Feedback, Plan, PlanLimits, PlanPrice, Post, PostPatch } from "@/core/types";
 import { POST_KIND } from "@/lib/status";
 import { scopeAllows } from "@/server/services/agent-keys";
 import { RESTORABLE_ENTITIES } from "@/server/services/audit";
@@ -145,14 +145,22 @@ export function samePrices(a: readonly PlanPrice[], b: readonly PlanPrice[]): bo
   return left.every((k, i) => k === right[i]);
 }
 
+/** Two plans' limits are the same: the same metrics with the same numbers, in any order. A missing set (a plan saved before limits existed) is none. */
+export function sameLimits(a: PlanLimits | undefined, b: PlanLimits | undefined): boolean {
+  const left = Object.entries(a ?? {});
+  const right = b ?? {};
+  return left.length === Object.keys(right).length && left.every(([k, v]) => right[k] === v);
+}
+
 /**
  * Whether saving `next` over `current` (null = no such plan yet) changes what
- * a customer is charged or gets: its prices (amounts, intervals, Polar product
- * ids) or its trial. Copy, features, order and visibility don't.
+ * a customer is charged or gets: its prices (amounts, intervals, provider
+ * ids), its trial, or its limits (raising a quota or a seat cap gives
+ * something away). Copy, features, order and visibility don't.
  */
-export function changesBilling(current: Pick<Plan, "prices" | "trialDays"> | null, next: Pick<Plan, "prices" | "trialDays">): boolean {
-  if (!current) return next.prices.length > 0 || next.trialDays !== null;
-  return !samePrices(current.prices, next.prices) || current.trialDays !== next.trialDays;
+export function changesBilling(current: Pick<Plan, "prices" | "trialDays"> & { limits?: PlanLimits } | null, next: Pick<Plan, "prices" | "trialDays"> & { limits?: PlanLimits }): boolean {
+  if (!current) return next.prices.length > 0 || next.trialDays !== null || Object.keys(next.limits ?? {}).length > 0;
+  return !samePrices(current.prices, next.prices) || current.trialDays !== next.trialDays || !sameLimits(current.limits, next.limits);
 }
 
 /**

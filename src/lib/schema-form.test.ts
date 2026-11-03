@@ -53,6 +53,15 @@ describe("schema → form model", () => {
     expect(trial).toMatchObject({ kind: "nullable", inner: { kind: "number", integer: true } });
   });
 
+  it("maps a plan's limits to name → number rows, not a raw-JSON box", () => {
+    const node = nodeFor(planSchema);
+    if (node.kind !== "object") throw new Error("expected object");
+    const limits = node.fields.find((f) => f.key === "limits")?.node;
+    expect(limits).toMatchObject({ kind: "map", keyMaxLength: 40, value: { kind: "number", integer: true, minimum: 0 } });
+    expect(limits?.kind === "map" && new RegExp(limits.keyPattern ?? "").test("api_calls")).toBe(true);
+    expect(defaultFor(limits!)).toEqual({});
+  });
+
   it("a fresh plan from defaults passes once it has a key and a name", () => {
     const node = nodeFor(planSchema);
     const fresh = setAt(setAt(defaultFor(node), ["key"], "team"), ["name"], "Team");

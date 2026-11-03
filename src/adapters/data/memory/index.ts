@@ -26,6 +26,7 @@ import type {
   Purchase,
   Subscriber,
   Subscription,
+  UsageEvent,
   User,
 } from "@/core/types";
 import { grantsAccess, growthDays } from "@/core/types";
@@ -50,6 +51,7 @@ interface Tables {
   /** `${orgId}:${userId}` → membership (role and when it began). */
   orgMembers: Map<string, { orgId: string; userId: string; role: OrgRole; joinedAt: string }>;
   invitations: Map<string, OrgInvitation & { tokenHash: string }>;
+  usage: UsageEvent[];
 }
 
 const now = () => new Date().toISOString();
@@ -91,11 +93,12 @@ function freshTables(): Tables {
     orgs: new Map(),
     orgMembers: new Map(),
     invitations: new Map(),
+    usage: [],
   };
   const stamp = now();
   for (const p of SEED.plans) {
     const id = randomUUID();
-    t.plans.set(p.key, { ...clone(p), id, updatedAt: stamp });
+    t.plans.set(p.key, { ...clone(p), limits: clone(p.limits ?? {}), id, updatedAt: stamp });
   }
   for (const p of SEED.posts) {
     const id = randomUUID();
@@ -344,7 +347,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       },
       async upsert(input) {
         const existing = t.plans.get(input.key);
-        const plan: Plan = { ...clone(input), id: existing?.id ?? randomUUID(), updatedAt: now() };
+        const plan: Plan = { ...clone(input), limits: clone(input.limits ?? {}), id: existing?.id ?? randomUUID(), updatedAt: now() };
         t.plans.set(plan.key, plan);
         return clone(plan);
       },
@@ -530,6 +533,34 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
           .filter((e) => !entityId || e.entityId === entityId)
           .sort(byDesc((e) => e.createdAt));
         return paginate(rows.map(clone), limit, cursor);
+      },
+    },
+
+    usage: {
+      async record({ subject, metric, quantity, key = null, occurredAt }) {
+        if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
+        if (occurredAt !== undefined && Number.isNaN(Date.parse(occurredAt))) throw new DataError("invalid", `occurredAt is not a valid date: "${occurredAt}"`);
+        if (key !== null) {
+          const seen = t.usage.find((e) => e.key === key && e.subject.type === subject.type && e.subject.id === subject.id);
+          if (seen) return { event: clone(seen), created: false };
+        }
+        const event: UsageEvent = { id: randomUUID(), subject: { ...subject }, metric, quantity, key, occurredAt: occurredAt ? new Date(occurredAt).toISOString() : now() };
+        t.usage.push(event);
+        return { event: clone(event), created: true };
+      },
+      async sum(subject, metric, from, to) {
+        return t.usage
+          .filter((e) => e.subject.type === subject.type && e.subject.id === subject.id && e.metric === metric && e.occurredAt >= new Date(from).toISOString() && e.occurredAt < new Date(to).toISOString())
+          .reduce((n, e) => n + e.quantity, 0);
+      },
+      async totals(subject, from, to) {
+        const out: Record<string, number> = {};
+        for (const e of t.usage) {
+          if (e.subject.type !== subject.type || e.subject.id !== subject.id) continue;
+          if (e.occurredAt < new Date(from).toISOString() || e.occurredAt >= new Date(to).toISOString()) continue;
+          out[e.metric] = (out[e.metric] ?? 0) + e.quantity;
+        }
+        return out;
       },
     },
 

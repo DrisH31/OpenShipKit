@@ -116,13 +116,18 @@ export type Seats = { limit: number | null; used: number };
 
 /**
  * Seats in use (members plus open invitations) and the limit: the seats bought on its live per-seat
- * subscription, or null when it has none (free, or a flat price), which means no limit.
+ * subscription; else its plan's `seats` limit (plan.limits, for a flat price or the free plan); else
+ * null, which means no limit.
  */
 export async function orgSeats(orgId: string): Promise<Seats> {
   const data = await getData();
   const [members, invitations, live] = await Promise.all([data.orgs.countMembers(orgId), data.orgs.listInvitations(orgId), liveOrgSubscriptions(orgId)]);
+  const used = members + invitations.length;
   const bought = live.map((s) => s.seats).filter((n): n is number => typeof n === "number");
-  return { limit: bought.length ? Math.max(...bought) : null, used: members + invitations.length };
+  if (bought.length) return { limit: Math.max(...bought), used };
+  // Loaded here, not at the top: ./usage reads billing, which reads this module.
+  const { limitContext, limitOf } = await import("./usage");
+  return { limit: limitOf(await limitContext({ type: "org", id: orgId }), "seats"), used };
 }
 
 /** The seat limit to hand the store, which checks it atomically with the write (DataError "limit"). */

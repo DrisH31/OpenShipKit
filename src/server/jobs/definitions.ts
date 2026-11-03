@@ -6,6 +6,7 @@
 
 import type { JobDefinition } from "./define";
 import { emailJob } from "./email";
+import { usageReportJob } from "./usage-report";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a heterogeneous list; each definition checks its own payload
-export const JOB_DEFINITIONS: readonly JobDefinition<any>[] = [emailJob];
+export const JOB_DEFINITIONS: readonly JobDefinition<any>[] = [emailJob, usageReportJob];

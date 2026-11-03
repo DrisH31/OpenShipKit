@@ -118,6 +118,16 @@ export function adminEmails(): string[] {
     .filter(Boolean);
 }
 
+/** BILLING_METERED_METRICS: the usage metrics reported to the billing provider's meters (docs/usage.md). */
+export function meteredMetrics(): Set<string> {
+  return new Set(
+    (read("BILLING_METERED_METRICS") ?? "")
+      .split(",")
+      .map((m) => m.trim())
+      .filter(Boolean),
+  );
+}
+
 export function emailFrom(): string {
   return read("EMAIL_FROM") ?? "OpenShipKit <onboarding@resend.dev>";
 }

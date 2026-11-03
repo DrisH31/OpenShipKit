@@ -47,6 +47,15 @@ delivers the message at most once. Retries stop after about eight minutes:
 sign-in and reset links expire, and a dead link arriving an hour later helps
 nobody.
 
+## Usage reports
+
+With `BILLING_METERED_METRICS` set, each recorded usage event of a listed metric
+queues a `usage.report` job that sends it to the Polar or Stripe meter
+([usage.md](usage.md#charging-for-usage-metered-prices)). It retries for about
+eight hours, which outlasts a provider outage, and our event id travels with it
+so the provider drops a repeat. A report that failed for good is in
+`/admin/jobs` to retry.
+
 ## Adding a job
 
 1. Define it in a file of its own under `src/server/jobs/`:

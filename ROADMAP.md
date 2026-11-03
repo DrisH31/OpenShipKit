@@ -74,6 +74,12 @@ the sandbox steps are in docs/billing.md and docs/content.md.
 
 ## Phase 4: Usage and limits
 
+Status: done (November 2026). Limits are declared per plan and edited as rows
+in /admin/plans; usage is counted in `usage_events` per billing period and shown
+on the billing page and through MCP (`usage_get`). Metered metrics are reported
+to Polar or Stripe meters by a background job, idempotent by event id; neither
+was run against a live provider here (docs/usage.md has the setup).
+
 | # | Item |
 |---|---|
 | 4.1 | Plan limits declared on the plan (`limits: { seats, projects, … }`) and checked by `requireWithinLimit()` |

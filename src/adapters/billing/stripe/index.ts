@@ -39,6 +39,7 @@ export interface StripeClient {
   billingPortal: { sessions: { create(params: Stripe.BillingPortal.SessionCreateParams): Promise<{ url: string }> } };
   subscriptions: { retrieve(id: string): Promise<Stripe.Subscription> };
   paymentIntents: { retrieve(id: string, params?: Stripe.PaymentIntentRetrieveParams): Promise<Stripe.PaymentIntent> };
+  billing: { meterEvents: { create(params: Stripe.Billing.MeterEventCreateParams, options?: Stripe.RequestOptions): Promise<unknown> } };
   webhooks: { constructEventAsync(payload: string, header: string, secret: string): Promise<Stripe.Event> };
 }
 
@@ -172,6 +173,16 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
     async createPortal({ customerId, returnUrl }) {
       const session = await stripe().billingPortal.sessions.create({ customer: customerId, return_url: returnUrl });
       return { url: session.url };
+    },
+
+    // A Stripe meter's event_name is the metric; it sums payload.value per stripe_customer_id.
+    // identifier makes a retried job a duplicate Stripe drops (within its 24-hour window), and the
+    // request's idempotency key covers a retry of the same request.
+    async reportUsage({ id, customerId, metric, quantity, occurredAt }) {
+      await stripe().billing.meterEvents.create(
+        { event_name: metric, identifier: id, timestamp: Math.floor(Date.parse(occurredAt) / 1000), payload: { stripe_customer_id: customerId, value: String(quantity) } },
+        { idempotencyKey: `usage-${id}` },
+      );
     },
 
     async handleWebhook(request: Request) {

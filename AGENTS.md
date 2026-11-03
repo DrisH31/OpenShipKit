@@ -168,6 +168,11 @@ pricing), or `await hasPlan(user.id, ["pro"])` for a yes/no. With teams on (OPEN
 `requirePlan` checks the current organisation's plan (`hasOrgPlan`), and a personal plan still counts.
 Both read webhook-written rows only. Never trust `?success=1` or the client.
 
+### Limit a feature by plan
+1. Declare the limit on the plan (`limits: { projects: 3 }`, in /admin/plans or `plan_update` with an admin key). A metric not listed is unlimited.
+2. Before the work: `await requireWithinLimit(await usageSubject(user), "projects", { current: <count now> })` from `src/server/services/usage.ts`; for metered usage, leave out `current` and after the work call `recordUsage(subject, "api_calls", 1, { key: requestId })`.
+3. The refusal is `ServiceError("conflict")` with `details.reason === "limit_reached"`; show its message. [docs/usage.md](docs/usage.md) covers periods, teams and metered prices (`BILLING_METERED_METRICS`).
+
 ## Environment
 
 `.env.example` lists every variable the app and its npm scripts read (the

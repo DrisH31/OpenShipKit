@@ -152,7 +152,7 @@ async function guardRestore(entryId: string, ctx: ToolContext): Promise<void> {
     return;
   }
   if (changesBilling(await getPlan(entry.entityId), restoring)) {
-    requireScope(ctx, "admin", "This restore changes what the plan charges (prices, Polar product ids or trial) and");
+    requireScope(ctx, "admin", "This restore changes what the plan charges (prices, provider ids, trial or limits) and");
   }
 }
 

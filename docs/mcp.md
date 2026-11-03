@@ -306,6 +306,7 @@ Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five p
 | `job_retry` | admin | Puts a failed job back in the queue, attempts reset. Audited. |
 | `orgs_list` | admin | Every organisation (teams on): name, slug, member count. Filter: `search`. |
 | `org_get` | admin | One organisation: members and roles, open invitations, seats, subscriptions. Read-only. |
+| `usage_get` | admin | One user's (or, with teams on, organisation's) usage this period against their plan's limits ([usage.md](usage.md)). |
 
 **Deliberately missing:** there is no tool that mints a key, deletes a user, sends an email, changes billing at Polar or reads a secret. Those stay with a person in /admin or at the provider.
 

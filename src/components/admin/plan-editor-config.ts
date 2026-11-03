@@ -22,6 +22,8 @@ export const PLAN_HINTS: Record<string, string> = {
   trialDays: "Empty means no trial.",
   active: "Inactive plans disappear from the pricing page; existing customers keep them.",
   sortOrder: "Lower numbers show first.",
+  limits:
+    "What this plan allows, by metric: api_calls 10000 (a month), projects 3, seats 5. A metric not listed is unlimited. Names are lower-case words joined by underscores, and the app checks them with requireWithinLimit (docs/usage.md).",
 };
 
 export const PLAN_LABELS: Record<string, string> = {
@@ -31,6 +33,7 @@ export const PLAN_LABELS: Record<string, string> = {
   "prices.*.stripePriceId": "Stripe price id",
   "prices.*.razorpayPlanId": "Razorpay plan id",
   ctaLabel: "Button label",
+  limits: "Limits",
   contactSales: "Contact sales instead of checkout",
   highlighted: "Highlight this plan",
 };

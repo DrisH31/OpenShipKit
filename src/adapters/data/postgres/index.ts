@@ -42,6 +42,7 @@ import {
   type Stats,
   type Subscriber,
   type Subscription,
+  type UsageEvent,
   type User,
 } from "@/core/types";
 import { getDrizzle, type Db } from "./db";
@@ -60,6 +61,7 @@ import {
   purchases,
   subscribers,
   subscriptions,
+  usageEvents,
   users,
   webhookEvents,
 } from "./schema";
@@ -229,6 +231,7 @@ const toPlan = (r: PlanRow): Plan => ({
   trialDays: r.trialDays,
   active: r.active,
   sortOrder: r.sortOrder,
+  limits: r.limits ?? {},
   updatedAt: iso(r.updatedAt),
 });
 
@@ -722,6 +725,7 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           trialDays: input.trialDays,
           active: input.active,
           sortOrder: input.sortOrder,
+          limits: input.limits ?? {},
         };
         const [row] = await write(`plan "${input.key}"`, () =>
           db()
@@ -1037,6 +1041,71 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
           .limit(size + 1);
         return toPage(rows, size, (r) => r.createdAt, toAudit);
+      },
+    },
+
+    // ------------------------------------------------------------ usage
+    usage: {
+      async record({ subject, metric, quantity, key = null, occurredAt }) {
+        if (!Number.isInteger(quantity) || quantity < 0) throw new DataError("invalid", "quantity must be a whole number of at least 0");
+        if (!isUuid(subject.id)) throw new DataError("invalid", `No ${subject.type} ${subject.id}`);
+        const values = { subjectType: subject.type, subjectId: subject.id, metric, quantity, key, ...(occurredAt ? { occurredAt: toDate(occurredAt, "occurredAt")! } : {}) };
+        const toEvent = (r: typeof usageEvents.$inferSelect): UsageEvent => ({
+          id: r.id,
+          subject: { type: r.subjectType, id: r.subjectId },
+          metric: r.metric,
+          quantity: Number(r.quantity),
+          key: r.key,
+          occurredAt: iso(r.occurredAt),
+        });
+        if (key === null) {
+          const [row] = await write("usage event", () => db().insert(usageEvents).values(values).returning());
+          return { event: toEvent(row), created: true };
+        }
+        const [row] = await db()
+          .insert(usageEvents)
+          .values(values)
+          .onConflictDoNothing({ target: [usageEvents.subjectType, usageEvents.subjectId, usageEvents.key], where: sql`key is not null` })
+          .returning();
+        if (row) return { event: toEvent(row), created: true };
+        const [existing] = await db()
+          .select()
+          .from(usageEvents)
+          .where(and(eq(usageEvents.subjectType, subject.type), eq(usageEvents.subjectId, subject.id), eq(usageEvents.key, key)))
+          .limit(1);
+        return { event: toEvent(existing), created: false };
+      },
+      async sum(subject, metric, from, to) {
+        if (!isUuid(subject.id)) return 0;
+        const [row] = await db()
+          .select({ n: sql<string | number | null>`coalesce(sum(${usageEvents.quantity}), 0)` })
+          .from(usageEvents)
+          .where(
+            and(
+              eq(usageEvents.subjectType, subject.type),
+              eq(usageEvents.subjectId, subject.id),
+              eq(usageEvents.metric, metric),
+              sql`${usageEvents.occurredAt} >= ${toDate(from, "from")}`,
+              sql`${usageEvents.occurredAt} < ${toDate(to, "to")}`,
+            ),
+          );
+        return Number(row?.n ?? 0);
+      },
+      async totals(subject, from, to) {
+        if (!isUuid(subject.id)) return {};
+        const rows = await db()
+          .select({ metric: usageEvents.metric, n: sql<string | number>`sum(${usageEvents.quantity})` })
+          .from(usageEvents)
+          .where(
+            and(
+              eq(usageEvents.subjectType, subject.type),
+              eq(usageEvents.subjectId, subject.id),
+              sql`${usageEvents.occurredAt} >= ${toDate(from, "from")}`,
+              sql`${usageEvents.occurredAt} < ${toDate(to, "to")}`,
+            ),
+          )
+          .groupBy(usageEvents.metric);
+        return Object.fromEntries(rows.map((r) => [r.metric, Number(r.n)]));
       },
     },
 

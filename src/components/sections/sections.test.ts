@@ -56,7 +56,7 @@ const plans: Plan[] = SEED_PLANS.map((p, i) => ({
   ctaLabel: p.ctaLabel ?? "Get started",
   trialDays: p.trialDays ?? null,
   active: true,
-  sortOrder: i,
+  sortOrder: i, limits: {},
   updatedAt: "2026-10-06T00:00:00.000Z",
 }));
 const byKey = (k: string) => plans.find((p) => p.key === k)!;

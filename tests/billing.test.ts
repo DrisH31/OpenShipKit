@@ -282,6 +282,7 @@ function fakePolar() {
         return o;
       }),
     },
+    events: { ingest: vi.fn(async (body: { events: unknown[] }) => ({ inserted: body.events.length })) },
   } satisfies PolarClient;
   return { state, client };
 }

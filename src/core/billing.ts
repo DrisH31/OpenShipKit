@@ -58,6 +58,9 @@ export interface CheckoutInput {
   cancelUrl: string;
 }
 
+/** One usage event as a provider receives it (BillingProvider.reportUsage). */
+export type UsageReport = { id: string; customerId: string; metric: string; quantity: number; occurredAt: string };
+
 export interface BillingProvider {
   readonly id: Exclude<BillingProviderId, "none">;
   readonly label: string;
@@ -74,6 +77,12 @@ export interface BillingProvider {
    * then hand its new state to the webhook sink, the same write path as a webhook.
    */
   cancelAtPeriodEnd?(providerSubscriptionId: string): Promise<void>;
+  /**
+   * For a provider with metered prices (Polar meters, Stripe meters): send one usage event for a
+   * customer. `id` is ours and stable across retries, so the provider drops a repeat. The meter on
+   * the provider's side must be named after (Stripe) or filter on (Polar) the metric.
+   */
+  reportUsage?(event: UsageReport): Promise<void>;
   /**
    * Verify the signature, then apply the event through the DataStore
    * (idempotent via billing.claimWebhookEvent). Returns the HTTP response the

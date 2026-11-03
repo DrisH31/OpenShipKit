@@ -94,7 +94,7 @@ const PLAN = (productIds: Partial<PlanPrice>): Plan =>
     ctaLabel: "Buy",
     trialDays: null,
     active: true,
-    sortOrder: 1,
+    sortOrder: 1, limits: {},
     updatedAt: "2026-01-01T00:00:00.000Z",
   }) as Plan;
 
@@ -351,5 +351,28 @@ describe.each([polar, stripe, razorpay])("billing adapter contract: $name", (h) 
     });
     expect(url).toMatch(/^https:\/\//);
     expect(a.lastCheckout()).toEqual({ userId: USER.id, planKey: "team", productId: h.productId, orgId: ORG, seats: 4 });
+  });
+});
+
+describe("reporting usage to a metered price", () => {
+  const report = { id: "evt-1", customerId: "cus_9", metric: "api_calls", quantity: 3, occurredAt: "2026-11-03T10:00:00.000Z" };
+
+  it("Polar: one event named after the metric, our id as external_id, the quantity in metadata", async () => {
+    const ingest = vi.fn(async () => ({ inserted: 1 }));
+    await createPolarProvider({ client: { events: { ingest } } as unknown as PolarClient, webhookSecret: polarSecret }).reportUsage!(report);
+    expect(ingest).toHaveBeenCalledWith({ events: [{ name: "api_calls", customer_id: "cus_9", external_id: "evt-1", timestamp: report.occurredAt, metadata: { quantity: 3 } }] });
+  });
+
+  it("Stripe: a meter event with our id as identifier and idempotency key, the value as a string", async () => {
+    const create = vi.fn(async () => ({}));
+    await createStripeProvider({ client: { billing: { meterEvents: { create } } } as unknown as StripeClient, webhookSecret: stripeSecret }).reportUsage!(report);
+    expect(create).toHaveBeenCalledWith(
+      { event_name: "api_calls", identifier: "evt-1", timestamp: Math.floor(Date.parse(report.occurredAt) / 1000), payload: { stripe_customer_id: "cus_9", value: "3" } },
+      { idempotencyKey: "usage-evt-1" },
+    );
+  });
+
+  it("Razorpay has no meters", () => {
+    expect(razorpay.make(recordingSink().sink).provider.reportUsage).toBeUndefined();
   });
 });

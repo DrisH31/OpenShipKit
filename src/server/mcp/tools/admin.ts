@@ -16,6 +16,7 @@ import { listAgentKeys, revokeAgentKey } from "@/server/services/agent-keys";
 import { listSubscribers, unsubscribe } from "@/server/services/community";
 import { ServiceError } from "@/server/services/errors";
 import { getUserDetail, listUsers, setUserBanned, setUserRole } from "@/server/services/users";
+import { usageSummary } from "@/server/services/usage";
 import { DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, defineTool } from "../types";
 import { paging, pagingShape } from "./shared";
 
@@ -204,4 +205,27 @@ export const orgGet = defineTool({
   },
 });
 
-export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke, jobsList, jobRetry, orgsList, orgGet];
+export const usageGet = defineTool({
+  name: "usage_get",
+  title: "Read usage against plan limits",
+  description:
+    "One customer's usage this period against their plan's limits: a user (by id or email) or, with teams on, an organisation (by id from orgs_list). Returns the plan whose limits apply (null = none), the period (from, to; monthly, on the renewal day or the 1st UTC), and one line per metric the plan limits or that was recorded: used and limit (null = unlimited). For a count limit (projects, seats) used is 0 here: the app keeps that count itself. Pass exactly one of user or orgId.",
+  scope: "admin",
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    user: z.string().min(1).max(254).optional().describe("A user id, or an email address"),
+    orgId: z.string().min(1).max(100).optional().describe("An organisation's id from orgs_list"),
+  }),
+  async run({ user, orgId }) {
+    if ((user === undefined) === (orgId === undefined)) throw new ServiceError("invalid", "Pass exactly one of user or orgId.");
+    if (orgId !== undefined) {
+      assertTeams();
+      const org = await adminGetOrg(orgId); // not_found for an unknown id
+      return { subject: { type: "org", id: org.org.id, name: org.org.name }, ...(await usageSummary({ type: "org", id: org.org.id })) };
+    }
+    const detail = await getUserDetail(user!);
+    return { subject: { type: "user", id: detail.user.id, email: detail.user.email }, ...(await usageSummary({ type: "user", id: detail.user.id })) };
+  },
+});
+
+export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke, jobsList, jobRetry, orgsList, orgGet, usageGet];

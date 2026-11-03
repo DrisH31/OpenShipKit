@@ -22,6 +22,9 @@
 //     ("Cancel your subscription first") instead of a button bound to fail, a
 //     second subscription says "switch in Manage billing", and a plan the
 //     person's purchases already cover (Pro under Lifetime) isn't offered.
+//   - Usage: this period's usage against the plan's limits (usageSummary), for
+//     the person or, with teams on, the organisation. A count limit (projects,
+//     seats) shows its limit only: the app keeps that count, not the usage table.
 //   - Under OPENSHIPKIT_PROFILE=site there is no Billing page: a 404.
 //
 
@@ -51,6 +54,8 @@ import { priceIdFor, type PaidProviderId } from "@/core/billing";
 import { listPlans } from "@/server/services/plans";
 import { getUserDetail } from "@/server/services/users";
 import { formatPrice } from "@/shared/money";
+import { usageSummary, type UsageLine } from "@/server/services/usage";
+import { humanize } from "@/lib/schema-form";
 
 export const metadata: Metadata = { title: "Billing" };
 
@@ -171,6 +176,34 @@ function PlanOption({ plan, plans, current, provider, refuse }: { plan: Plan; pl
   );
 }
 
+/** One metric this period: "7 of 100", with a meter when it's limited and metered. */
+function UsageRow({ line }: { line: UsageLine }) {
+  const metered = line.used > 0 || line.limit === null;
+  const full = line.limit !== null && line.used >= line.limit;
+  return (
+    <li className="flex flex-col gap-1.5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-small">
+        <span className="text-ink">{humanize(line.metric)}</span>
+        <span className="tabular text-ink-2">
+          {line.limit === null ? `${line.used.toLocaleString("en-US")} · no limit` : metered ? `${line.used.toLocaleString("en-US")} of ${line.limit.toLocaleString("en-US")}` : `Up to ${line.limit.toLocaleString("en-US")}`}
+        </span>
+      </div>
+      {line.limit !== null && metered ? (
+        <meter
+          min={0}
+          max={line.limit}
+          value={Math.min(line.used, line.limit)}
+          low={line.limit * 0.8}
+          high={line.limit * 0.95}
+          optimum={0}
+          aria-label={`${humanize(line.metric)}: ${line.used} of ${line.limit} used${full ? ", the limit" : ""}`}
+          className="h-2 w-full"
+        />
+      ) : null}
+    </li>
+  );
+}
+
 export default async function BillingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   // OPENSHIPKIT_PROFILE=site: no billing, so no Billing page (a 404 in the dashboard's frame).
   requireSaasProfile();
@@ -208,7 +241,11 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
   const showPortal = orgView ? await paysForAnything(user) : null;
 
   // A provider with no portal (Razorpay): the page lists what can be cancelled instead of Manage billing.
-  const [hasPortal, cancellable] = await Promise.all([billingHasPortal(), listCancellable(user)]);
+  const [hasPortal, cancellable, usage] = await Promise.all([
+    billingHasPortal(),
+    listCancellable(user),
+    usageSummary(orgView ? { type: "org", id: orgView.org.id } : { type: "user", id: user.id }),
+  ]);
 
   // Every plan, retired ones included, for names; only active plans are offered.
   const [detail, plans, billingOn, personalRefuse] = await Promise.all([
@@ -305,6 +342,23 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
       {/* Your plan across the top, then the plans side by side at the full width: three sit in one row
           on a desktop, and no column is left empty beside a short card. */}
       <PlanCard entitlement={entitlement} plan={plan} showLink={false} />
+      {usage.lines.length > 0 ? (
+        <section aria-labelledby="usage-title" className="flex flex-col gap-3 rounded-xl border border-line bg-card p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="usage-title" className="font-sans text-body font-semibold text-ink">
+              Usage
+            </h2>
+            <p className="text-caption text-ink-3">
+              Resets {formatDate(usage.period.to)}
+            </p>
+          </div>
+          <ul className="flex flex-col gap-4">
+            {usage.lines.map((line) => (
+              <UsageRow key={line.metric} line={line} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
       <section aria-labelledby="plans-title" className="flex flex-col gap-3">
         <h2 id="plans-title" className="font-sans text-body font-semibold text-ink">
           {subscribed ? "Plans" : "Upgrade"}
