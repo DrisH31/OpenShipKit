@@ -1,0 +1,23 @@
+# gitleaks (the Security workflow's secret scan): the default rules, minus
+# the places that hold made-up secrets on purpose. Allowlist a path here only
+# when every secret-shaped string in it is a fixture; a real key is never
+# fixed by adding it here, only by rotating it (docs/security.md).
+
+title = "OpenShipKit"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures: fake secrets that exist to be rejected, hashed or compared"
+paths = [
+  '''(^|/)tests/''',
+  '''\.test\.tsx?$''',
+]
+
+[[allowlists]]
+description = "Container image tags (name:version), not credentials"
+regexTarget = "line"
+regexes = [
+  '''image:\s*[a-z0-9./_-]+:[A-Za-z0-9._-]+''',
+]

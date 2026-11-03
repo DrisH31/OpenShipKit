@@ -28,6 +28,7 @@ bump rather than the thing holding the site together.
 | Threat | Defence | Where |
 |---|---|---|
 | Someone reaches a page they shouldn’t | `requireUser()` / `requireAdmin()` in every page **and** server action; the proxy is only a redirect convenience | `src/server/session.ts`, `src/proxy.ts` |
+| A guard someone forgot | `tests/authz.test.ts` parses every admin and dashboard page, server action and route handler and fails CI when one doesn't call its guard; a new route or public action must be listed with the reason it needs no session | `tests/authz.test.ts` |
 | Probing for the admin | `/admin` 404s for signed-in non-admins (signed out, it redirects to sign-in); disallowed in robots.txt | `requireAdmin()` |
 | Free access to paid features | entitlements only from signature-verified, re-fetched, idempotent Polar webhooks | `src/adapters/billing/` |
 | Bad or hostile input | every write is validated by a zod schema in a service; refusals are typed `ServiceError`s | `src/server/services/` |
