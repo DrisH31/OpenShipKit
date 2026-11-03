@@ -35,6 +35,17 @@ const VERBS: Record<string, string> = {
   "subscriber.unsubscribe": "Unsubscribed",
   "agent_key.create": "Minted",
   "agent_key.revoke": "Revoked",
+  "org.create": "Created",
+  "org.update": "Renamed",
+  "org.delete": "Deleted",
+  "org.invite": "Invited someone to",
+  "org.invite.revoke": "Withdrew an invitation to",
+  "org.join": "Joined",
+  "org.member.role": "Changed a role in",
+  "org.member.remove": "Removed someone from",
+  "org.member.leave": "Left",
+  "org.ownership.transfer": "Handed over",
+  "job.retry": "Retried",
   "demo.account": "Set up",
   "seed.run": "Added",
 };
@@ -48,6 +59,8 @@ const NOUN: Record<string, string> = {
   feedback: "feedback",
   subscriber: "subscriber",
   agent_key: "agent key",
+  org: "organisation",
+  job: "background job",
   demo_admin: "the read-only demo admin",
   seed: "the starter content",
 };
@@ -62,6 +75,8 @@ export const AUDIT_ENTITIES: { value: string; label: string }[] = [
   { value: "feedback", label: "Feedback" },
   { value: "subscriber", label: "Subscribers" },
   { value: "agent_key", label: "Agent keys" },
+  { value: "org", label: "Organisations" },
+  { value: "job", label: "Jobs" },
 ];
 
 function field(v: unknown, key: string): string | null {

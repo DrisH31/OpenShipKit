@@ -11,6 +11,7 @@ import "server-only";
 import { z } from "zod";
 import { emailSchema } from "@/core/schemas";
 import { jobCounts, listJobs, retryFailedJob } from "@/server/jobs";
+import { adminGetOrg, adminListOrgs, assertTeams } from "@/server/services/orgs";
 import { listAgentKeys, revokeAgentKey } from "@/server/services/agent-keys";
 import { listSubscribers, unsubscribe } from "@/server/services/community";
 import { ServiceError } from "@/server/services/errors";
@@ -174,4 +175,33 @@ export const jobRetry = defineTool({
   },
 });
 
-export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke, jobsList, jobRetry];
+export const orgsList = defineTool({
+  name: "orgs_list",
+  title: "List organisations",
+  description:
+    "Every organisation on the site (teams, OPENSHIPKIT_TENANCY=org), newest first: id, name, slug, members (a count), createdAt. Search by name or slug. Says teams are off when they are.",
+  scope: "admin",
+  annotations: READ_ONLY,
+  input: z.strictObject({ search: z.string().max(100).optional(), ...pagingShape }),
+  async run(args) {
+    assertTeams();
+    const page = await adminListOrgs({ search: args.search, ...paging(args) });
+    return { items: page.items, nextCursor: page.nextCursor };
+  },
+});
+
+export const orgGet = defineTool({
+  name: "org_get",
+  title: "Get an organisation",
+  description:
+    "One organisation by id (from orgs_list): its members with their role (owner | admin | member) and email, open invitations, seats in use and the seat limit (null = none), and its subscriptions. Personal data: use it for the task at hand only. Read-only: owners manage their organisation themselves.",
+  scope: "admin",
+  annotations: READ_ONLY,
+  input: z.strictObject({ id: z.string().min(1).max(100).describe("The organisation's id from orgs_list") }),
+  async run({ id }) {
+    assertTeams();
+    return { ...(await adminGetOrg(id)) };
+  },
+});
+
+export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke, jobsList, jobRetry, orgsList, orgGet];

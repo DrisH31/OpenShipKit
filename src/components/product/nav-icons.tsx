@@ -7,6 +7,7 @@
 import {
   ArrowLeftIcon,
   BotIcon,
+  Building2Icon,
   CreditCardIcon,
   FileTextIcon,
   HistoryIcon,
@@ -40,6 +41,7 @@ export const NAV_ICONS: Record<NavIcon, LucideIcon> = {
   media: ImageIcon,
   plans: TagIcon,
   subscribers: MailIcon,
+  orgs: Building2Icon,
   agents: BotIcon,
   jobs: ListChecksIcon,
   audit: HistoryIcon,

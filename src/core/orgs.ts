@@ -125,7 +125,7 @@ export function canManage(actor: OrgRole, target: OrgRole, newRole?: OrgRole): b
 }
 
 /** Paths (and everything under them) that exist only with teams on. */
-export const TEAM_ONLY_PATHS: readonly string[] = ["/dashboard/team", "/invite"];
+export const TEAM_ONLY_PATHS: readonly string[] = ["/dashboard/team", "/invite", "/admin/orgs"];
 
 /** Keep the items the tenancy serves: everything with teams on, no team-only path without them. */
 export function forTenancy<T extends { href: string }>(tenancy: Tenancy, items: readonly T[]): T[] {

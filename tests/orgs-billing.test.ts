@@ -77,6 +77,9 @@ async function person(label: string): Promise<User> {
   );
 }
 
+/** One instant for every webhook in a test: a redelivery must be identical, to the millisecond. */
+const PERIOD_END = new Date(Date.now() + 20 * 86_400_000).toISOString();
+
 /** What a verified Polar webhook for the organisation's subscription hands the sink. */
 async function webhookFor(buyer: User, org: Org | null, over: { seats?: number | null; status?: "active" | "canceled"; id?: string; cancelAtPeriodEnd?: boolean } = {}) {
   return billingWebhookSink.applySubscription({
@@ -91,7 +94,7 @@ async function webhookFor(buyer: User, org: Org | null, over: { seats?: number |
     seats: over.seats === undefined ? 3 : over.seats,
     interval: "month",
     status: over.status ?? "active",
-    currentPeriodEnd: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+    currentPeriodEnd: PERIOD_END,
     cancelAtPeriodEnd: over.cancelAtPeriodEnd ?? false,
   });
 }

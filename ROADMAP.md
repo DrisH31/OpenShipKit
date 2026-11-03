@@ -40,11 +40,14 @@ without the fix.
 
 ## Phase 2: Teams and organisations
 
-Status: 2.1–2.5 and 2.7 done. Organisations are app-owned tables behind the
+Status: Phase 2 done (November 2026). Organisations are app-owned tables behind the
 DataStore, not Better Auth's plugin, so they get the contract tests, the audit
 log and MCP like everything else. Billing per seat uses Polar's seat-based
 pricing; the subscription is billed to the owner who buys it (Polar keys
-customers by email). Next: 2.6.
+customers by email). Site admins see organisations read-only in /admin/orgs
+and through MCP (orgs_list, org_get); team actions are audited under the
+organisation's id. Not done: an org_id on audit rows for your own product's
+actions, which comes with the first product feature that needs it.
 
 | # | Item |
 |---|---|

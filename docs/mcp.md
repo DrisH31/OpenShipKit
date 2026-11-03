@@ -304,6 +304,8 @@ Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five p
 | `agent_key_revoke` | admin | Revokes a key by id. Refuses the key making the call. *Destructive.* |
 | `jobs_list` | admin | The background job queue with counts per status; failed jobs by default. Never the payloads. |
 | `job_retry` | admin | Puts a failed job back in the queue, attempts reset. Audited. |
+| `orgs_list` | admin | Every organisation (teams on): name, slug, member count. Filter: `search`. |
+| `org_get` | admin | One organisation: members and roles, open invitations, seats, subscriptions. Read-only. |
 
 **Deliberately missing:** there is no tool that mints a key, deletes a user, sends an email, changes billing at Polar or reads a secret. Those stay with a person in /admin or at the provider.
 

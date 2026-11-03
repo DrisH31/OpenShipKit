@@ -353,3 +353,24 @@ export async function orgsBlockingDeletion(userId: string): Promise<{ blocking: 
   }
   return { blocking, soleOwned };
 }
+
+// ---------------------------------------------------------------- the site admin's view
+
+/** Every organisation, for /admin and MCP (the site admin, not a member): newest first, with member counts. */
+export async function adminListOrgs(query: { search?: string; limit?: number; cursor?: string | null }) {
+  return (await getData()).orgs.list(query);
+}
+
+/** One organisation with its members, open invitations, subscriptions and seats, for /admin and MCP. */
+export async function adminGetOrg(orgId: string) {
+  const data = await getData();
+  const org = await data.orgs.get(orgId);
+  if (!org) throw new ServiceError("not_found", "No such organisation.");
+  const [members, invitations, subscriptions, seats] = await Promise.all([
+    data.orgs.listMembers(orgId),
+    data.orgs.listInvitations(orgId),
+    data.billing.listSubscriptions({ orgId, limit: 20 }),
+    orgSeats(orgId),
+  ]);
+  return { org, members, invitations, subscriptions: subscriptions.items, seats };
+}

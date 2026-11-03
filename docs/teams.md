@@ -105,7 +105,10 @@ checkout's metadata ties it to the organisation, and the webhook reads it from
 there. After an ownership transfer, the billing page and Manage billing say
 who manages payment, until that's changed in Polar.
 
-## What's next
+## For the site admin
 
-- **Admin and MCP.** Organisations in `/admin`, MCP tools, and the
-  organisation on audit rows (ROADMAP 2.6).
+`/admin/orgs` lists every organisation with its member count, and each one
+shows its members, open invitations, seats and subscription. It's read-only:
+owners run their own organisation, and the site admin isn't a member. Agents get
+the same view through MCP (`orgs_list`, `org_get`). Every team action is in
+`/admin/audit`, filtered by **Organisations**.
