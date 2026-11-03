@@ -28,6 +28,7 @@ import {
   resolveBillingProvider,
   resolveDataMode,
   resolveEmailProvider,
+  resolveMediaStorage,
   resolveProfile,
   weakAuthSecretReason,
 } from "@/server/env-rules";
@@ -91,6 +92,12 @@ export function checkProductionEnv(): void {
   if (paid && paid !== "none") {
     for (const name of [BILLING_KEYS[paid].key, BILLING_KEYS[paid].webhookSecret, ...(paid === "razorpay" ? ["RAZORPAY_KEY_SECRET"] : [])]) {
       if (!env(name)) fatal.push(`BILLING_PROVIDER is ${paid} but ${name} is not set (docs/billing.md).`);
+    }
+  }
+  // Uploads in a bucket: every variable it needs, now rather than at the first upload.
+  if (rule(() => resolveMediaStorage(process.env)) === "s3") {
+    for (const name of ["S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]) {
+      if (!env(name)) fatal.push(`MEDIA_STORAGE is s3 but ${name} is not set (docs/content.md#media-library).`);
     }
   }
   // The read-only demo admin (showcase only): half-configured, or a short password, is refused rather than silently off.

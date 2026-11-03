@@ -1,7 +1,10 @@
 import "server-only";
 
 //
-// Where uploaded images live: plain files under UPLOADS_DIR. The database
+// Where uploaded images live: plain files under UPLOADS_DIR, or, with
+// MEDIA_STORAGE=s3, objects in an S3-compatible bucket (src/adapters/media/s3,
+// through src/server/media-store.ts). Every function below checks the path
+// first, then works on the disk or the bucket; callers can't tell which. The database
 // stores URLs (posts.coverImage, Markdown bodies), never bytes — Postgres can
 // hold binaries but shouldn't here: pg_dump doubles them as hex, every read
 // holds a pool connection for the whole transfer, and a blob loses immutable
@@ -29,6 +32,7 @@ import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:
 import { join, resolve, sep } from "node:path";
 import { MEDIA_TYPES, MEDIA_URL_PREFIX, isMediaPath, mediaTypeOf, type MediaItem, type MediaType } from "@/core/media";
 import { optionalEnv } from "../env";
+import { getBucket } from "../media-store";
 
 /** The uploads root, absolute. Read per call (lazily), so the build needs no env. */
 export function uploadsRoot(): string {
@@ -61,6 +65,14 @@ function itemFor(path: string, size: number, mtime: Date): MediaItem | null {
 export async function writeMediaFile(bytes: Uint8Array, type: MediaType, now = new Date()): Promise<MediaItem> {
   const folder = `${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
   const path = `${folder}/${randomBytes(16).toString("hex")}.${MEDIA_TYPES[type]}`;
+  const bucket = await getBucket();
+  if (bucket) {
+    if (!isMediaPath(path)) throw new Error(`[media] generated an invalid path ${path}`);
+    const stored = await bucket.put(path, bytes, type);
+    const item = itemFor(path, stored.size, stored.modified);
+    if (!item) throw new Error(`[media] wrote an unservable path ${path}`);
+    return item;
+  }
   const file = resolveMediaFile(path);
   if (!file) throw new Error(`[media] generated an invalid path ${path}`);
   const dir = join(uploadsRoot(), folder);
@@ -82,6 +94,12 @@ export async function writeMediaFile(bytes: Uint8Array, type: MediaType, now = n
 
 /** One stored image's details, or null when there is no such file. */
 export async function statMedia(path: string): Promise<MediaItem | null> {
+  const bucket = await getBucket();
+  if (bucket) {
+    if (!isMediaPath(path)) return null;
+    const object = await bucket.head(path);
+    return object ? itemFor(path, object.size, object.modified) : null;
+  }
   const file = resolveMediaFile(path);
   if (!file) return null;
   try {
@@ -94,6 +112,13 @@ export async function statMedia(path: string): Promise<MediaItem | null> {
 
 /** A stored image's bytes and details, or null. For the public route. */
 export async function readMedia(path: string): Promise<{ item: MediaItem; bytes: Buffer } | null> {
+  const bucket = await getBucket();
+  if (bucket) {
+    if (!isMediaPath(path)) return null;
+    const got = await bucket.get(path);
+    const item = got ? itemFor(path, got.object.size, got.object.modified) : null;
+    return got && item ? { item, bytes: got.bytes } : null;
+  }
   const item = await statMedia(path);
   const file = resolveMediaFile(path);
   if (!item || !file) return null;
@@ -103,6 +128,8 @@ export async function readMedia(path: string): Promise<{ item: MediaItem; bytes:
 
 /** Remove a stored image. True when a file was removed. */
 export async function removeMediaFile(path: string): Promise<boolean> {
+  const bucket = await getBucket();
+  if (bucket) return isMediaPath(path) ? bucket.remove(path) : false;
   const file = resolveMediaFile(path);
   if (!file) return false;
   try {
@@ -131,6 +158,12 @@ async function names(dir: string, pattern: RegExp): Promise<string[]> {
  * is an empty library, not an error.
  */
 export async function listMediaFiles(): Promise<MediaItem[]> {
+  const bucket = await getBucket();
+  if (bucket) {
+    // Objects that aren't ours (a stray key under the prefix) are skipped, as stray files are on disk.
+    const items = (await bucket.list()).flatMap((o) => (isMediaPath(o.path) ? (itemFor(o.path, o.size, o.modified) ?? []) : []));
+    return items.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt) || b.path.localeCompare(a.path));
+  }
   const root = uploadsRoot();
   const out: MediaItem[] = [];
   for (const year of await names(root, /^\d{4}$/)) {

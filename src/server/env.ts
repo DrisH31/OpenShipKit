@@ -40,6 +40,7 @@ import {
   resolveEmailProvider,
   resolveProfile,
   resolveTenancy,
+  resolveMediaStorage,
   resolveSiteUrl,
   type DataMode,
 } from "./env-rules";
@@ -74,6 +75,11 @@ export function dataMode(): DataMode {
 /** OPENSHIPKIT_PROFILE: "saas" (default) or "site" (no pricing, billing or plans). Pass it down; never re-read env in a component. */
 export function siteProfile(): SiteProfile {
   return resolveProfile(process.env);
+}
+
+/** MEDIA_STORAGE: where uploaded images live (src/server/services/media-storage.ts). */
+export function mediaStorage(): "disk" | "s3" {
+  return resolveMediaStorage(process.env);
 }
 
 /** OPENSHIPKIT_TENANCY: "personal" (default) or "org" (teams). Pass it down; never re-read env in a component. */

@@ -127,6 +127,20 @@ post editor’s “Upload cover”.
   backup must take the folder with the database** — `deploy/backups/backup.sh`
   does both, with one timestamp ([data.md](data.md#uploads)). A restore of one
   without the other leaves broken images or orphaned files.
+- **Or a bucket.** Set `S3_BUCKET` (with `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`,
+  `S3_SECRET_ACCESS_KEY`, and `S3_REGION` when it isn't R2) and uploads go to
+  any S3-compatible store: Garage or MinIO on your own server, Cloudflare R2,
+  or AWS S3. Nothing else changes. The URLs stay `/uploads/…`, the app serves
+  the bytes with the same caching and security headers, and the bucket stays
+  private. It also lets several app replicas share one library, which a local
+  folder can't. Two things to know:
+  - `backup.sh` backs up the uploads **folder**, so with a bucket, back the
+    bucket up yourself (provider versioning or replication, or `rclone sync`
+    on a schedule). A database restored without its images is still a site of
+    broken images.
+  - To move an existing library, copy the folder's `yyyy/mm/…` tree into the
+    bucket under `S3_PREFIX` (`uploads/` by default), e.g.
+    `rclone copy /app/uploads remote:bucket/uploads`, then switch.
 - Agents: `media_list` and `media_upload` (up to 700 KB through MCP; no
   delete, no fetching from a URL) — [mcp.md](mcp.md).
 

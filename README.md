@@ -83,7 +83,7 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **MCP server** | 30+ tools over Streamable HTTP, scoped agent keys (read / write / admin), every write audited (reads update the key’s last-used time) |
 | **SEO** | Server-rendered pages, canonical URLs, JSON-LD, sitemap, RSS, `robots.txt` open to search and AI crawlers, `llms.txt` + `llms-full.txt`, generated OG images, optional IndexNow pings |
 | **Design system** | Tailwind 4 tokens, shadcn/ui on Base UI, CSS motion that honours `prefers-reduced-motion`; light + dark; WCAG 2.2 AA; one brand colour to change |
-| **Ops** | Dockerfile, docker compose with Caddy, health and liveness checks, background jobs in Postgres with retries (no Redis), JSON logs, optional error tracking (GlitchTip or any Sentry DSN, no SDK), smoke and end-to-end tests, backups of the database and uploads with restore rehearsal, CI with a real Postgres |
+| **Ops** | Uploads on your disk or any S3-compatible bucket (Garage, MinIO, R2, S3), Dockerfile, docker compose with Caddy, health and liveness checks, background jobs in Postgres with retries (no Redis), JSON logs, optional error tracking (GlitchTip or any Sentry DSN, no SDK), smoke and end-to-end tests, backups of the database and uploads with restore rehearsal, CI with a real Postgres |
 | **Opt-in modules** | AI chat and images behind spend controls, per-person document search (RAG on pgvector), Redis for more than one replica — tested, off until you enable one ([modules/](modules/README.md)) |
 
 ## How it works, in diagrams

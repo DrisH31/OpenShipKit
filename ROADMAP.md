@@ -60,6 +60,11 @@ actions, which comes with the first product feature that needs it.
 
 ## Phase 3: More providers
 
+Status: done (November 2026). Polar, Stripe and Razorpay pass one adapter
+contract with real signatures; uploads go to the disk or any S3-compatible
+bucket. Neither was run against a live Stripe, Razorpay or cloud bucket here:
+the sandbox steps are in docs/billing.md and docs/content.md.
+
 | # | Item |
 |---|---|
 | 3.1 | Stripe billing adapter behind `BillingProvider` (verified, re-fetched, idempotent webhooks, like Polar) |

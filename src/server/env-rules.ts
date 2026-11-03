@@ -45,6 +45,11 @@ export function resolveProfile(env: EnvRecord): SiteProfile {
   return oneOf(env, "OPENSHIPKIT_PROFILE", ["saas", "site"] as const, "saas");
 }
 
+/** MEDIA_STORAGE: disk (default: UPLOADS_DIR) | s3 (any S3-compatible bucket). Unset: s3 when S3_BUCKET is set. */
+export function resolveMediaStorage(env: EnvRecord): "disk" | "s3" {
+  return oneOf(env, "MEDIA_STORAGE", ["disk", "s3"] as const, readEnv(env, "S3_BUCKET") ? "s3" : "disk");
+}
+
 /** OPENSHIPKIT_TENANCY: personal (default: every account stands alone) | org (teams; src/core/orgs.ts). */
 export function resolveTenancy(env: EnvRecord): Tenancy {
   return oneOf(env, "OPENSHIPKIT_TENANCY", ["personal", "org"] as const, "personal");
