@@ -31,6 +31,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -39,6 +40,7 @@ import type {
   AuthProviderId,
   FeedbackKind,
   FeedbackStatus,
+  JobStatus,
   PlanPrice,
   PostKind,
   PostStatus,
@@ -321,6 +323,37 @@ export const auditLog = pgTable(
   (t) => [
     index("audit_log_created_idx").on(t.createdAt, t.id),
     index("audit_log_entity_created_idx").on(t.entity, t.entityId, t.createdAt, t.id),
+  ],
+);
+
+// ---------------------------------------------------------------- background jobs
+
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: id(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload"),
+    status: text("status").$type<JobStatus>().notNull().default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    runAt: ts("run_at").notNull().defaultNow(),
+    lockedUntil: ts("locked_until"),
+    lastError: text("last_error"),
+    key: text("key"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [
+    // What claim() scans: due work, oldest first. Partial, so finished rows don't bloat it.
+    index("jobs_due_idx").on(t.runAt, t.id).where(sql`status in ('queued', 'running')`),
+    // One unfinished job per key (enqueue's dedupe); finished jobs free the key.
+    uniqueIndex("jobs_key_unfinished_key").on(t.key).where(sql`key is not null and status in ('queued', 'running')`),
+    index("jobs_created_idx").on(t.createdAt, t.id),
+    index("jobs_finished_idx").on(t.finishedAt).where(sql`finished_at is not null`),
+    check("jobs_status_check", sql`status in ('queued', 'running', 'succeeded', 'failed')`),
+    check("jobs_attempts_check", sql`attempts >= 0 and max_attempts >= 1`),
   ],
 );
 

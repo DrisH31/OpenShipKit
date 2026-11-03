@@ -56,6 +56,7 @@ const ROUTES: Record<string, { guard: Guard; why?: string }> = {
   "src/app/api/forms/contact/route.ts": { guard: "public", why: "the public contact form: rate limited, Origin-checked" },
   "src/app/api/forms/newsletter/route.ts": { guard: "public", why: "the public newsletter form: rate limited, Origin-checked" },
   "src/app/api/health/route.ts": { guard: "public", why: "what uptime monitors read; says nothing about any person" },
+  "src/app/api/health/live/route.ts": { guard: "public", why: "liveness: answers without touching the database" },
   "src/app/api/indexnow/[key]/route.ts": { guard: "public", why: "the IndexNow key file search engines fetch" },
   "src/app/uploads/[...path]/route.ts": { guard: "public", why: "uploaded images are public media" },
   "src/app/llms.txt/route.ts": { guard: "public", why: "public site summary" },

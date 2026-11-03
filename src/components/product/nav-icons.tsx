@@ -13,6 +13,7 @@ import {
   HouseIcon,
   ImageIcon,
   LayoutGridIcon,
+  ListChecksIcon,
   MailIcon,
   MessageSquareIcon,
   PanelsTopLeftIcon,
@@ -38,6 +39,7 @@ export const NAV_ICONS: Record<NavIcon, LucideIcon> = {
   plans: TagIcon,
   subscribers: MailIcon,
   agents: BotIcon,
+  jobs: ListChecksIcon,
   audit: HistoryIcon,
   back: ArrowLeftIcon,
 };

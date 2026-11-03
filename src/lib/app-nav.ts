@@ -25,6 +25,7 @@ export type NavIcon =
   | "plans"
   | "subscribers"
   | "agents"
+  | "jobs"
   | "audit"
   | "back";
 
@@ -61,6 +62,7 @@ export const ADMIN_NAV: readonly NavItem[] = [
   { group: "Business", href: "/admin/feedback", label: "Feedback", icon: "feedback" },
   { group: "Business", href: "/admin/subscribers", label: "Subscribers", icon: "subscribers" },
   { group: "System", href: "/admin/agents", label: "Agent keys", icon: "agents" },
+  { group: "System", href: "/admin/jobs", label: "Jobs", icon: "jobs" },
   { group: "System", href: "/admin/audit", label: "Audit log", icon: "audit" },
   { group: "System", href: "/dashboard", label: "Back to dashboard", icon: "back", exact: true },
 ];

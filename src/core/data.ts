@@ -40,6 +40,10 @@ import type {
   FeedbackStatus,
   Growth,
   Identity,
+  Job,
+  JobCounts,
+  JobInput,
+  JobStatus,
   ListQuery,
   Page,
   Plan,
@@ -179,6 +183,38 @@ export interface AuditRepo {
   list(query: AuditQuery): Promise<Page<AuditEntry>>;
 }
 
+/**
+ * The background job queue (src/server/jobs). Claims are leases: a running
+ * job whose lockedUntil has passed is due again, so a crashed worker's jobs
+ * aren't lost. complete() and fail() take the attempt number from the claim
+ * and do nothing (null/false) when it no longer matches, so a worker whose
+ * lease expired can't overwrite the outcome of the worker that took over.
+ */
+export interface JobsRepo {
+  /** With a `key`, a queued or running job with the same key comes back instead (`created: false`). */
+  enqueue(input: JobInput): Promise<{ job: Job; created: boolean }>;
+  /**
+   * Up to `limit` due jobs, oldest runAt first, marked running with attempts + 1
+   * and lockedUntil = now + leaseMs. Concurrent claims never return the same job.
+   */
+  claim(input: { limit: number; leaseMs: number }): Promise<Job[]>;
+  /** Marks a claimed job succeeded. `dropPayload` nulls the payload. False when the claim is stale. */
+  complete(id: string, attempt: number, opts?: { dropPayload?: boolean }): Promise<boolean>;
+  /**
+   * Records a failed attempt: back to queued at `retryAt` while attempts < maxAttempts
+   * (and retryAt isn't null), else failed. Null when the claim is stale.
+   */
+  fail(id: string, attempt: number, input: { error: string; retryAt: string | null; dropPayload?: boolean }): Promise<Job | null>;
+  /** A failed job back to queued, due now, with its attempts reset. Null unless it is failed. */
+  retry(id: string): Promise<Job | null>;
+  get(id: string): Promise<Job | null>;
+  /** Newest first. */
+  list(query: ListQuery & { status?: JobStatus }): Promise<Page<Job>>;
+  counts(): Promise<JobCounts>;
+  /** Deletes succeeded and failed jobs that finished before `finishedBefore`; returns how many. */
+  prune(finishedBefore: string): Promise<number>;
+}
+
 export interface DataStore {
   readonly id: DataProviderId;
   /** Cheap round-trip; used by /api/health. */
@@ -192,6 +228,7 @@ export interface DataStore {
   subscribers: SubscribersRepo;
   agentKeys: AgentKeysRepo;
   audit: AuditRepo;
+  jobs: JobsRepo;
   stats(): Promise<Stats>;
   /** New accounts and subscribers per UTC day over the last `days` days (1–90), ending today. */
   growth(days: number, now?: Date): Promise<Growth>;

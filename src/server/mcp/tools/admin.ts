@@ -10,6 +10,7 @@ import "server-only";
 
 import { z } from "zod";
 import { emailSchema } from "@/core/schemas";
+import { jobCounts, listJobs, retryFailedJob } from "@/server/jobs";
 import { listAgentKeys, revokeAgentKey } from "@/server/services/agent-keys";
 import { listSubscribers, unsubscribe } from "@/server/services/community";
 import { ServiceError } from "@/server/services/errors";
@@ -137,4 +138,40 @@ export const agentKeyRevoke = defineTool({
   },
 });
 
-export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke];
+export const jobsList = defineTool({
+  name: "jobs_list",
+  title: "List background jobs",
+  description:
+    "The background job queue, newest first: id, kind (email.send …), status (queued | running | succeeded | failed), attempts of maxAttempts, runAt, lastError, finishedAt, plus counts per status and oldestDueAt (how far behind the runner is). Defaults to failed jobs: the ones that ran out of retries. Payloads are never returned (a queued email holds a live sign-in link).",
+  scope: "admin",
+  annotations: READ_ONLY,
+  input: z.strictObject({
+    status: z.enum(["queued", "running", "succeeded", "failed", "all"]).optional().describe("Default failed"),
+    ...pagingShape,
+  }),
+  async run(args) {
+    const status = args.status === "all" ? undefined : (args.status ?? "failed");
+    const [page, counts] = await Promise.all([listJobs({ status, ...paging(args) }), jobCounts()]);
+    return {
+      counts,
+      items: page.items.map(({ payload: _payload, ...job }) => job), // eslint-disable-line @typescript-eslint/no-unused-vars
+      nextCursor: page.nextCursor,
+    };
+  },
+});
+
+export const jobRetry = defineTool({
+  name: "job_retry",
+  title: "Retry a failed job",
+  description:
+    "Put a failed background job back in the queue by id (from jobs_list): it runs again within seconds with its attempts reset. Only for a failed job, and only once whatever made it fail is fixed (check lastError), or it fails the same way. Returns the job.",
+  scope: "admin",
+  annotations: WRITE_IDEMPOTENT,
+  input: z.strictObject({ id: z.string().min(1).max(100).describe("The job's id from jobs_list") }),
+  async run({ id }, ctx) {
+    const { payload: _payload, ...job } = await retryFailedJob(id, ctx.actor); // eslint-disable-line @typescript-eslint/no-unused-vars
+    return job;
+  },
+});
+
+export const ADMIN_TOOLS = [usersList, userGet, userSetRole, userSetBanned, subscribersList, subscriberUnsubscribe, agentKeysList, agentKeyRevoke, jobsList, jobRetry];

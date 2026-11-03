@@ -83,7 +83,7 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **MCP server** | 30+ tools over Streamable HTTP, scoped agent keys (read / write / admin), every write audited (reads update the key’s last-used time) |
 | **SEO** | Server-rendered pages, canonical URLs, JSON-LD, sitemap, RSS, `robots.txt` open to search and AI crawlers, `llms.txt` + `llms-full.txt`, generated OG images, optional IndexNow pings |
 | **Design system** | Tailwind 4 tokens, shadcn/ui on Base UI, CSS motion that honours `prefers-reduced-motion`; light + dark; WCAG 2.2 AA; one brand colour to change |
-| **Ops** | Dockerfile, docker compose with Caddy, health check, JSON logs, optional error tracking (GlitchTip or any Sentry DSN, no SDK), smoke and end-to-end tests, backups of the database and uploads with restore rehearsal, CI with a real Postgres |
+| **Ops** | Dockerfile, docker compose with Caddy, health and liveness checks, background jobs in Postgres with retries (no Redis), JSON logs, optional error tracking (GlitchTip or any Sentry DSN, no SDK), smoke and end-to-end tests, backups of the database and uploads with restore rehearsal, CI with a real Postgres |
 | **Opt-in modules** | AI chat and images behind spend controls, per-person document search (RAG on pgvector), Redis for more than one replica — tested, off until you enable one ([modules/](modules/README.md)) |
 
 ## How it works, in diagrams
@@ -463,6 +463,7 @@ the site is still named OpenShipKit.
 | [MCP](docs/mcp.md) | Agent keys, clients, tools |
 | [Modules](docs/modules/README.md) | Opt-in AI, document search (RAG) and Redis, off until enabled |
 | [Security](docs/security.md) | The security model |
+| [Background jobs](docs/jobs.md) | The Postgres job queue: retries, email retries, adding a job |
 | [Observability](docs/observability.md) | Structured logs, optional self-hosted error tracking, health |
 | [Upgrading](docs/upgrading.md) | Pulling template updates, Next.js patches, Postgres majors |
 | [Releasing](docs/releasing.md) | Branches, versions, tags; starting a site from a release |

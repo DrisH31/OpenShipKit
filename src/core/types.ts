@@ -310,6 +310,55 @@ export interface Subscriber {
  *  - write — read + edit and publish content, posts, plans, feedback
  *  - admin — write + users, roles, subscribers, agent keys
  */
+// ---------------------------------------------------------------- background jobs
+
+/**
+ * queued → running → succeeded, or back to queued with a later runAt after a
+ * failure, until maxAttempts; then failed (kept for inspection and a manual retry).
+ */
+export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface Job {
+  id: string;
+  /** Which handler runs it ("email.send"): src/server/jobs/registry.ts. */
+  kind: string;
+  /** The handler's input, as JSON. Null once a sensitive job has finished. */
+  payload: unknown;
+  status: JobStatus;
+  /** Claims so far, the current one included. */
+  attempts: number;
+  maxAttempts: number;
+  /** When it may next run. */
+  runAt: string;
+  /** While running: when the claim expires and another worker may take the job over. */
+  lockedUntil: string | null;
+  lastError: string | null;
+  /** Dedupes: one queued or running job per key. Null for none. */
+  key: string | null;
+  createdAt: string;
+  updatedAt: string;
+  finishedAt: string | null;
+}
+
+export interface JobInput {
+  kind: string;
+  payload: unknown;
+  /** Default now. */
+  runAt?: string;
+  /** Default 5. */
+  maxAttempts?: number;
+  key?: string | null;
+}
+
+export interface JobCounts {
+  queued: number;
+  running: number;
+  succeeded: number;
+  failed: number;
+  /** The runAt of the oldest queued job that is already due: how far behind the runner is. */
+  oldestDueAt: string | null;
+}
+
 export type AgentScope = "read" | "write" | "admin";
 
 export interface AgentKey {

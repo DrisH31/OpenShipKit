@@ -822,6 +822,139 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
       await add("past_due", daysAgo(PAST_DUE_GRACE_DAYS + 1)); // beyond the grace
       expect((await store.stats()).activeSubscriptions).toBe(base.activeSubscriptions + 3);
     });
+
+    // ------------------------------------------------------------ jobs
+    describe("jobs", () => {
+      const soon = (ms: number) => new Date(Date.now() + ms).toISOString();
+      const LEASE = 60_000;
+
+      it("enqueues with defaults, claims once, and a second claim finds nothing", async () => {
+        const { job, created } = await store.jobs.enqueue({ kind: "test.a", payload: { n: 1 } });
+        expect(created).toBe(true);
+        expect(job).toMatchObject({ kind: "test.a", payload: { n: 1 }, status: "queued", attempts: 0, maxAttempts: 5, lockedUntil: null, key: null, finishedAt: null });
+
+        const [claimed, ...rest] = await store.jobs.claim({ limit: 10, leaseMs: LEASE });
+        expect(rest).toEqual([]);
+        expect(claimed).toMatchObject({ id: job.id, status: "running", attempts: 1 });
+        expect(Date.parse(claimed.lockedUntil!)).toBeGreaterThan(Date.now() + LEASE / 2);
+        expect(await store.jobs.claim({ limit: 10, leaseMs: LEASE })).toEqual([]);
+      });
+
+      it("claims only due jobs, oldest runAt first, up to the limit", async () => {
+        const later = await store.jobs.enqueue({ kind: "test.b", payload: null, runAt: soon(60_000) });
+        const second = await store.jobs.enqueue({ kind: "test.b", payload: 2, runAt: soon(-1_000) });
+        const first = await store.jobs.enqueue({ kind: "test.b", payload: 1, runAt: soon(-5_000) });
+        const third = await store.jobs.enqueue({ kind: "test.b", payload: 3 });
+
+        expect((await store.jobs.claim({ limit: 2, leaseMs: LEASE })).map((j) => j.id)).toEqual([first.job.id, second.job.id]);
+        expect((await store.jobs.claim({ limit: 5, leaseMs: LEASE })).map((j) => j.id)).toEqual([third.job.id]);
+        expect((await store.jobs.get(later.job.id))?.status).toBe("queued");
+      });
+
+      it("completes a claim once, optionally dropping the payload, and refuses a stale attempt", async () => {
+        const { job } = await store.jobs.enqueue({ kind: "test.c", payload: { link: "https://example.com/reset?t=1" } });
+        const [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect(await store.jobs.complete(job.id, claimed.attempts + 1)).toBe(false);
+        expect(await store.jobs.complete(job.id, claimed.attempts, { dropPayload: true })).toBe(true);
+        expect(await store.jobs.complete(job.id, claimed.attempts)).toBe(false);
+        const done = await store.jobs.get(job.id);
+        expect(done).toMatchObject({ status: "succeeded", payload: null, lockedUntil: null });
+        expect(done?.finishedAt).not.toBeNull();
+      });
+
+      it("retries a failure at retryAt until maxAttempts, then fails it and drops a sensitive payload", async () => {
+        const { job } = await store.jobs.enqueue({ kind: "test.d", payload: { secret: 1 }, maxAttempts: 2 });
+        let [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        const retryAt = soon(-10);
+        const first = await store.jobs.fail(job.id, claimed.attempts, { error: "boom 1", retryAt, dropPayload: true });
+        expect(first).toMatchObject({ status: "queued", attempts: 1, lastError: "boom 1", payload: { secret: 1 }, lockedUntil: null, finishedAt: null });
+        expect(first?.runAt).toBe(new Date(retryAt).toISOString());
+
+        [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect(claimed.attempts).toBe(2);
+        const last = await store.jobs.fail(job.id, claimed.attempts, { error: "boom 2", retryAt: soon(1_000), dropPayload: true });
+        expect(last).toMatchObject({ status: "failed", attempts: 2, lastError: "boom 2", payload: null });
+        expect(last?.finishedAt).not.toBeNull();
+        expect(await store.jobs.fail(job.id, claimed.attempts, { error: "again", retryAt: null })).toBeNull();
+      });
+
+      it("fails at once when there's no retryAt, and retry() requeues a failed job from scratch", async () => {
+        const { job } = await store.jobs.enqueue({ kind: "test.e", payload: { keep: true } });
+        const [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect(await store.jobs.fail(job.id, claimed.attempts, { error: "permanent", retryAt: null })).toMatchObject({ status: "failed", payload: { keep: true } });
+        expect(await store.jobs.retry(job.id)).toMatchObject({ status: "queued", attempts: 0, finishedAt: null, lastError: "permanent" });
+        expect(await store.jobs.retry(job.id)).toBeNull(); // only a failed job
+        expect((await store.jobs.claim({ limit: 1, leaseMs: LEASE }))[0]?.id).toBe(job.id);
+      });
+
+      it("takes over a running job whose lease expired, and the first worker's outcome no longer counts", async () => {
+        const { job } = await store.jobs.enqueue({ kind: "test.f", payload: null });
+        const [first] = await store.jobs.claim({ limit: 1, leaseMs: 1 });
+        await tick(30);
+        const [second] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect(second).toMatchObject({ id: job.id, attempts: 2, status: "running" });
+        expect(await store.jobs.complete(job.id, first.attempts)).toBe(false);
+        expect(await store.jobs.fail(job.id, first.attempts, { error: "late", retryAt: null })).toBeNull();
+        expect(await store.jobs.complete(job.id, second.attempts)).toBe(true);
+      });
+
+      it("dedupes by key while a job is unfinished, and frees the key once it finishes", async () => {
+        const key = uniq("job-key-");
+        const a = await store.jobs.enqueue({ kind: "test.g", payload: 1, key });
+        const b = await store.jobs.enqueue({ kind: "test.g", payload: 2, key });
+        expect(b).toMatchObject({ created: false, job: { id: a.job.id, payload: 1 } });
+        const [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect((await store.jobs.enqueue({ kind: "test.g", payload: 3, key })).created).toBe(false); // running still holds it
+        await store.jobs.complete(claimed.id, claimed.attempts);
+        const c = await store.jobs.enqueue({ kind: "test.g", payload: 4, key });
+        expect(c.created).toBe(true);
+        expect(c.job.id).not.toBe(a.job.id);
+      });
+
+      it("never hands the same job to two concurrent claims", async () => {
+        const ids = new Set<string>();
+        for (let i = 0; i < 6; i++) ids.add((await store.jobs.enqueue({ kind: "test.h", payload: i })).job.id);
+        const batches = await Promise.all([1, 2, 3].map(() => store.jobs.claim({ limit: 3, leaseMs: LEASE })));
+        const claimed = batches.flat().map((j) => j.id);
+        expect(new Set(claimed).size).toBe(claimed.length);
+        expect(claimed.length).toBe(6);
+        expect(claimed.every((id) => ids.has(id))).toBe(true);
+      });
+
+      it("counts by status with the oldest due job, lists newest first, and prunes finished jobs", async () => {
+        const old = await store.jobs.enqueue({ kind: "test.i", payload: null, runAt: soon(-60_000) });
+        await tick();
+        await store.jobs.enqueue({ kind: "test.i", payload: null, runAt: soon(60_000) });
+        await tick();
+        const done = await store.jobs.enqueue({ kind: "test.i", payload: null, runAt: soon(-120_000) });
+        const [claimed] = await store.jobs.claim({ limit: 1, leaseMs: LEASE });
+        expect(claimed.id).toBe(done.job.id);
+        await store.jobs.complete(claimed.id, claimed.attempts);
+
+        const counts = await store.jobs.counts();
+        expect(counts).toMatchObject({ queued: 2, running: 0, succeeded: 1, failed: 0 });
+        expect(counts.oldestDueAt).toBe(old.job.runAt);
+
+        const page = await store.jobs.list({ limit: 2 });
+        expect(page.items.map((j) => j.id)[0]).toBe(done.job.id);
+        expect(page.nextCursor).not.toBeNull();
+        expect((await store.jobs.list({ status: "succeeded" })).items.map((j) => j.id)).toEqual([done.job.id]);
+
+        expect(await store.jobs.prune(soon(-60_000))).toBe(0);
+        expect(await store.jobs.prune(soon(1_000))).toBe(1);
+        expect(await store.jobs.get(done.job.id)).toBeNull();
+        expect((await store.jobs.counts()).queued).toBe(2);
+      });
+
+      it("refuses a bad maxAttempts and a bad date, and treats an unknown id as a miss", async () => {
+        await expectDataError(store.jobs.enqueue({ kind: "test.j", payload: null, maxAttempts: 0 }), "invalid");
+        await expectDataError(store.jobs.enqueue({ kind: "test.j", payload: null, runAt: "not a date" }), "invalid");
+        expect(await store.jobs.get("00000000-0000-4000-8000-000000000000")).toBeNull();
+        expect(await store.jobs.get("nope")).toBeNull();
+        expect(await store.jobs.complete("nope", 1)).toBe(false);
+        expect(await store.jobs.retry("nope")).toBeNull();
+      });
+    });
   });
 }
 
@@ -829,7 +962,7 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
 // ---------------------------------------------------------------- SQL-only behaviour
 
 /** Every app table (not the auth_* ones), for truncating between tests. */
-export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log"] as const;
+export const APP_TABLES = ["users", "content", "posts", "plans", "subscriptions", "purchases", "billing_customers", "webhook_events", "feedback", "subscribers", "agent_keys", "audit_log", "jobs"] as const;
 
 /** Empty every app table. For a throwaway test database only. */
 export async function truncateAppTables(db: Db): Promise<void> {

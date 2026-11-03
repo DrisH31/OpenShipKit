@@ -22,6 +22,11 @@ A kit can score 9 on completeness and 5 on confidence. Confidence comes first.
 
 ## Phase 1: Production confidence (hardening)
 
+Status: 1.1–1.7 done (November 2026), apart from the migration check in 1.7, which
+moves to 1.8. An independent review of 1.1–1.5 found a leak of query parameters
+into logs and a fail-open authorization test. Both are fixed, with tests that fail
+without the fix.
+
 | # | Item | Done when |
 |---|---|---|
 | 1.1 | **Security scanning in CI**: CodeQL, `npm audit` (high and above fails), secret scanning (gitleaks), dependency review on PRs | `security.yml` runs on every PR and every week |
@@ -29,8 +34,9 @@ A kit can score 9 on completeness and 5 on confidence. Confidence comes first.
 | 1.3 | **Structured logging**: one `log` with levels, JSON lines in production and readable lines in development | No bare `console.*` in `src/server` or `src/app` outside the logger |
 | 1.4 | **Optional error tracking**: any Sentry-protocol DSN (GlitchTip self-hosted, or Sentry) via `ERROR_TRACKING_DSN`, without the SDK | Off by default; unhandled server errors are reported when it is set |
 | 1.5 | **Email without Resend**: an SMTP adapter (`SMTP_URL`), so mail can go through your own server or any provider | `EMAIL_PROVIDER=smtp`; contract tests for each adapter |
-| 1.6 | **Background jobs in Postgres**: a `jobs` table with `SKIP LOCKED`, retries with backoff, run in-process. No Redis needed | Email moves to the queue; a failed send retries |
-| 1.7 | **Health in depth**: `/api/health` reports the database, migrations and job lag; a readiness/liveness split | Documented for Docker, Dokploy and uptime monitors |
+| 1.6 | **Background jobs in Postgres**: a `jobs` table with `SKIP LOCKED`, retries with backoff, run in-process. No Redis needed | A failed email send is queued and retried; `/admin/jobs` and MCP show and retry failures |
+| 1.7 | **Health in depth**: `/api/health` reports the database and job lag; `/api/health/live` for liveness | Documented in docs/observability.md |
+| 1.8 | **Migrations in health**: `/api/health` says whether the database is on the schema the code expects | A deploy that skipped `db:migrate` shows up in monitoring, not in a 500 |
 
 ## Phase 2: Teams and organisations
 

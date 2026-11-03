@@ -1,10 +1,18 @@
 //
-// GET /api/health — for uptime checks, load balancers and `docker compose`
-// healthchecks. 200 when the database answers, 503 when it doesn't.
+// GET /api/health — readiness, for uptime checks, load balancers and `docker
+// compose` healthchecks. 200 when the database answers, 503 when it doesn't.
+// /api/health/live is liveness: the process answers, database or not.
 //
 // Public, so it says only what is safe to say: whether the database answered
-// (and how fast), which kind of stack this is and the OpenShipKit version.
-// Never a connection string, a key, an error message or a count.
+// (and how fast), whether background jobs are keeping up, which kind of stack
+// this is and the OpenShipKit version. Never a connection string, a key, an
+// error message or a count.
+//
+// `jobs.ok` is false when a due job has waited more than JOB_LAG_LIMIT_MS: the
+// runner is stopped (JOBS_RUNNER=off everywhere), stuck, or overwhelmed. It
+// doesn't change the status code: a slow queue is a reason to look, not to take
+// the site out of a load balancer. Alert on it with a keyword monitor
+// (docs/observability.md#health).
 //
 
 import { NextResponse } from "next/server";
@@ -18,6 +26,8 @@ export const dynamic = "force-dynamic";
 
 /** Give up on the database after this long: a hung check is a failed check. */
 const TIMEOUT_MS = 5_000;
+/** A due job waiting longer than this means the runner isn't keeping up. */
+const JOB_LAG_LIMIT_MS = 5 * 60_000;
 
 async function checkData(): Promise<{ ok: boolean; ms: number }> {
   const started = Date.now();
@@ -36,6 +46,16 @@ async function checkData(): Promise<{ ok: boolean; ms: number }> {
   }
 }
 
+/** Whether background jobs keep up: a yes or no, never how many. Null when the queue can't be read. */
+async function checkJobs(): Promise<{ ok: boolean } | null> {
+  try {
+    const { oldestDueAt } = await (await getData()).jobs.counts();
+    return { ok: oldestDueAt === null || Date.now() - Date.parse(oldestDueAt) < JOB_LAG_LIMIT_MS };
+  } catch {
+    return null; // the database check above says why
+  }
+}
+
 function stack() {
   try {
     const data = dataProvider() === "memory" ? "memory" : optionalEnv("DATABASE_URL") ? "postgres" : "embedded-postgres";
@@ -48,7 +68,8 @@ function stack() {
 
 export async function GET(): Promise<Response> {
   const data = await checkData();
-  const body = { ok: data.ok, data, stack: stack(), version: OPENSHIPKIT_VERSION, time: new Date().toISOString() };
+  const jobs = data.ok ? await checkJobs() : null;
+  const body = { ok: data.ok, data, jobs, stack: stack(), version: OPENSHIPKIT_VERSION, time: new Date().toISOString() };
   return NextResponse.json(body, { status: data.ok ? 200 : 503, headers: { "Cache-Control": "no-store" } });
 }
 

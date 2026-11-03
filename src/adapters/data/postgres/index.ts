@@ -31,6 +31,9 @@ import {
   type Feedback,
   type FeedbackStatus,
   type Growth,
+  type Job,
+  type JobCounts,
+  type JobStatus,
   type Page,
   type Plan,
   type Post,
@@ -42,7 +45,7 @@ import {
   type User,
 } from "@/core/types";
 import { getDrizzle, type Db } from "./db";
-import { agentKeys, auditLog, billingCustomers, content, feedback, plans, posts, purchases, subscribers, subscriptions, users, webhookEvents } from "./schema";
+import { agentKeys, auditLog, billingCustomers, content, feedback, jobs, plans, posts, purchases, subscribers, subscriptions, users, webhookEvents } from "./schema";
 import { log } from "@/server/log";
 
 // ---------------------------------------------------------------- helpers
@@ -51,6 +54,11 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const isUuid = (v: string | null | undefined): v is string => typeof v === "string" && UUID_RE.test(v);
 
 const OPEN_FEEDBACK: FeedbackStatus[] = ["new", "planned", "in_progress"];
+
+/** The most jobs one claim() takes, whatever the caller asks. */
+const MAX_CLAIM = 50;
+/** A job's lastError is cut to this many characters: a stack can be long, and it is for a person to read. */
+const MAX_JOB_ERROR = 2_000;
 
 const now = sql`now()`;
 
@@ -269,6 +277,27 @@ const toAgentKey = (r: AgentKeyRow): AgentKey => ({
   lastUsedAt: isoOrNull(r.lastUsedAt),
   revokedAt: isoOrNull(r.revokedAt),
 });
+
+type JobRow = typeof jobs.$inferSelect;
+
+const toJob = (r: JobRow): Job => ({
+  id: r.id,
+  kind: r.kind,
+  payload: r.payload ?? null,
+  status: r.status,
+  attempts: r.attempts,
+  maxAttempts: r.maxAttempts,
+  runAt: iso(r.runAt),
+  lockedUntil: isoOrNull(r.lockedUntil),
+  lastError: r.lastError,
+  key: r.key,
+  createdAt: iso(r.createdAt),
+  updatedAt: iso(r.updatedAt),
+  finishedAt: isoOrNull(r.finishedAt),
+});
+
+/** Queued and due, or running with an expired lease (its worker died). */
+const dueJob = sql`((${jobs.status} = 'queued' and ${jobs.runAt} <= now()) or (${jobs.status} = 'running' and ${jobs.lockedUntil} < now()))`;
 
 const toAudit = (r: AuditRow): AuditEntry => ({
   id: r.id,
@@ -912,6 +941,142 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
           .limit(size + 1);
         return toPage(rows, size, (r) => r.createdAt, toAudit);
+      },
+    },
+
+    // ------------------------------------------------------------ jobs
+    jobs: {
+      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null }) {
+        if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new DataError("invalid", "maxAttempts must be a whole number of at least 1");
+        const values = {
+          kind,
+          payload: jsonValue(payload),
+          maxAttempts,
+          key,
+          ...(runAt ? { runAt: toDate(runAt, "runAt")! } : {}),
+        };
+        if (key === null) {
+          const [row] = await write("job", () => db().insert(jobs).values(values).returning());
+          return { job: toJob(row), created: true };
+        }
+        // The unique index covers unfinished jobs only, so ON CONFLICT can't name it: insert, and on
+        // a conflict read the job that holds the key. A finish racing in between frees the key; retry once.
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const [row] = await db()
+            .insert(jobs)
+            .values(values)
+            .onConflictDoNothing({ target: jobs.key, where: sql`key is not null and status in ('queued', 'running')` })
+            .returning();
+          if (row) return { job: toJob(row), created: true };
+          const [existing] = await db()
+            .select()
+            .from(jobs)
+            .where(and(eq(jobs.key, key), inArray(jobs.status, ["queued", "running"])))
+            .limit(1);
+          if (existing) return { job: toJob(existing), created: false };
+        }
+        throw new DataError("conflict", `job: key "${key}" is busy`);
+      },
+      async claim({ limit, leaseMs }) {
+        const n = Math.max(1, Math.min(Math.floor(limit), MAX_CLAIM));
+        // SKIP LOCKED: concurrent claimers each take different rows instead of waiting on each other.
+        const due = db()
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(dueJob)
+          .orderBy(asc(jobs.runAt), asc(jobs.id))
+          .limit(n)
+          .for("update", { skipLocked: true });
+        const rows = await db()
+          .update(jobs)
+          .set({
+            status: "running",
+            attempts: sql`${jobs.attempts} + 1`,
+            lockedUntil: sql`now() + make_interval(secs => ${Math.max(1, leaseMs) / 1000})`,
+            updatedAt: now,
+          })
+          .where(inArray(jobs.id, due))
+          .returning();
+        return rows.map(toJob).sort((a, b) => (a.runAt < b.runAt ? -1 : a.runAt > b.runAt ? 1 : a.id < b.id ? -1 : 1));
+      },
+      async complete(id, attempt, opts = {}) {
+        if (!isUuid(id)) return false;
+        const set: Settable<JobRow> = { status: "succeeded", lockedUntil: null, finishedAt: now, updatedAt: now };
+        if (opts.dropPayload) set.payload = null;
+        const rows = await db()
+          .update(jobs)
+          .set(set)
+          .where(and(eq(jobs.id, id), eq(jobs.status, "running"), eq(jobs.attempts, attempt)))
+          .returning({ id: jobs.id });
+        return rows.length > 0;
+      },
+      async fail(id, attempt, { error, retryAt, dropPayload }) {
+        if (!isUuid(id)) return null;
+        const retry = retryAt ? toDate(retryAt, "retryAt")! : null;
+        const again = retry ? sql`${jobs.attempts} < ${jobs.maxAttempts}` : sql`false`;
+        const terminal = sql`not (${again})`;
+        const set: Settable<JobRow> = {
+          status: sql`case when ${again} then 'queued' else 'failed' end`,
+          lockedUntil: null,
+          lastError: error.slice(0, MAX_JOB_ERROR),
+          finishedAt: sql`case when ${terminal} then now() else null end`,
+          updatedAt: now,
+        };
+        if (retry) set.runAt = sql`case when ${again} then ${retry}::timestamptz else ${jobs.runAt} end`;
+        // A sensitive job keeps its payload while it may still run, and loses it once it can't.
+        if (dropPayload) set.payload = sql`case when ${terminal} then null else ${jobs.payload} end`;
+        const [row] = await db()
+          .update(jobs)
+          .set(set)
+          .where(and(eq(jobs.id, id), eq(jobs.status, "running"), eq(jobs.attempts, attempt)))
+          .returning();
+        return row ? toJob(row) : null;
+      },
+      async retry(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db()
+          .update(jobs)
+          .set({ status: "queued", attempts: 0, runAt: now, lockedUntil: null, finishedAt: null, updatedAt: now })
+          .where(and(eq(jobs.id, id), eq(jobs.status, "failed")))
+          .returning();
+        return row ? toJob(row) : null;
+      },
+      async get(id) {
+        if (!isUuid(id)) return null;
+        const [row] = await db().select().from(jobs).where(eq(jobs.id, id)).limit(1);
+        return row ? toJob(row) : null;
+      },
+      async list({ status, limit, cursor }) {
+        const size = clampLimit(limit);
+        const c = decodeCursor(cursor);
+        const rows = await db()
+          .select()
+          .from(jobs)
+          .where(and(status ? eq(jobs.status, status) : undefined, afterCursor(jobs.createdAt, jobs.id, c)))
+          .orderBy(desc(jobs.createdAt), desc(jobs.id))
+          .limit(size + 1);
+        return toPage(rows, size, (r) => r.createdAt, toJob);
+      },
+      async counts() {
+        const result = await db().execute<{ status: JobStatus; n: number | string }>(sql`select status, count(*) as n from jobs group by status`);
+        const counts: JobCounts = { queued: 0, running: 0, succeeded: 0, failed: 0, oldestDueAt: null };
+        for (const r of result.rows) counts[r.status] = Number(r.n);
+        const [oldest] = await db()
+          .select({ runAt: jobs.runAt })
+          .from(jobs)
+          .where(and(eq(jobs.status, "queued"), sql`${jobs.runAt} <= now()`))
+          .orderBy(asc(jobs.runAt))
+          .limit(1);
+        counts.oldestDueAt = oldest ? iso(oldest.runAt) : null;
+        return counts;
+      },
+      async prune(finishedBefore) {
+        const before = toDate(finishedBefore, "finishedBefore")!;
+        const rows = await db()
+          .delete(jobs)
+          .where(and(inArray(jobs.status, ["succeeded", "failed"]), sql`${jobs.finishedAt} < ${before}`))
+          .returning({ id: jobs.id });
+        return rows.length;
       },
     },
 

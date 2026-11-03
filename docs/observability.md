@@ -111,5 +111,13 @@ party, so the privacy page should say so (AGENTS.md, rule 15).
 
 ## Health
 
-`/api/health` answers 200 with the database reachable and 503 without it.
-Point an uptime monitor at it ([deployment](deployment.md)).
+| Endpoint | Answers | Point at it |
+|---|---|---|
+| `/api/health` | 200 when the database answers, 503 when it doesn't | Uptime monitors and load balancers (readiness) |
+| `/api/health/live` | 200 whenever the process can answer, without touching the database | Restart policies (liveness): a database blip shouldn't restart a healthy app |
+
+`/api/health` also reports `"jobs": {"ok": false}` when a due background job
+has waited more than five minutes, because the runner is stopped, stuck or
+behind ([background jobs](jobs.md)). That doesn't change the status code. Add a
+keyword monitor for `"jobs":{"ok":true` to hear about it. The endpoint is public
+and never says how many of anything.

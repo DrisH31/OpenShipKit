@@ -18,6 +18,8 @@ import type {
   AuditEntry,
   ContentEntry,
   Feedback,
+  Job,
+  JobCounts,
   Page,
   Plan,
   Post,
@@ -42,9 +44,12 @@ interface Tables {
   subscribers: Map<string, Subscriber>;
   agentKeys: Map<string, AgentKey & { keyHash: string }>;
   audit: Map<string, AuditEntry>;
+  jobs: Map<string, Job>;
 }
 
 const now = () => new Date().toISOString();
+
+const UNFINISHED = new Set<Job["status"]>(["queued", "running"]);
 
 /** How stale lastSeenAt may get before a repeat sign-in rewrites it (the Postgres store's LAST_SEEN_RESOLUTION). */
 const LAST_SEEN_RESOLUTION_MS = 5 * 60_000;
@@ -77,6 +82,7 @@ function freshTables(): Tables {
     subscribers: new Map(),
     agentKeys: new Map(),
     audit: new Map(),
+    jobs: new Map(),
   };
   const stamp = now();
   for (const p of SEED.plans) {
@@ -492,6 +498,109 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
           .filter((e) => !entityId || e.entityId === entityId)
           .sort(byDesc((e) => e.createdAt));
         return paginate(rows.map(clone), limit, cursor);
+      },
+    },
+
+    jobs: {
+      async enqueue({ kind, payload, runAt, maxAttempts = 5, key = null }) {
+        if (!Number.isInteger(maxAttempts) || maxAttempts < 1) throw new DataError("invalid", "maxAttempts must be a whole number of at least 1");
+        if (runAt !== undefined && Number.isNaN(Date.parse(runAt))) throw new DataError("invalid", `runAt is not a valid date: "${runAt}"`);
+        if (key !== null) {
+          const holder = [...t.jobs.values()].find((j) => j.key === key && UNFINISHED.has(j.status));
+          if (holder) return { job: clone(holder), created: false };
+        }
+        const stamp = now();
+        const job: Job = {
+          id: randomUUID(),
+          kind,
+          payload: payload === undefined ? null : clone(payload),
+          status: "queued",
+          attempts: 0,
+          maxAttempts,
+          runAt: runAt ? new Date(runAt).toISOString() : stamp,
+          lockedUntil: null,
+          lastError: null,
+          key,
+          createdAt: stamp,
+          updatedAt: stamp,
+          finishedAt: null,
+        };
+        t.jobs.set(job.id, job);
+        return { job: clone(job), created: true };
+      },
+      async claim({ limit, leaseMs }) {
+        const at = Date.now();
+        const due = [...t.jobs.values()]
+          .filter((j) => (j.status === "queued" && Date.parse(j.runAt) <= at) || (j.status === "running" && j.lockedUntil !== null && Date.parse(j.lockedUntil) < at))
+          .sort((a, b) => (a.runAt < b.runAt ? -1 : a.runAt > b.runAt ? 1 : a.id < b.id ? -1 : 1))
+          .slice(0, Math.max(1, Math.min(Math.floor(limit), 50)));
+        const stamp = new Date(at).toISOString();
+        for (const j of due) {
+          j.status = "running";
+          j.attempts += 1;
+          j.lockedUntil = new Date(at + Math.max(1, leaseMs)).toISOString();
+          j.updatedAt = stamp;
+        }
+        return due.map(clone);
+      },
+      async complete(id, attempt, opts = {}) {
+        const j = t.jobs.get(id);
+        if (!j || j.status !== "running" || j.attempts !== attempt) return false;
+        const stamp = now();
+        Object.assign(j, { status: "succeeded", lockedUntil: null, finishedAt: stamp, updatedAt: stamp });
+        if (opts.dropPayload) j.payload = null;
+        return true;
+      },
+      async fail(id, attempt, { error, retryAt, dropPayload }) {
+        const j = t.jobs.get(id);
+        if (!j || j.status !== "running" || j.attempts !== attempt) return null;
+        if (retryAt !== null && Number.isNaN(Date.parse(retryAt))) throw new DataError("invalid", `retryAt is not a valid date: "${retryAt}"`);
+        const again = retryAt !== null && j.attempts < j.maxAttempts;
+        const stamp = now();
+        j.status = again ? "queued" : "failed";
+        if (again) j.runAt = new Date(retryAt).toISOString();
+        j.lockedUntil = null;
+        j.lastError = error.slice(0, 2_000);
+        j.finishedAt = again ? null : stamp;
+        j.updatedAt = stamp;
+        if (dropPayload && !again) j.payload = null;
+        return clone(j);
+      },
+      async retry(id) {
+        const j = t.jobs.get(id);
+        if (!j || j.status !== "failed") return null;
+        const stamp = now();
+        Object.assign(j, { status: "queued", attempts: 0, runAt: stamp, lockedUntil: null, finishedAt: null, updatedAt: stamp });
+        return clone(j);
+      },
+      async get(id) {
+        const j = t.jobs.get(id);
+        return j ? clone(j) : null;
+      },
+      async list({ status, limit, cursor }) {
+        const rows = [...t.jobs.values()].filter((j) => !status || j.status === status).sort(byDesc((j) => j.createdAt));
+        return paginate(rows.map(clone), limit, cursor);
+      },
+      async counts() {
+        const counts: JobCounts = { queued: 0, running: 0, succeeded: 0, failed: 0, oldestDueAt: null };
+        const at = Date.now();
+        for (const j of t.jobs.values()) {
+          counts[j.status] += 1;
+          if (j.status === "queued" && Date.parse(j.runAt) <= at && (counts.oldestDueAt === null || j.runAt < counts.oldestDueAt)) counts.oldestDueAt = j.runAt;
+        }
+        return counts;
+      },
+      async prune(finishedBefore) {
+        const before = Date.parse(finishedBefore);
+        if (Number.isNaN(before)) throw new DataError("invalid", `finishedBefore is not a valid date: "${finishedBefore}"`);
+        let n = 0;
+        for (const [id, j] of t.jobs) {
+          if ((j.status === "succeeded" || j.status === "failed") && j.finishedAt && Date.parse(j.finishedAt) < before) {
+            t.jobs.delete(id);
+            n += 1;
+          }
+        }
+        return n;
       },
     },
 

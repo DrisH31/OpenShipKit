@@ -3,7 +3,8 @@
 // serves requests.
 //
 // Production: checks the environment and refuses to start without what every
-// request needs (src/server/boot-check.ts has the list). A Postgres server is
+// request needs (src/server/boot-check.ts has the list), then starts the
+// background job runner (src/server/jobs). A Postgres server is
 // migrated by `npm run db:migrate` (the compose `migrate` service); an
 // embedded one is readied lazily by getData().
 //
@@ -26,7 +27,11 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     if (process.env.NODE_ENV === "production") {
       const { checkProductionEnv } = await import("@/server/boot-check");
-      return checkProductionEnv();
+      checkProductionEnv();
+      // The background job runner (src/server/jobs; JOBS_RUNNER=off skips it). Imported here, inside the
+      // nodejs branch: a helper outside it put the database driver into the Edge bundle.
+      const { startJobRunner } = await import("@/server/jobs");
+      return startJobRunner();
     }
     // Production refuses these (boot-check.ts); development says so and runs without the demo admin.
     for (const problem of demoAdminProblems(process.env)) console.warn(`[openshipkit] ${problem} The demo admin is off until it's fixed.`);
@@ -36,12 +41,15 @@ export async function register() {
     } catch {
       return; // an unknown DATA_PROVIDER: getData() says so on the first request
     }
-    if (mode !== "embedded-postgres") return;
-    const { prepareEmbeddedDatabase } = await import("@/adapters/data/postgres/embedded");
-    await prepareEmbeddedDatabase();
-    // The read-only demo admin (DEMO_ADMIN_EMAIL), ready before the first "Try the demo".
-    const { ensureDemoAccountInBackground } = await import("@/server/services/demo-account");
-    ensureDemoAccountInBackground("boot");
+    if (mode === "embedded-postgres") {
+      const { prepareEmbeddedDatabase } = await import("@/adapters/data/postgres/embedded");
+      await prepareEmbeddedDatabase();
+      // The read-only demo admin (DEMO_ADMIN_EMAIL), ready before the first "Try the demo".
+      const { ensureDemoAccountInBackground } = await import("@/server/services/demo-account");
+      ensureDemoAccountInBackground("boot");
+    }
+    const { startJobRunner } = await import("@/server/jobs");
+    startJobRunner();
   }
 }
 

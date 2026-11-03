@@ -302,6 +302,8 @@ Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five p
 | `subscriber_unsubscribe` | admin | Takes an email off the list (kept as unsubscribed, so a later sign-up does not re-subscribe it). |
 | `agent_keys_list` | admin | Keys with name, scope, hint, `createdBy` (the admin who minted it; null for CLI keys), last use and revocation; `you` marks the calling key. Keys themselves are never shown. |
 | `agent_key_revoke` | admin | Revokes a key by id. Refuses the key making the call. *Destructive.* |
+| `jobs_list` | admin | The background job queue with counts per status; failed jobs by default. Never the payloads. |
+| `job_retry` | admin | Puts a failed job back in the queue, attempts reset. Audited. |
 
 **Deliberately missing:** there is no tool that mints a key, deletes a user, sends an email, changes billing at Polar or reads a secret. Those stay with a person in /admin or at the provider.
 
