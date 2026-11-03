@@ -546,6 +546,7 @@ describe("the webhook sink seam", () => {
     const sink: BillingWebhookSink = {
       applySubscription: async (s) => (subs.push(s), "applied"),
       applyOrder: async (o) => (orders.push(o), "unchanged"),
+      requestCancel: async () => true,
       markEventProcessed: async (_provider, id) => (claimed.push(id), true),
     };
     const polar = createPolarProvider({ client, webhookSecret: newSecret, sink });
@@ -873,12 +874,22 @@ describe("switching billing providers", () => {
     await sub("p1", "polar");
     await sub("p2", "polar", { cancelAtPeriodEnd: true }); // ends on its own: not stranded
     await sub("p3", "polar", { status: "canceled" });
-    await sub("p4", "polar", { currentPeriodEnd: "2020-01-01T00:00:00.000Z" }); // its period is over: ended at Polar, unseen here
+    await sub("p4", "polar", { currentPeriodEnd: "2020-01-01T00:00:00.000Z" }); // its period "passed" only because renewals stopped arriving: still counted
     await sub("s1", "stripe");
     h.billing = { id: "stripe" } as BillingProvider;
-    expect(await strandedSubscriptions()).toEqual({ polar: 1 });
+    expect(await strandedSubscriptions()).toEqual({ polar: 2 });
     h.billing = null; // billing off: everyone still renewing is stranded
-    expect(await strandedSubscriptions()).toEqual({ polar: 1, stripe: 1 });
+    expect(await strandedSubscriptions()).toEqual({ polar: 2, stripe: 1 });
+
+    // An admin marks Polar's as handled: they end, audited; the provider in use is refused.
+    h.billing = { id: "stripe" } as BillingProvider;
+    const { endStrandedSubscriptions } = await import("@/server/services/billing");
+    const admin = await store.users.upsertFromIdentity({ provider: "better-auth", providerUserId: "adm", email: "admin@example.com", name: "A", image: null, emailVerified: true }, { makeAdmin: true });
+    expect(await endStrandedSubscriptions(admin, "polar")).toBe(2);
+    expect(await strandedSubscriptions()).toEqual({});
+    expect((await store.billing.getSubscription("polar", "p1"))?.status).toBe("canceled");
+    await expect(endStrandedSubscriptions(admin, "stripe")).rejects.toMatchObject({ code: "invalid" });
+    await expect(endStrandedSubscriptions(user, "polar")).rejects.toMatchObject({ code: "forbidden" });
   });
 });
 
@@ -905,10 +916,11 @@ describe("checking a plan's prices against the provider", () => {
     expect(check).toEqual({
       provider: "Stripe",
       problems: [
-        "Monthly (price_m): Stripe bills it on another schedule (not once a month).",
+        "Monthly (price_m): Stripe bills it on another schedule, not monthly.",
         "Yearly (price_y): Stripe charges $200, the plan shows $190.",
         "One-time (price_x): Stripe has no such price.",
       ],
+      unchecked: [],
     });
     // One price the provider can't answer for doesn't hide the others.
     h.billing = {
@@ -919,16 +931,15 @@ describe("checking a plan's prices against the provider", () => {
         return at[id] ?? null;
       },
     } as unknown as BillingProvider;
-    expect((await checkPlanPrices(plan))?.problems).toEqual([
-      "Monthly (price_m): Stripe bills it on another schedule (not once a month).",
-      "Yearly (price_y): couldn't ask Stripe (timeout).",
-      "One-time (price_x): Stripe has no such price.",
-    ]);
+    expect(await checkPlanPrices(plan)).toMatchObject({
+      problems: ["Monthly (price_m): Stripe bills it on another schedule, not monthly.", "One-time (price_x): Stripe has no such price."],
+      unchecked: ["Yearly (price_y): Stripe didn't answer (timeout)."],
+    });
   });
 
   it("doesn't check a Razorpay one-time price: its checkout is a link for the plan's own amount", async () => {
     const { checkPlanPrices } = await import("@/server/services/billing");
-    const describePrice = vi.fn(async () => ({ amountCents: 49900, currency: "inr", interval: "month" as const }));
+    const describePrice = vi.fn(async (id: string) => (id.endsWith(":one_time") ? ("skip" as const) : { amountCents: 49900, currency: "inr", interval: "month" as const }));
     h.billing = { id: "razorpay", label: "Razorpay", describePrice } as unknown as BillingProvider;
     const plan = {
       key: "pro",
@@ -937,7 +948,6 @@ describe("checking a plan's prices against the provider", () => {
         { interval: "one_time", amountCents: 299900, currency: "inr", polarProductId: null },
       ],
     } as unknown as Plan;
-    expect(await checkPlanPrices(plan)).toEqual({ provider: "Razorpay", problems: [] });
-    expect(describePrice).toHaveBeenCalledTimes(1);
+    expect(await checkPlanPrices(plan)).toEqual({ provider: "Razorpay", problems: [], unchecked: [] });
   });
 });

@@ -40,6 +40,8 @@ import { PROVIDER_LABEL } from "@/core/billing";
 import { requireAdmin } from "@/server/session";
 import { GROWTH_DAYS, getOverview } from "@/server/services/overview";
 import { strandedSubscriptions } from "@/server/services/billing";
+import { ConfirmAction } from "@/components/admin/confirm-action";
+import { endStrandedAction } from "./actions";
 import { getSetupSteps } from "@/server/setup-steps";
 
 export const metadata: Metadata = { title: "Overview" };
@@ -78,6 +80,8 @@ interface Attention {
   title: string;
   body: string;
   action?: { label: string; href: string };
+  /** Instead of a link: a control of its own (a confirmed action). */
+  control?: React.ReactNode;
 }
 
 export default async function AdminOverview() {
@@ -85,7 +89,7 @@ export default async function AdminOverview() {
   const [o, steps, stranded] = await Promise.all([
     getOverview(),
     getSetupSteps(siteProfile() === "saas"),
-    siteProfile() === "saas" ? strandedSubscriptions().catch(() => ({})) : {},
+    siteProfile() === "saas" ? strandedSubscriptions() : {},
   ]);
   const now = new Date();
   const s = o.stats;
@@ -100,7 +104,22 @@ export default async function AdminOverview() {
       key: "stranded",
       icon: TriangleAlertIcon,
       title: `${plural(n, "subscription")} still billed by ${strandedLines.map(([p]) => PROVIDER_LABEL[p]).join(" and ")}`,
-      body: "Billing now uses another provider, so their renewals and cancellations no longer reach this site. Cancel them there, or switch back (docs/billing.md, “Switching providers”).",
+      body: "Billing now uses another provider, so their renewals and cancellations no longer reach this site. Cancel them there (or switch back), then mark them handled here: their access ends (docs/billing.md, “Switching providers”).",
+      control: (
+        <div className="flex shrink-0 flex-col gap-2">
+          {strandedLines.map(([p, c]) => (
+            <ConfirmAction
+              key={p}
+              action={endStrandedAction.bind(null, p)}
+              triggerVariant="outline"
+              trigger={<>Mark {PROVIDER_LABEL[p]} handled</>}
+              title={`End ${plural(c, "subscription")} still at ${PROVIDER_LABEL[p]}?`}
+              description={`Do this once they're cancelled at ${PROVIDER_LABEL[p]} (or the people are told). Their access here ends now. Each change is in the audit log.`}
+              confirmLabel="End them"
+            />
+          ))}
+        </div>
+      ),
     });
   }
   if (s.openFeedback) {
@@ -173,7 +192,7 @@ export default async function AdminOverview() {
           </div>
           {attention.length ? (
             <ul className="flex flex-col">
-              {attention.map(({ key, icon: Icon, title, body, action }) => (
+              {attention.map(({ key, icon: Icon, title, body, action, control }) => (
                 <li key={key} className="flex items-center gap-3 border-t border-line px-4 py-3 first:border-t-0">
                   <span aria-hidden className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-tonal text-ink-2">
                     <Icon className="size-4" />
@@ -182,6 +201,7 @@ export default async function AdminOverview() {
                     <span className="text-small font-semibold text-ink">{title}</span>
                     <span className="text-caption text-ink-3">{body}</span>
                   </div>
+                  {control ?? null}
                   {action ? (
                     <Link href={action.href} className={cn(buttonVariants({ variant: "outline", size: "sm" }), "shrink-0")}>
                       {action.label}

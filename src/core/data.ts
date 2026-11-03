@@ -139,6 +139,14 @@ export interface BillingRepo {
   getSubscription(provider: PaidProvider, providerSubscriptionId: string): Promise<Subscription | null>;
   /** `orgId`: a string for that organisation's, null for personal ones only, absent for all. */
   listSubscriptions(query: ListQuery & { userId?: string; orgId?: string | null; status?: SubscriptionStatus }): Promise<Page<Subscription>>;
+  /**
+   * Compare-and-set for a cancel the app asks the provider for: sets cancelAtPeriodEnd on the row
+   * only if it is still false, and returns the row as it was before; null when it wasn't (already set
+   * to end, or no such row). Two presses at once: one gets the row, the other null.
+   */
+  requestCancel(provider: PaidProvider, providerSubscriptionId: string): Promise<Subscription | null>;
+  /** How many subscriptions each provider still has renewing (a renewing status, not set to end), by provider. */
+  countRenewingByProvider(): Promise<Partial<Record<PaidProvider, number>>>;
   /** Insert or update (refund flag) by (provider, providerOrderId). */
   recordPurchase(input: PurchaseInput): Promise<Purchase>;
   listPurchases(query: ListQuery & { userId?: string }): Promise<Page<Purchase>>;

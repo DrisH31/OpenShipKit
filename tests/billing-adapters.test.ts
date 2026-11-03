@@ -75,6 +75,7 @@ function recordingSink() {
       return "applied" as const;
     }),
     applyOrder: vi.fn(async () => "applied" as const),
+    requestCancel: vi.fn(async () => true),
     markEventProcessed: vi.fn(async (_provider, id) => {
       claimed.push(id);
       return true;
@@ -395,7 +396,7 @@ describe("what a provider charges for a price id", () => {
     expect(await p.describePrice!("price_y")).toEqual({ amountCents: 19000, currency: "usd", interval: "year" });
     expect(await p.describePrice!("price_once")).toEqual({ amountCents: 29900, currency: "usd", interval: "one_time" });
     expect(await p.describePrice!("missing")).toBeNull();
-    expect((await p.describePrice!("price_q"))?.interval).toBe("other"); // every 3 months
+    expect(await p.describePrice!("price_q")).toMatchObject({ interval: "other" }); // every 3 months
   });
 
   it("Polar: the product's fixed price and recurrence", async () => {
@@ -410,6 +411,7 @@ describe("what a provider charges for a price id", () => {
     const p = createRazorpayProvider({ client, webhookSecret: "x" });
     expect(await p.describePrice!("plan_1")).toEqual({ amountCents: 499900, currency: "INR", interval: "year" });
     fetch.mockResolvedValueOnce({ id: "plan_q", period: "monthly", interval: 3, item: { amount: 99900, currency: "INR" } });
-    expect((await p.describePrice!("plan_q"))?.interval).toBe("other"); // every 3 months
+    expect(await p.describePrice!("plan_q")).toMatchObject({ interval: "other" }); // every 3 months
+    expect(await p.describePrice!("pro:one_time")).toBe("skip"); // the app's own id for a payment link
   });
 });

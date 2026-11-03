@@ -2,14 +2,15 @@ import "server-only";
 
 //
 // Pricing plans: the cards on /pricing and what checkout sells. amountCents
-// is what the page SHOWS; what a customer is CHARGED is the Polar product
-// (polarProductId). Changing a price here never changes Polar, so the tools
-// say so in their replies. Never invent a Polar product id.
+// is what the page SHOWS; what a customer is CHARGED is set at the billing
+// provider (the price's polarProductId, stripePriceId or razorpayPlanId).
+// Changing a price here never changes the provider, so the tools say so in
+// their replies (chargedWhere). Never invent a provider id.
 //
 // Who may change what: a write key edits a plan's copy and presentation
 // (name, description, features, highlighted, contactSales, ctaLabel, active,
 // sortOrder). Anything that changes what a customer is charged or gets —
-// prices (amounts, intervals, currencies, Polar product ids), trialDays, or
+// prices (amounts, intervals, currencies, provider price ids), trialDays, or
 // deleting a plan — needs an admin key. Entitlements are derived by matching
 // a webhook's product id against these prices, so remapping them is
 // remapping who gets paid access (SPEC invariant 4), and a write key is the
@@ -18,6 +19,8 @@ import "server-only";
 
 import { z } from "zod";
 import { planSchema, slugSchema } from "@/core/schemas";
+import { chargedWhere } from "@/core/billing";
+import { billingProvider } from "@/server/env";
 import { ServiceError } from "@/server/services/errors";
 import { deletePlan, getPlan, listPlans, patchPlan, upsertPlan } from "@/server/services/plans";
 import { DESTRUCTIVE, READ_ONLY, WRITE_IDEMPOTENT, defineTool } from "../types";
@@ -28,8 +31,8 @@ const planKey = slugSchema.describe("The plan's key, e.g. free, pro");
 const BILLING_CHANGE = "Changing a plan's prices, provider ids, trial or limits";
 const FREE_PLAN_CHANGE = "Changing which plan is the free plan (whose limits apply to everyone without a paid one)";
 
-const PRICE_NOTE =
-  "amountCents is what /pricing shows. What a customer is charged is set on the Polar product in polarProductId; if a price changed, the matching Polar product must be changed by someone with Polar access.";
+/** What the reply says about prices: /pricing shows amountCents; the provider in use charges. */
+const priceNote = () => `amountCents is what /pricing shows. ${chargedWhere(billingProvider())}`;
 
 export const plansList = defineTool({
   name: "plans_list",
@@ -70,7 +73,7 @@ export const planUpsert = defineTool({
     if (changesBilling(await getPlan(args.key), args)) requireScope(ctx, "admin", BILLING_CHANGE);
     if (await changesFreePlan(args.key, args)) requireScope(ctx, "admin", FREE_PLAN_CHANGE);
     const plan = await upsertPlan(args, ctx.actor);
-    return { plan, note: PRICE_NOTE };
+    return { plan, note: priceNote() };
   },
 });
 
@@ -99,7 +102,7 @@ export const planUpdate = defineTool({
     }
     if (await changesFreePlan(key, patch)) requireScope(ctx, "admin", FREE_PLAN_CHANGE);
     const plan = await patchPlan(key, patch, ctx.actor);
-    return { plan, ...("prices" in patch ? { note: PRICE_NOTE } : {}) };
+    return { plan, ...("prices" in patch ? { note: priceNote() } : {}) };
   },
 });
 

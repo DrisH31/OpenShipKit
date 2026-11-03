@@ -30,7 +30,7 @@ import type {
   UsageSubject,
   User,
 } from "@/core/types";
-import { grantsAccess, growthDays } from "@/core/types";
+import { grantsAccess, growthDays, isRenewing } from "@/core/types";
 import { SEED } from "@/content/seed";
 import { invitationState, type Org, type OrgInvitation, type OrgMember, type OrgRole } from "@/core/orgs";
 
@@ -396,6 +396,19 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         };
         t.subscriptions.set(id, sub);
         return clone(sub);
+      },
+      async countRenewingByProvider() {
+        const out: Partial<Record<PaidProvider, number>> = {};
+        for (const s of t.subscriptions.values()) if (isRenewing(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
+        return out;
+      },
+      async requestCancel(provider, providerSubscriptionId) {
+        const s = t.subscriptions.get(`${provider}:${providerSubscriptionId}`);
+        if (!s || s.cancelAtPeriodEnd) return null;
+        const before = clone(s);
+        s.cancelAtPeriodEnd = true;
+        s.updatedAt = now();
+        return before;
       },
       async getSubscription(provider, providerSubscriptionId) {
         const s = t.subscriptions.get(`${provider}:${providerSubscriptionId}`);

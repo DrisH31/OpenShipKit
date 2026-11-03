@@ -139,7 +139,7 @@ export const DEFAULT_CONTENT: { [K in ContentKey]: ContentValue<K> } = {
         icon: "credit-card",
         title: "Billing that can’t be faked",
         description:
-          "Subscriptions, trials and one-time purchases through Polar, off until you add a key. Access comes only from signature-verified webhooks, never from a redirect.",
+          "Subscriptions, trials and one-time purchases through Polar, Stripe or Razorpay, off until you add a key. Access comes only from signature-verified webhooks, never from a redirect.",
       },
       {
         icon: "file-text",
@@ -205,7 +205,7 @@ export const DEFAULT_CONTENT: { [K in ContentKey]: ContentValue<K> } = {
     eyebrow: "Pricing",
     title: "Billing that works on day one",
     subtitle:
-      "OpenShipKit is free. These are the sample plans your SaaS starts with, sold through Polar once you add a key. Rename, reprice or delete them in the admin under Plans.",
+      "OpenShipKit is free. These are the sample plans your SaaS starts with, sold through your payment provider (Polar, Stripe or Razorpay) once you add a key. Rename, reprice or delete them in the admin under Plans.",
     note: "Prices in USD. Sample plans: edit them in the admin.",
   },
   latestPosts: {
@@ -227,7 +227,7 @@ export const DEFAULT_CONTENT: { [K in ContentKey]: ContentValue<K> } = {
       {
         question: "What do I pay for to run it?",
         answer:
-          "A server. The app, Postgres and sign-in all run on it, so one small VPS is enough to start. A live site also needs Resend to send its sign-in emails, and Polar only once you sell something. Each bills at its own rates.",
+          "A server. The app, Postgres and sign-in all run on it, so one small VPS is enough to start. A live site also needs Resend to send its sign-in emails, and a payment provider (Polar, Stripe or Razorpay) only once you sell something. Each bills at its own rates.",
       },
       {
         question: "Why Better Auth instead of a hosted sign-in service?",
@@ -245,9 +245,9 @@ export const DEFAULT_CONTENT: { [K in ContentKey]: ContentValue<K> } = {
           "Most of what the admin does: read and edit every section of the site, write and publish blog posts and changelog entries, manage plans, triage feedback and, with an admin key, look up users. Each key has a scope (read, write or admin). Every change is logged, and content, posts and plans can be restored to any earlier version.",
       },
       {
-        question: "Do I need Polar or Resend?",
+        question: "Do I need a payment provider or Resend?",
         answer:
-          "Not to try it. Without a Polar key the pricing page still shows your plans and free plans work, and on your own machine sign-in links and verification emails print to the terminal. A live site needs Resend before its first sign-up: production requires a verified email, and its log never shows the link. Add Polar when you’re ready to sell; access is only ever granted by its verified webhooks.",
+          "Not to try it. Without a payment provider's key (Polar, Stripe or Razorpay) the pricing page still shows your plans and free plans work, and on your own machine sign-in links and verification emails print to the terminal. A live site needs Resend before its first sign-up: production requires a verified email, and its log never shows the link. Add one when you’re ready to sell; access is only ever granted by its verified webhooks.",
       },
       {
         question: "Can a coding agent set it up for me?",

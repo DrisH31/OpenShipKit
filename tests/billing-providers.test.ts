@@ -10,6 +10,7 @@
 
 import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { isRenewing } from "@/core/types";
 import { createMemoryStore } from "@/adapters/data/memory";
 import type { DataStore } from "@/core/data";
 import type { PlanInput, User } from "@/core/types";
@@ -114,44 +115,58 @@ describe("Razorpay", () => {
   // https://razorpay.com/docs/api/payments/subscriptions/cancel-subscription (Errors)
   const NO_CYCLE = { statusCode: 400, error: { code: "BAD_REQUEST_ERROR", description: "Subscription cannot be cancelled since no billing cycle is going on" } };
 
-  it("a cancel that reached Razorpay but failed to write still reads as ending (the intent is written first)", async () => {
+  const activate = async (rzp: ReturnType<typeof createRazorpayProvider>, id: string) =>
+    rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, id));
+  const me = () => ({ type: "user" as const, id: user.id, label: user.email });
+
+  it("a cancel with no answer reads as ending, until Razorpay charges again: then it renews, and Cancel is back", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;
     const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
-    await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "f1"));
-    const me = { type: "user" as const, id: user.id, label: user.email };
-
-    // Razorpay cancels; the re-fetch that follows fails.
-    const fetch = client.subscriptions.fetch as ReturnType<typeof vi.fn>;
-    fetch.mockImplementationOnce(async () => ({ ...sub })).mockRejectedValueOnce(new Error("network"));
-    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toThrow("network");
-    expect(client.subscriptions.cancel).toHaveBeenCalledWith("sub_1", true);
-    // No Cancel left to press against a subscription Razorpay already set to end.
+    await activate(rzp, "n1");
+    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce(Object.assign(new Error("Gateway Timeout"), { statusCode: 504 }));
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me())).rejects.toMatchObject({ name: "BillingProviderError", kind: "no_answer" });
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+
+    // A charge event within the same period keeps it ending.
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.charged", payload: { subscription: { entity: { id: "sub_1" } } } }, "n2"));
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+
+    // The cancel never landed: Razorpay renews into a new period. The row renews again.
+    sub.current_end = sub.current_end + 30 * 86_400;
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.charged", payload: { subscription: { entity: { id: "sub_1" } } } }, "n3"));
+    const row = (await store.billing.getSubscription("razorpay", "sub_1"))!;
+    expect(row.cancelAtPeriodEnd).toBe(false);
+    expect(isRenewing(row)).toBe(true); // so the billing page offers Cancel again
   });
 
-  it("a refusal puts the row back as Razorpay has it; a timeout leaves the intent for the next webhook", async () => {
+  it("a refusal puts the row back and says Razorpay's reason", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;
     const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
-    await rzp.handleWebhook(rzpRequest({ event: "subscription.activated", payload: { subscription: { entity: { id: "sub_1" } } } }, "g1"));
-    const me = { type: "user" as const, id: user.id, label: user.email };
-    const cancel = client.subscriptions.cancel as ReturnType<typeof vi.fn>;
-
-    cancel.mockRejectedValueOnce(NO_CYCLE);
-    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toMatchObject({ statusCode: 400 });
+    await activate(rzp, "r1");
+    (client.subscriptions.cancel as ReturnType<typeof vi.fn>).mockRejectedValueOnce(NO_CYCLE);
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me())).rejects.toMatchObject({ kind: "refused", message: expect.stringContaining("no billing cycle is going on") });
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(false);
+  });
 
-    cancel.mockRejectedValueOnce(Object.assign(new Error("socket hang up"), { statusCode: 502 }));
-    await expect(rzp.cancelAtPeriodEnd!("sub_1", me)).rejects.toThrow("socket hang up");
+  it("two presses at once: one reaches Razorpay, the other stops before it", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await activate(rzp, "d1");
+    const results = await Promise.allSettled([rzp.cancelAtPeriodEnd!("sub_1", me()), rzp.cancelAtPeriodEnd!("sub_1", me())]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ kind: "conflict" });
+    expect(client.subscriptions.cancel).toHaveBeenCalledTimes(1);
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
   });
 
-  it("a trial (authenticated, first charge later) is cancelled outright, so its first charge never happens", async () => {
+  it("a trial is cancelled at Razorpay now (no first charge) and keeps its access until the trial's end", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;
     const startAt = Math.floor(Date.now() / 1000) + 14 * 86_400;
-    Object.assign(sub, { status: "authenticated", start_at: startAt, current_end: null });
+    Object.assign(sub, { status: "authenticated", start_at: startAt, current_end: null, current_start: null, paid_count: 0 });
     const cancel = client.subscriptions.cancel as ReturnType<typeof vi.fn>;
     // Razorpay: a cycle-end cancel of an authenticated subscription is refused; an immediate one cancels it.
     cancel.mockImplementation(async (_id: string, atCycleEnd: boolean) => {
@@ -164,9 +179,13 @@ describe("Razorpay", () => {
     await rzp.handleWebhook(rzpRequest({ event: "subscription.authenticated", payload: { subscription: { entity: { id: "sub_1" } } } }, "t1"));
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("trialing");
 
-    await rzp.cancelAtPeriodEnd!("sub_1", { type: "user", id: user.id, label: user.email });
+    await rzp.cancelAtPeriodEnd!("sub_1", me());
     expect(cancel).toHaveBeenCalledWith("sub_1", false);
-    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.status).toBe("canceled");
+    const row = (await store.billing.getSubscription("razorpay", "sub_1"))!;
+    expect(row).toMatchObject({ status: "trialing", cancelAtPeriodEnd: true, currentPeriodEnd: new Date(startAt * 1000).toISOString() });
+    // Razorpay's cancelled webhook re-fetches the same object: the trial still runs to its end.
+    await rzp.handleWebhook(rzpRequest({ event: "subscription.cancelled", payload: { subscription: { entity: { id: "sub_1" } } } }, "t2"));
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))).toMatchObject({ status: "trialing", cancelAtPeriodEnd: true });
   });
 
   it("authenticated without a later start is not a trial: no access until the first charge", () => {
@@ -211,6 +230,21 @@ describe("Razorpay", () => {
     payment.refund_status = "partial";
     await rzp.handleWebhook(rzpRequest({ event: "refund.processed", payload: { refund: { entity: { id: "rfnd_2", payment_id: "pay_1" } } } }, "d4"));
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+  });
+
+  it("a refund that failed (refund.failed) gives a purchase's access back", async () => {
+    const { client, payment } = razorpayFake();
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    const notes = { userId: user.id, planKey: "pro", productId: "pro:one_time", interval: "one_time" };
+    await rzp.handleWebhook(rzpRequest({ event: "payment_link.paid", payload: { payment_link: { entity: { id: "plink_1", notes } } } }, "rf1"));
+    payment.refund_status = "full";
+    payment.status = "refunded";
+    await rzp.handleWebhook(rzpRequest({ event: "refund.processed", payload: { refund: { entity: { id: "rfnd_1", payment_id: "pay_1" } } } }, "rf2"));
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
+    payment.refund_status = null;
+    payment.status = "captured";
+    await rzp.handleWebhook(rzpRequest({ event: "refund.failed", payload: { refund: { entity: { id: "rfnd_1", payment_id: "pay_1", status: "failed" } } } }, "rf3"));
+    expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(false);
   });
 
   it("has no portal: the provider says so, and checkout makes a payment link for a one-time price", async () => {
@@ -340,14 +374,13 @@ describe("Stripe one-time purchases", () => {
       webhooks: { constructEventAsync: vi.fn(async (payload: string) => JSON.parse(payload)) },
     } as unknown as StripeClient;
     const stripe = createStripeProvider({ client, webhookSecret: "whsec_x", sink: billingWebhookSink });
-    const deliver = (id: string) =>
-      stripe.handleWebhook(
-        new Request("http://localhost/x", { method: "POST", headers: { "stripe-signature": "t=1,v1=ok" }, body: JSON.stringify({ id, type: "charge.refunded", data: { object: { id: "ch_3", payment_intent: "pi_3" } } }) }),
-      );
-    await deliver("evt_r1");
+    const deliver = (id: string, type: string, object: Record<string, unknown>) =>
+      stripe.handleWebhook(new Request("http://localhost/x", { method: "POST", headers: { "stripe-signature": "t=1,v1=ok" }, body: JSON.stringify({ id, type, data: { object } }) }));
+    await deliver("evt_r1", "charge.refunded", { id: "ch_3", object: "charge", payment_intent: "pi_3" });
     expect((await store.billing.listPurchases({ userId: user.id })).items[0].refunded).toBe(true);
-    pi.latest_charge.refunded = false; // the refund failed: Stripe put the money back with the merchant
-    await deliver("evt_r2");
+    // The refund fails: Stripe puts the money back with the merchant and sends refund.failed, naming the refund.
+    pi.latest_charge.refunded = false;
+    await deliver("evt_r2", "refund.failed", { id: "re_1", object: "refund", status: "failed", charge: "ch_3", payment_intent: "pi_3" });
     expect((await store.billing.listPurchases({ userId: user.id })).items[0]).toMatchObject({ refunded: false, chargedBack: false });
   });
 

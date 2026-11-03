@@ -265,6 +265,12 @@ export function createStripeProvider(options: StripeProviderOptions = {}): Billi
           const pi = idOf(dispute.payment_intent);
           if (dispute.status !== "lost" || !pi) return jsonResponse(202, { ignored: true });
           result = await syncPayment(pi, true);
+        } else if (event.type === "refund.failed" || event.type === "charge.refund.updated") {
+          // A refund that failed puts the money back with the merchant: re-fetch, and the purchase
+          // follows the charge (no longer refunded: access back). The event names the refund.
+          const pi = idOf((event.data.object as Stripe.Refund).payment_intent);
+          if (!pi) return jsonResponse(202, { ignored: true });
+          result = await syncPayment(pi);
         } else if (event.type === "charge.refunded") {
           const pi = idOf((event.data.object as Stripe.Charge).payment_intent);
           if (!pi) return jsonResponse(202, { ignored: true });

@@ -11,7 +11,8 @@ import { z } from "zod";
 import { CONTENT_KEYS, CONTENT_KEY_LIST, type ContentKey } from "@/core/content";
 import { planSchema, postCreateSchema } from "@/core/schemas";
 import { POST_KIND } from "@/lib/status";
-import { siteProfile, siteUrl } from "@/server/env";
+import { PAID_PROVIDERS, PRICE_ID_FIELD, PROVIDER_LABEL, chargedWhere } from "@/core/billing";
+import { billingProvider, siteProfile, siteUrl } from "@/server/env";
 import { renderMarkdown } from "@/server/markdown";
 import { getOverview } from "@/server/services/overview";
 import { RESTORABLE_ENTITIES } from "@/server/services/audit";
@@ -102,11 +103,10 @@ function plansManual() {
     model:
       "Plans are the cards on /pricing and what checkout sells. key is the stable id (free, pro …). A plan with no prices is free. At most one price per interval (month, year, one_time). contactSales shows \"Contact us\" instead of a checkout. highlighted marks the recommended card. sortOrder orders the cards. active: false hides a plan without deleting it.",
     money: "amountCents is an integer in minor units: $24.00 → 2400. currency is ISO 4217 lower case (usd).",
-    polar:
-      "amountCents is what the pricing page SHOWS. What a customer is CHARGED is the Polar product in polarProductId (billing is optional; with it off, paid plans show but can't be bought). When you change a price, the Polar product must be changed to match by a person with Polar access — say so in your reply. Never invent a product id; leave it null.",
+    billing: `amountCents is what the pricing page SHOWS. ${chargedWhere(billingProvider())} Each price has one id field per provider: ${PAID_PROVIDERS.map((p) => `${PRICE_ID_FIELD[p]} for ${PROVIDER_LABEL[p]}`).join(", ")}; only the one for the provider in use is read.`,
     tools: "plan_update changes some fields of one plan (send the whole prices or features array to change one item); plan_upsert writes a complete plan; plan_delete removes one (prefer active: false).",
     scopes:
-      "A write key edits a plan's copy and presentation: name, description, features, highlighted, contactSales, ctaLabel, active, sortOrder. Prices (amounts, intervals, Polar product ids), trialDays and plan_delete need an admin key, because they decide what customers are charged and which purchases unlock which plan.",
+      "A write key edits a plan's copy and presentation: name, description, features, highlighted, contactSales, ctaLabel, active, sortOrder. Prices (amounts, intervals, provider price ids), trialDays, limits, anything that could change which plan is the free plan, and plan_delete need an admin key, because they decide what customers are charged and get.",
     schema: toJsonSchema(planSchema),
   };
 }
@@ -125,7 +125,7 @@ function workflowManual() {
     scopes: {
       read: "Read everything that is neither a secret nor personal data: feedback senders' emails and names are withheld, and in the audit log only content, post, plan, feedback and seed entries show their before/after (user, subscriber, billing and key entries are withheld).",
       write: "read + edit and publish content and posts (except site.contactEmail); edit plans' copy and presentation; triage feedback; restore from the audit log.",
-      admin: "write + plan prices, Polar product ids, trials and deletion; site.contactEmail; users (roles, bans), subscribers, agent keys and personal data.",
+      admin: "write + plan prices, provider price ids, trials, limits and deletion; site.contactEmail; users (roles, bans), subscribers, agent keys and personal data.",
     },
   };
 }

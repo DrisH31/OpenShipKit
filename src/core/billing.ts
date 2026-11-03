@@ -21,6 +21,17 @@ export const PRICE_ID_FIELD = { polar: "polarProductId", stripe: "stripePriceId"
 export const PRICE_ID_LABEL: Record<PaidProviderId, string> = { polar: "Polar product id", stripe: "Stripe price id", razorpay: "Razorpay plan id" };
 
 /**
+ * For agents and admins: where what a customer is charged is set, for the provider in use (or every
+ * provider's field while billing is off). The one wording, so MCP tools don't each name a provider.
+ */
+export function chargedWhere(provider: PaidProviderId | "none"): string {
+  if (provider === "none") {
+    return `Billing is off, so paid plans show but can't be bought. Once a provider is on, what a customer is charged is set at that provider, in the price's ${PAID_PROVIDERS.map((p) => `${PRICE_ID_FIELD[p]} (${PROVIDER_LABEL[p]})`).join(", ")}.`;
+  }
+  return `What a customer is charged is set at ${PROVIDER_LABEL[provider]}, on the object in each price's ${PRICE_ID_FIELD[provider]} (${PRICE_ID_LABEL[provider]}). If a price changed here, the matching ${PROVIDER_LABEL[provider]} price must be changed by someone with ${PROVIDER_LABEL[provider]} access: say so in your reply. Never invent an id; leave it null.`;
+}
+
+/**
  * The id `provider` checks this price out by, and matches its webhooks against: the price's
  * provider field, or null when it hasn't been set (the price shows but can't be bought). A one-time
  * Razorpay price needs no Razorpay object (a payment link charges our amount), so its id is our own:
@@ -65,6 +76,21 @@ export interface CheckoutInput {
  */
 export type ProviderPrice = { amountCents: number | null; currency: string | null; interval: PriceInterval | "other" };
 
+/**
+ * How a provider call failed, in words a person can be shown: `refused` (the provider said no, with
+ * its reason), `no_answer` (a timeout, a 5xx: it may or may not have happened), `conflict` (the app's
+ * own state already says so, such as a cancel already requested).
+ */
+export class BillingProviderError extends Error {
+  constructor(
+    readonly kind: "refused" | "no_answer" | "conflict",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BillingProviderError";
+  }
+}
+
 /** One usage event as a provider receives it (BillingProvider.reportUsage). */
 export type UsageReport = { id: string; customerId: string; metric: string; quantity: number; occurredAt: string };
 
@@ -93,10 +119,10 @@ export interface BillingProvider {
   reportUsage?(event: UsageReport): Promise<void>;
   /**
    * What the provider charges for a price id (a Polar product, a Stripe price, a Razorpay plan), so
-   * /admin/plans can warn when the plan advertises something else. null: no such price. Not called
-   * for a price whose id the app makes up itself (a Razorpay one-time price).
+   * /admin/plans can warn when the plan advertises something else. null: no such price. "skip": an id
+   * the adapter makes up itself (a Razorpay one-time price, a payment link for the plan's own amount).
    */
-  describePrice?(id: string): Promise<ProviderPrice | null>;
+  describePrice?(id: string): Promise<ProviderPrice | null | "skip">;
   /**
    * Verify the signature, then apply the event through the DataStore
    * (idempotent via billing.claimWebhookEvent). Returns the HTTP response the

@@ -33,7 +33,8 @@ import { siteProfile, siteUrl } from "../env";
 import { currentOrg } from "../orgs";
 import { ServiceError } from "./errors";
 import { orgSeats, requireOrgPermission, teamsEnabled } from "./orgs";
-import { PRICE_ID_LABEL, priceIdFor } from "@/core/billing";
+import { BillingProviderError, PRICE_ID_LABEL, PROVIDER_LABEL, priceIdFor, type PaidProviderId } from "@/core/billing";
+import { recordAudit } from "./audit";
 
 /** Live subscriptions that grant a plan: an entitled status in its period, and a plan to grant. */
 function liveSubscriptions(subscriptions: Subscription[], now: number): (Subscription & { planKey: string })[] {
@@ -451,9 +452,11 @@ export async function listCancellable(user: User): Promise<Subscription[]> {
 
 /**
  * Stop a subscription this person pays for from renewing, through the provider's API (for a provider
- * with no portal). It runs to the end of the period. Only its payer may. The provider hands the new
- * state to the webhook sink, so the row changes (and is audited, as this person) the same way a
- * webhook would change it. Pressing it again after a failure part-way finishes the job.
+ * with no portal). It runs to the end of the period. Only its payer may. The provider records the
+ * request first (audited as this person, and refused if a press at the same time got there first),
+ * then asks; its new state goes through the webhook sink like any webhook. A failure comes back in
+ * words that say what happened: refused (with the provider's reason, and nothing changed), or no
+ * answer (marked as ending; if the provider renews it anyway, it renews here again).
  */
 export async function cancelSubscription(user: User, subscriptionId: string): Promise<void> {
   assertNotDemo(user);
@@ -463,8 +466,12 @@ export async function cancelSubscription(user: User, subscriptionId: string): Pr
   const sub = (await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 })).items.find((s) => s.id === subscriptionId);
   if (!sub) throw new ServiceError("not_found", "No such subscription of yours.");
   if (!isRenewing(sub)) throw new ServiceError("conflict", "It's already set to end, or has ended.");
-  // Audited once, by the sink, as this person (subscription.update with the real before and after).
-  await billing.cancelAtPeriodEnd(sub.providerSubscriptionId, { type: "user", id: user.id, label: user.email });
+  try {
+    await billing.cancelAtPeriodEnd(sub.providerSubscriptionId, { type: "user", id: user.id, label: user.email });
+  } catch (error) {
+    if (error instanceof BillingProviderError) throw new ServiceError(error.kind === "no_answer" ? "unavailable" : "conflict", error.message);
+    throw error;
+  }
 }
 
 /** Whether Manage billing can open a portal (Polar, Stripe) or the page offers Cancel instead (Razorpay). */
@@ -473,28 +480,46 @@ export async function billingHasPortal(): Promise<boolean> {
 }
 
 /**
- * Subscriptions that still renew at a provider other than the one configured, by provider: after
- * BILLING_PROVIDER changes, that provider's webhooks are refused (they can't be verified), so these
- * customers keep being charged while their access runs out at the period end. Logged at startup
- * (warnStrandedSubscriptions) and described in docs/billing.md#switching-providers.
+ * Subscriptions the app last saw renewing at a provider other than the one configured, by provider.
+ * After BILLING_PROVIDER changes, that provider's webhooks are refused (they can't be verified), so
+ * these rows never change on their own: the customers keep being charged there while access runs
+ * out here. No time filter: a row whose period has passed is the same customer, still charged. An
+ * admin clears them once handled (endStrandedSubscriptions). Shown on the admin overview and logged
+ * at startup; docs/billing.md#switching-providers.
  */
-export async function strandedSubscriptions(): Promise<Record<string, number>> {
+export async function strandedSubscriptions(): Promise<Partial<Record<PaidProviderId, number>>> {
   const current = (await getBilling())?.id ?? "none";
+  const counts = await (await getData()).billing.countRenewingByProvider();
+  return Object.fromEntries(Object.entries(counts).filter(([p, n]) => p !== current && (n ?? 0) > 0));
+}
+
+/**
+ * An admin's "handled": end every subscription still renewing at `provider` (not the one configured),
+ * once they've been cancelled there or the people told. Their access ends now; each row is audited as
+ * the admin. Refused for the provider in use, whose own webhooks keep its rows true.
+ */
+export async function endStrandedSubscriptions(admin: User, provider: PaidProviderId): Promise<number> {
+  assertNotDemo(admin);
+  if (admin.role !== "admin") throw new ServiceError("forbidden", "Only an admin can do that.");
+  if ((await getBilling())?.id === provider) throw new ServiceError("invalid", `${PROVIDER_LABEL[provider]} is the provider in use: its webhooks keep these subscriptions up to date.`);
   const data = await getData();
-  const out: Record<string, number> = {};
-  const now = Date.now();
+  // Collect first, then end: ending rows while paging would shift the pages under the cursor.
+  const stranded: Subscription[] = [];
   for (const status of RENEWING_STATUSES) {
     let cursor: string | undefined;
     do {
       const page = await data.billing.listSubscriptions({ status, limit: 200, cursor });
-      // Still inside its period: one whose period has passed was ended at the old provider (whose
-      // cancel webhook we refused) or will be, so it stops counting on its own.
-      const live = (s: Subscription) => !s.currentPeriodEnd || Date.parse(s.currentPeriodEnd) > now;
-      for (const s of page.items) if (s.provider !== current && isRenewing(s) && live(s)) out[s.provider] = (out[s.provider] ?? 0) + 1;
+      stranded.push(...page.items.filter((s) => s.provider === provider && isRenewing(s)));
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
   }
-  return out;
+  const actor = { type: "user" as const, id: admin.id, label: admin.email };
+  for (const sub of stranded) {
+    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = sub; // eslint-disable-line @typescript-eslint/no-unused-vars
+    const after = await data.billing.upsertSubscription({ ...rest, status: "canceled", cancelAtPeriodEnd: false, currentPeriodEnd: new Date().toISOString() });
+    await recordAudit(actor, "subscription.update", "subscription", sub.id, sub, after);
+  }
+  return stranded.length;
 }
 
 /** Startup: say loudly when people still pay a provider this site no longer listens to. Never throws. */
@@ -510,38 +535,51 @@ export async function warnStrandedSubscriptions(): Promise<void> {
   }
 }
 
-export type PriceCheck = { provider: string; problems: string[] };
+export type PriceCheck = { provider: string; problems: string[]; unchecked: string[] };
 
 /**
  * For /admin/plans/<key>: whether what the plan shows matches what the provider charges for each of its
  * prices (amount, currency, interval). The pricing page shows the plan's amount; the customer pays the
- * provider's. Each price is checked on its own: one that can't be checked says so, and the others
- * still report. Skips a price whose id the app makes up (a Razorpay one-time price: a payment link for
- * the plan's own amount). null when billing is off or the provider can't say. Admin pages only.
+ * provider's. Each price is checked on its own: one the provider couldn't answer for goes in
+ * `unchecked`, and the others still report. null when billing is off or the provider can't say.
+ * Admin pages only: it calls the provider.
  */
 export async function checkPlanPrices(plan: Plan): Promise<PriceCheck | null> {
   const billing = await getBilling();
   if (!billing?.describePrice) return null;
   const { formatPrice } = await import("@/shared/money");
   const word = { month: "monthly", year: "yearly", one_time: "one-time" } as const;
-  const checked = plan.prices.filter((p) => p.amountCents > 0 && !(billing.id === "razorpay" && p.interval === "one_time"));
-  const results = await Promise.allSettled(
-    checked.map(async (price) => {
-      const id = priceIdFor(plan, price, billing.id);
-      if (!id) return [];
-      const name = `${word[price.interval][0].toUpperCase()}${word[price.interval].slice(1)} (${id})`;
-      const at = await billing.describePrice!(id).catch((error: unknown) => {
-        throw new Error(`${name}: couldn't ask ${billing.label} (${error instanceof Error ? error.message : "no answer"}).`);
-      });
-      if (!at) return [`${name}: ${billing.label} has no such price.`];
-      const out: string[] = [];
-      if (at.interval === "other") out.push(`${name}: ${billing.label} bills it on another schedule (not once a ${price.interval === "year" ? "year" : "month"}).`);
-      else if (at.interval !== price.interval) out.push(`${name}: ${billing.label} bills it ${word[at.interval]}.`);
-      if (at.currency && at.currency.toLowerCase() !== price.currency.toLowerCase()) out.push(`${name}: ${billing.label} charges in ${at.currency.toUpperCase()}, the plan shows ${price.currency.toUpperCase()}.`);
-      else if (at.amountCents !== null && at.amountCents !== price.amountCents)
-        out.push(`${name}: ${billing.label} charges ${formatPrice(at.amountCents, price.currency)}${price.perSeat ? " per seat" : ""}, the plan shows ${formatPrice(price.amountCents, price.currency)}.`);
-      return out;
-    }),
+  const problems: string[] = [];
+  const unchecked: string[] = [];
+  await Promise.all(
+    plan.prices
+      .filter((p) => p.amountCents > 0)
+      .map(async (price) => {
+        const id = priceIdFor(plan, price, billing.id);
+        if (!id) return;
+        const name = `${word[price.interval][0].toUpperCase()}${word[price.interval].slice(1)} (${id})`;
+        let at: Awaited<ReturnType<NonNullable<typeof billing.describePrice>>>;
+        try {
+          at = await billing.describePrice!(id);
+        } catch (error) {
+          unchecked.push(`${name}: ${billing.label} didn't answer (${error instanceof Error ? error.message : "no reason given"}).`);
+          return;
+        }
+        if (at === "skip") return;
+        if (!at) {
+          problems.push(`${name}: ${billing.label} has no such price.`);
+          return;
+        }
+        if (at.interval !== price.interval) {
+          const schedule = at.interval === "other" ? "on another schedule" : word[at.interval];
+          problems.push(price.interval === "one_time" ? `${name}: ${billing.label} bills it ${schedule}; the plan sells it once.` : `${name}: ${billing.label} bills it ${schedule}, not ${word[price.interval]}.`);
+        }
+        if (at.currency && at.currency.toLowerCase() !== price.currency.toLowerCase()) problems.push(`${name}: ${billing.label} charges in ${at.currency.toUpperCase()}, the plan shows ${price.currency.toUpperCase()}.`);
+        else if (at.amountCents !== null && at.amountCents !== price.amountCents)
+          problems.push(`${name}: ${billing.label} charges ${formatPrice(at.amountCents, price.currency)}${price.perSeat ? " per seat" : ""}, the plan shows ${formatPrice(price.amountCents, price.currency)}.`);
+      }),
   );
-  return { provider: billing.label, problems: results.flatMap((r) => (r.status === "fulfilled" ? r.value : [String((r.reason as Error).message)])) };
+  // In the plan's own price order, whatever order the provider answered in.
+  const order = (line: string) => plan.prices.findIndex((p) => line.includes(`(${priceIdFor(plan, p, billing.id)})`));
+  return { provider: billing.label, problems: problems.sort((a, b) => order(a) - order(b)), unchecked };
 }

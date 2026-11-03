@@ -512,6 +512,16 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         expect(Date.parse(updated.updatedAt)).toBeGreaterThan(Date.parse(created.updatedAt));
 
         expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.status).toBe("canceled");
+        // requestCancel: a compare-and-set; only one of two at once gets the row.
+        const live = await store.billing.upsertSubscription({ ...input, status: "active", cancelAtPeriodEnd: false, currentPeriodEnd: "2099-01-01T00:00:00.000Z" });
+        const counts = await store.billing.countRenewingByProvider();
+        expect(counts.polar ?? 0).toBeGreaterThanOrEqual(1);
+        const [a, b] = await Promise.all([store.billing.requestCancel("polar", input.providerSubscriptionId), store.billing.requestCancel("polar", input.providerSubscriptionId)]);
+        expect([a, b].filter(Boolean)).toHaveLength(1);
+        expect((a ?? b)).toMatchObject({ id: live.id, cancelAtPeriodEnd: false });
+        expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.cancelAtPeriodEnd).toBe(true);
+        expect(await store.billing.requestCancel("polar", "no_such_sub")).toBeNull();
+        expect((await store.billing.countRenewingByProvider()).polar ?? 0).toBe((counts.polar ?? 0) - 1);
         const started = await store.billing.upsertSubscription({ ...input, currentPeriodStart: "2026-10-31T00:00:00.000Z" });
         expect(started.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");
         expect((await store.billing.getSubscription("polar", input.providerSubscriptionId))?.currentPeriodStart).toBe("2026-10-31T00:00:00.000Z");

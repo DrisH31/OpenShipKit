@@ -520,7 +520,7 @@ We share personal data only with providers that need it to run the Service, and 
 | Resend | Delivering our emails | Your email address and the email’s content | [Region] |
 | [GitHub / Google] | Optional sign-in, only if you choose it | That you are signing in to the Service | [Region] |
 
-[Delete Polar if you don’t take payments, and Resend if you send email another way. Add anything else you connect.]
+[Delete Polar if you don’t take payments, and Resend if you send email another way. With another payment provider instead of Polar, replace the Polar row: a payment processor that isn't a merchant of record makes you the seller, and it processes payment data for you. Add anything else you connect.]
 
 **Polar is the merchant of record** for purchases: it is the seller of record, handles payment and sales tax, and processes your payment data as an independent controller under its own privacy policy.
 
@@ -631,7 +631,7 @@ You keep all rights to the content you put into the Service. You give us a limit
 - **Price changes** apply from your next billing period, and we’ll give you at least [30] days’ notice.
 - **Refunds:** [Describe your policy — e.g. “If you’re not happy within 14 days of your first payment, email us for a full refund.”] Nothing in these terms limits any right to a refund or cancellation that consumer law gives you.
 
-[If you don’t charge for the Service, replace this section with one sentence saying it is free, and delete the references to Polar.]
+[If you don’t charge for the Service, replace this section with one sentence saying it is free, and delete the references to Polar. With a payment provider that isn't a merchant of record, you are the seller: replace the reseller paragraph with your own seller details, refund terms and how tax is charged, and name the provider as your payment processor.]
 
 ## 6. Our intellectual property
 

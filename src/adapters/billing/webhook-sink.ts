@@ -235,12 +235,18 @@ async function applySubscription(state: ProviderSubscriptionState, opts: { actor
   const planKey = plan?.planKey ?? planFromCheckout(state);
   if (!planKey) warnUnmatched(provider, `subscription ${state.providerSubscriptionId}`, state.productId);
   await rememberCustomer(provider, userId, state.providerCustomerId);
-  // A provider that can't report a pending cancellation: keep the one we recorded (from our own
-  // cancel request) while the subscription is still on; once it has ended, there is nothing to keep.
+  // A provider that can't report a pending cancellation (Razorpay): keep the one we recorded from our
+  // own cancel request, but only within the period it was recorded in. A re-fetch with a later period
+  // end means the provider charged again, so the cancel didn't take (a timeout, a crash before the
+  // call): it's dropped and said loudly, and Cancel is offered again. Never kept on a word alone.
   let cancelAtPeriodEnd = state.cancelAtPeriodEnd;
   if (state.cancelAtPeriodEndKnown === false && !cancelAtPeriodEnd && state.status !== "canceled") {
     const before = await (await getData()).billing.getSubscription(provider, state.providerSubscriptionId);
-    cancelAtPeriodEnd = before?.cancelAtPeriodEnd ?? false;
+    if (before?.cancelAtPeriodEnd) {
+      const samePeriod = sameInstant(before.currentPeriodEnd, normalizeInstant(state.currentPeriodEnd));
+      if (samePeriod) cancelAtPeriodEnd = true;
+      else log(provider, `subscription ${state.providerSubscriptionId}: renewed after a cancel recorded here, so the cancel didn't reach ${provider}; it renews again and can be cancelled again`, true);
+    }
   }
   const changed = await upsertSubscription({
     userId,
@@ -288,10 +294,18 @@ async function applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult
   return changed ? "applied" : "unchanged";
 }
 
+async function requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor): Promise<boolean> {
+  const before = await (await getData()).billing.requestCancel(provider, providerSubscriptionId);
+  if (!before) return false;
+  await recordAudit(actor, "subscription.update", "subscription", before.id, before, { ...before, cancelAtPeriodEnd: true });
+  return true;
+}
+
 /** The sink the Polar adapter uses by default. */
 export const billingWebhookSink: BillingWebhookSink = {
   applySubscription,
   applyOrder,
+  requestCancel,
   async markEventProcessed(provider, eventId) {
     return (await getData()).billing.claimWebhookEvent(provider, eventId);
   },

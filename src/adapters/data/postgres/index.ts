@@ -24,6 +24,7 @@ import { ABANDONED_ERROR, DataError, clampGrowthDays, clampLimit, type DataStore
 import {
   ENTITLED_STATUSES,
   PAST_DUE_GRACE_DAYS,
+  RENEWING_STATUSES,
   growthDays,
   type AgentKey,
   type AuditEntry,
@@ -809,6 +810,23 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
             .returning(),
         );
         return toSubscription(row);
+      },
+      async countRenewingByProvider() {
+        const rows = await db()
+          .select({ provider: subscriptions.provider, n: sql<string | number>`count(*)` })
+          .from(subscriptions)
+          .where(and(inArray(subscriptions.status, [...RENEWING_STATUSES]), eq(subscriptions.cancelAtPeriodEnd, false)))
+          .groupBy(subscriptions.provider);
+        return Object.fromEntries(rows.map((r) => [r.provider, Number(r.n)]));
+      },
+      async requestCancel(provider, providerSubscriptionId) {
+        // Atomic: only the update that flips the flag gets a row back. Before it, the flag was false.
+        const [row] = await db()
+          .update(subscriptions)
+          .set({ cancelAtPeriodEnd: true, updatedAt: now })
+          .where(and(eq(subscriptions.provider, provider), eq(subscriptions.providerSubscriptionId, providerSubscriptionId), eq(subscriptions.cancelAtPeriodEnd, false)))
+          .returning();
+        return row ? { ...toSubscription(row), cancelAtPeriodEnd: false } : null;
       },
       async getSubscription(provider, providerSubscriptionId) {
         const [row] = await db()

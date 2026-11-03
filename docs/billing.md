@@ -140,8 +140,8 @@ receipts in your Stripe dashboard.
    `customer.subscription.created`, `customer.subscription.updated`,
    `customer.subscription.deleted`, `customer.subscription.paused`,
    `customer.subscription.resumed`, `checkout.session.completed`,
-   `checkout.session.async_payment_succeeded`, `charge.refunded` and
-   `charge.dispute.closed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
+   `checkout.session.async_payment_succeeded`, `charge.refunded`,
+   `refund.failed` and `charge.dispute.closed`. Put its signing secret in `STRIPE_WEBHOOK_SECRET`.
 3. **The customer portal.** Settings → Billing → Customer portal: turn on
    cancelling, updating payment methods, and **switching plans** (add each
    plan's products, so a subscriber can move between them). **Manage billing**
@@ -171,7 +171,8 @@ UPI, cards and netbanking. GST invoices are set up in its dashboard.
    `subscription.activated`, `subscription.charged`, `subscription.pending`,
    `subscription.halted`, `subscription.cancelled`, `subscription.completed`,
    `subscription.paused`, `subscription.resumed`, `subscription.updated`,
-   `payment_link.paid`, `refund.processed` and `payment.dispute.lost`.
+   `payment_link.paid`, `refund.processed`, `refund.failed` and
+   `payment.dispute.lost`.
 3. **Keys.** `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`
    (`rzp_test_…` while testing).
 
@@ -180,12 +181,17 @@ What's different about Razorpay:
 - **No customer portal.** The billing page lists the person's renewing
   subscriptions with a **Cancel at period end** button instead of Manage
   billing. Updating a card goes through Razorpay's own emails and links.
-- **Cancel records the cancellation first, then asks Razorpay.** If Razorpay
-  refuses, the subscription goes back to renewing and the person sees why; if
-  the answer is lost (a timeout), it stays "ending" until the next webhook
-  settles it. A **trial** (or a mandate whose first charge hasn't happened) is
-  cancelled straight away: Razorpay can't cancel those "at the end of the
-  cycle", and nothing has been charged.
+- **Cancel records the cancellation first, then asks Razorpay** (Razorpay takes
+  one cancel call per subscription, and a second press at the same time stops
+  before it reaches Razorpay). If Razorpay refuses, the subscription goes back
+  to renewing and the person sees Razorpay's reason. If the answer is lost (a
+  timeout), it shows as ending, and the person is told so; if Razorpay then
+  charges a new period anyway, it shows as renewing again and can be cancelled
+  again. The app keeps a cancellation it recorded only within the period it was
+  recorded in.
+- **A trial** (or a mandate whose first charge hasn't happened) is cancelled at
+  Razorpay straight away, since Razorpay can't cancel those "at the end of the
+  cycle". Nothing is charged, and the trial still runs to its end here.
 - **Changing plan mid-cycle isn't offered.** Razorpay's subscription update
   works only for some payment methods, so the app keeps one rule: cancel, and
   buy the new plan once the old one ends.
@@ -216,9 +222,6 @@ What the app doesn't do:
   keeps it running until you cancel it in their dashboard; the webhook then ends
   access as usual. That's deliberate: whether to keep a customer who disputed
   one invoice is your call, not the app's.
-Revoked stays revoked: a later event for the same payment can't hand it back.
-A disputed subscription payment is left to the subscription's own status at
-the provider.
 
 ## Checking prices
 
@@ -234,8 +237,10 @@ webhooks are refused (they can't be verified), so its subscribers **keep being
 charged** while their access runs out at the period end. The server logs how
 many there are at startup (`… still renew, but billing is now …`). Before
 switching, cancel those subscriptions at the old provider (or let them run
-out), and ask the people to subscribe again. Their past purchases and history
-stay in the database.
+out), and ask the people to subscribe again. The admin overview lists them under
+"Needs you" until you mark them handled there, which ends their access here
+(each change is in the audit log). Their past purchases and history stay in the
+database.
 
 ## Variables
 
