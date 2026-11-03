@@ -944,6 +944,24 @@ export function describeDataContract(name: string, makeStore: () => Promise<Data
         await store.orgs.createInvitation({ orgId: org.id, email: expired.email, role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7) });
       });
 
+      it("checks the seat limit in the same step as the write, so concurrent invitations can't overshoot", async () => {
+        const owner = await newUser();
+        const org = await store.orgs.create({ name: "Seats", slug: uniq("seats-"), ownerId: owner.id });
+        const results = await Promise.allSettled(
+          [0, 1, 2, 3, 4].map((i) =>
+            store.orgs.createInvitation({ orgId: org.id, email: `seat${i}-${uniq("e")}@example.com`, role: "member", tokenHash: hash(), invitedBy: owner.id, expiresAt: days(7), seatLimit: 3 }),
+          ),
+        );
+        expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2); // owner + 2 open invitations = 3
+        for (const r of results) if (r.status === "rejected") expect(r.reason).toMatchObject({ name: "DataError", code: "limit" });
+
+        // Joining adds nobody; it's refused only when the team is already over a (reduced) limit.
+        const open = await store.orgs.listInvitations(org.id);
+        const joiner = await newUser({ email: open[0].email });
+        await expectDataError(store.orgs.acceptInvitation(open[0].id, joiner.id, { seatLimit: 2 }), "limit");
+        expect((await store.orgs.acceptInvitation(open[0].id, joiner.id, { seatLimit: 3 }))?.member.userId).toBe(joiner.id);
+      });
+
       it("deleting an organisation takes its members and invitations; deleting a user takes their memberships", async () => {
         const [owner, member] = [await newUser(), await newUser()];
         const org = await store.orgs.create({ name: "Del", slug: uniq("del-"), ownerId: owner.id });

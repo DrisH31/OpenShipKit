@@ -134,6 +134,9 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
     const u = m ? t.users.get(m.userId) : undefined;
     return m && u ? { orgId: m.orgId, userId: m.userId, role: m.role, email: u.email, name: u.name, joinedAt: m.joinedAt } : null;
   };
+  const seatsUsed = (orgId: string) =>
+    [...t.orgMembers.values()].filter((m) => m.orgId === orgId).length +
+    [...t.invitations.values()].filter((i) => i.orgId === orgId && invitationState(i) === "pending").length;
   const publicInvitation = ({ tokenHash: _hash, ...rest }: OrgInvitation & { tokenHash: string }): OrgInvitation => clone(rest); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   const store: DataStore = {
@@ -606,7 +609,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       async removeMember(orgId, userId) {
         return t.orgMembers.delete(`${orgId}:${userId}`);
       },
-      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt }) {
+      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt, seatLimit = null }) {
         if (!t.orgs.has(orgId)) throw new DataError("invalid", `No organisation ${orgId}`);
         if (invitedBy !== null && !t.users.has(invitedBy)) throw new DataError("invalid", `No user ${invitedBy}`);
         if (Number.isNaN(Date.parse(expiresAt))) throw new DataError("invalid", `expiresAt is not a valid date: "${expiresAt}"`);
@@ -615,6 +618,8 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         if (all.some((i) => i.tokenHash === tokenHash) || all.some((i) => i.orgId === orgId && i.email === e && !i.acceptedAt && !i.revokedAt)) {
           throw new DataError("conflict", "invitation: a row with the same unique key already exists");
         }
+        // No await between this check and the insert: one process, so it's atomic here.
+        if (seatLimit !== null && seatsUsed(orgId) + 1 > seatLimit) throw new DataError("limit", `All ${seatLimit} seats are in use.`);
         const inv = { id: randomUUID(), orgId, email: e, role, tokenHash, invitedBy, createdAt: now(), expiresAt: new Date(expiresAt).toISOString(), acceptedAt: null, revokedAt: null };
         t.invitations.set(inv.id, inv);
         return publicInvitation(inv);
@@ -639,9 +644,11 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
         i.revokedAt = now();
         return publicInvitation(i);
       },
-      async acceptInvitation(id, userId) {
+      async acceptInvitation(id, userId, opts = {}) {
         const i = t.invitations.get(id);
         if (!i || invitationState(i) !== "pending") return null;
+        const seatLimit = opts.seatLimit ?? null;
+        if (seatLimit !== null && seatsUsed(i.orgId) > seatLimit) throw new DataError("limit", `All ${seatLimit} seats are in use.`);
         const k = `${i.orgId}:${userId}`;
         if (!t.users.has(userId)) throw new DataError("invalid", `No user ${userId}`);
         if (t.orgMembers.has(k)) throw new DataError("conflict", "membership: a row with the same unique key already exists");

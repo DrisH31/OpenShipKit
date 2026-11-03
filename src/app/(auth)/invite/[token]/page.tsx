@@ -4,7 +4,8 @@
 // or sign up and back here. Signed in with the invited address, it offers
 // Accept (acceptInviteAction, in the dashboard's team actions, which require
 // a session). 404 when teams are off or the link matches nothing. Never
-// indexed (the auth layout), and the token never leaves this page's URL.
+// indexed (the auth layout). The token stays on this site: in this page's URL
+// and, signed out, in the sign-in link's ?redirect back here.
 //
 
 import type { Metadata } from "next";

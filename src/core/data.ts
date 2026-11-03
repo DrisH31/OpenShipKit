@@ -229,15 +229,30 @@ export interface OrgsRepo {
   addMember(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
   setMemberRole(orgId: string, userId: string, role: OrgRole): Promise<OrgMember>;
   removeMember(orgId: string, userId: string): Promise<boolean>;
-  createInvitation(input: { orgId: string; email: string; role: OrgInvitation["role"]; tokenHash: string; invitedBy: string | null; expiresAt: string }): Promise<OrgInvitation>;
+  /**
+   * With `seatLimit`, refuses (DataError "limit") when members plus pending invitations would pass it,
+   * checked in the same transaction as the insert, so concurrent invitations can't overshoot.
+   */
+  createInvitation(input: {
+    orgId: string;
+    email: string;
+    role: OrgInvitation["role"];
+    tokenHash: string;
+    invitedBy: string | null;
+    expiresAt: string;
+    seatLimit?: number | null;
+  }): Promise<OrgInvitation>;
   getInvitation(id: string): Promise<OrgInvitation | null>;
   findInvitationByTokenHash(tokenHash: string): Promise<OrgInvitation | null>;
   /** Pending ones only unless `all`; newest first. */
   listInvitations(orgId: string, opts?: { all?: boolean }): Promise<OrgInvitation[]>;
   /** Closes an open invitation (not accepted, not revoked), expired ones included: that frees the address. Null otherwise. */
   revokeInvitation(id: string): Promise<OrgInvitation | null>;
-  /** Null when it isn't pending any more; DataError("conflict") when the user is already a member. */
-  acceptInvitation(id: string, userId: string): Promise<{ invitation: OrgInvitation; member: OrgMember } | null>;
+  /**
+   * Null when it isn't pending any more; DataError("conflict") when the user is already a member;
+   * with `seatLimit`, DataError("limit") when members plus pending invitations are already over it.
+   */
+  acceptInvitation(id: string, userId: string, opts?: { seatLimit?: number | null }): Promise<{ invitation: OrgInvitation; member: OrgMember } | null>;
 }
 
 /** What JobsRepo.failAbandoned() records as the job's lastError. */
@@ -292,7 +307,8 @@ export interface DataStore {
   growth(days: number, now?: Date): Promise<Growth>;
 }
 
-export type DataErrorCode = "conflict" | "not_found" | "invalid";
+/** limit: a write refused because a count it checks atomically is full (an organisation's seats). */
+export type DataErrorCode = "conflict" | "not_found" | "invalid" | "limit";
 
 /** The only errors an adapter throws on purpose. Anything else is a backend failure. */
 export class DataError extends Error {

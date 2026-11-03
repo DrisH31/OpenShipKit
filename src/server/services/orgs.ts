@@ -49,8 +49,14 @@ import { sendEmail } from "../email";
 import { orgInvitationTemplate } from "../email-templates";
 import { siteUrl, tenancy } from "../env";
 import { log } from "../log";
+import { rateLimit } from "../rate-limit";
 import { recordAudit } from "./audit";
 import { ServiceError, fromDataError, parseInput } from "./errors";
+
+/** Invitations a person may send in an hour, and an organisation in a day; and how many may wait at once. */
+const INVITES_PER_USER_PER_HOUR = 30;
+const INVITES_PER_ORG_PER_DAY = 100;
+const MAX_OPEN_INVITATIONS = 100;
 
 export function teamsEnabled(): boolean {
   return tenancy() === "org";
@@ -118,13 +124,21 @@ export async function orgSeats(orgId: string): Promise<Seats> {
   return { limit: bought.length ? Math.max(...bought) : null, used: members + invitations.length };
 }
 
-async function assertSeatFree(orgId: string, adding: "invite" | "join"): Promise<void> {
-  const { limit, used } = await orgSeats(orgId);
-  // Joining turns an open invitation into a member: it adds nobody to `used`.
-  const after = adding === "invite" ? used + 1 : used;
-  if (limit !== null && after > limit) {
-    throw new ServiceError("conflict", `All ${limit} seats are in use. An owner can add seats in Billing, or remove someone first.`, { reason: "no_seats" });
-  }
+/** The seat limit to hand the store, which checks it atomically with the write (DataError "limit"). */
+async function seatLimitOf(orgId: string): Promise<number | null> {
+  return (await orgSeats(orgId)).limit;
+}
+
+const noSeats = (limit: number | null) =>
+  new ServiceError("conflict", `All ${limit} seats are in use. An owner can add seats in Billing, or remove someone first.`, { reason: "no_seats" });
+
+/**
+ * Who pays for the organisation's subscription, while it renews: they can't leave or be removed
+ * until it's cancelled, or they'd be charged for a team they're no longer in, with no way to stop it.
+ */
+async function renewingPayer(orgId: string): Promise<string | null> {
+  const renewing = (await liveOrgSubscriptions(orgId)).find((s) => !s.cancelAtPeriodEnd);
+  return renewing?.userId ?? null;
 }
 
 // ---------------------------------------------------------------- organisations
@@ -195,7 +209,7 @@ export async function listMembers(user: User, orgId: string): Promise<OrgMember[
 export async function setMemberRole(user: User, orgId: string, targetUserId: string, role: OrgRole): Promise<OrgMember> {
   assertNotDemo(user);
   const { role: mine } = await requireOrgPermission(user, orgId, "members.setRole");
-  if (targetUserId === user.id) throw new ServiceError("conflict", "You can't change your own role. Ask another owner, or transfer ownership.");
+  if (targetUserId === user.id) throw new ServiceError("conflict", "You can't change your own role. To step down as owner, transfer ownership.");
   const target = await targetMember(orgId, targetUserId);
   if (!canManage(mine, target.role, role)) throw new ServiceError("forbidden", `Your role (${mine}) can't make a ${target.role} ${role === "admin" ? "an admin" : `a ${role}`}.`);
   if (target.role === role) return target;
@@ -210,6 +224,11 @@ export async function removeMember(user: User, orgId: string, targetUserId: stri
   const { role: mine } = await requireOrgPermission(user, orgId, "members.remove");
   const target = await targetMember(orgId, targetUserId);
   if (!canManage(mine, target.role)) throw new ServiceError("forbidden", `Your role (${mine}) can't remove a ${target.role}.`);
+  if ((await renewingPayer(orgId)) === targetUserId) {
+    throw new ServiceError("conflict", `${target.email} pays for this organisation's subscription. Cancel it in Billing first, or they'd keep paying for a team they're no longer in.`, {
+      reason: "payer",
+    });
+  }
   await (await getData()).orgs.removeMember(orgId, targetUserId);
   await recordAudit(actorOf(user), "org.member.remove", "org", orgId, { userId: targetUserId, role: target.role }, null);
 }
@@ -219,6 +238,9 @@ export async function leaveOrg(user: User, orgId: string): Promise<void> {
   const { role } = await requireOrgPermission(user, orgId, "org.leave");
   if (role === "owner" && (await ownersOf(orgId)).length === 1) {
     throw new ServiceError("conflict", "You're the only owner. Transfer ownership to someone first, or delete the organisation.");
+  }
+  if ((await renewingPayer(orgId)) === user.id) {
+    throw new ServiceError("conflict", "You pay for this organisation's subscription. Cancel it in Billing first, then leave.", { reason: "payer" });
   }
   await (await getData()).orgs.removeMember(orgId, user.id);
   await recordAudit(actorOf(user), "org.member.leave", "org", orgId, { userId: user.id, role }, null);
@@ -258,9 +280,17 @@ export async function inviteMember(user: User, orgId: string, input: { email: st
   if (!canManage(mine, role)) throw new ServiceError("forbidden", `Your role (${mine}) can't invite ${role === "admin" ? "an admin" : "a member"}.`);
   const data = await getData();
   if ((await data.orgs.listMembers(orgId)).some((m) => m.email === email)) throw new ServiceError("conflict", `${email} is already a member.`);
+  // Invitations send email to any address: limit them, per person and per organisation, so the
+  // site's sending domain can't be used to spam (the subject carries the organisation's name).
+  if (!rateLimit(`org:invite:user:${user.id}`, INVITES_PER_USER_PER_HOUR, 60 * 60_000).ok || !rateLimit(`org:invite:org:${orgId}`, INVITES_PER_ORG_PER_DAY, 24 * 60 * 60_000).ok) {
+    throw new ServiceError("rate_limited", "That's a lot of invitations at once. Try again later.");
+  }
+  const open = await data.orgs.listInvitations(orgId);
   // A resend replaces an open invitation to the same address: it doesn't take another seat.
-  const resend = (await data.orgs.listInvitations(orgId)).some((i) => i.email === email);
-  if (!resend) await assertSeatFree(orgId, "invite");
+  const resend = open.some((i) => i.email === email);
+  if (!resend && open.length >= MAX_OPEN_INVITATIONS) {
+    throw new ServiceError("conflict", `There are already ${MAX_OPEN_INVITATIONS} invitations waiting. Revoke some before sending more.`);
+  }
 
   // A second invitation to the same address replaces the first, expired or not: the old link stops working.
   for (const open of await data.orgs.listInvitations(orgId, { all: true })) {
@@ -269,7 +299,13 @@ export async function inviteMember(user: User, orgId: string, input: { email: st
 
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + INVITATION_TTL_DAYS * 86_400_000).toISOString();
-  const invitation = await store(() => data.orgs.createInvitation({ orgId, email, role, tokenHash: hashInvitationToken(token), invitedBy: user.id, expiresAt }));
+  const seatLimit = await seatLimitOf(orgId);
+  const invitation = await store(() => data.orgs.createInvitation({ orgId, email, role, tokenHash: hashInvitationToken(token), invitedBy: user.id, expiresAt, seatLimit })).catch(
+    (error: unknown) => {
+      if (error instanceof ServiceError && error.details && (error.details as { reason?: string }).reason === "limit") throw noSeats(seatLimit);
+      throw error;
+    },
+  );
   const url = `${siteUrl()}/invite/${token}`;
   try {
     await sendEmail({ to: email, ...(await orgInvitationTemplate({ orgName: org.name, inviterName: user.name ?? user.email, role, url, expiresInDays: INVITATION_TTL_DAYS })) });
@@ -323,13 +359,15 @@ export async function acceptInvitation(user: User, token: string): Promise<Org> 
   if (inv.email !== user.email.toLowerCase()) {
     throw new ServiceError("forbidden", `This invitation is for ${inv.email}. Sign in with that address to accept it.`);
   }
-  await assertSeatFree(inv.orgId, "join");
-  const result = await store(() => data.orgs.acceptInvitation(inv.id, user.id)).catch((error: unknown) => {
+  const seatLimit = await seatLimitOf(inv.orgId);
+  const result = await store(() => data.orgs.acceptInvitation(inv.id, user.id, { seatLimit })).catch((error: unknown) => {
+    if (error instanceof ServiceError && (error.details as { reason?: string } | undefined)?.reason === "limit") throw noSeats(seatLimit);
     if (error instanceof ServiceError && error.code === "conflict") throw new ServiceError("conflict", "You're already a member of this organisation.");
     throw error;
   });
   if (!result) throw new ServiceError("conflict", "That invitation was just used or revoked. Ask for a new one.");
-  const org = (await data.orgs.get(inv.orgId))!;
+  const org = await data.orgs.get(inv.orgId);
+  if (!org) throw new ServiceError("not_found", "That organisation was just deleted.");
   await recordAudit(actorOf(user), "org.join", "org", org.id, null, { userId: user.id, role: result.member.role, invitationId: inv.id });
   return org;
 }
@@ -341,17 +379,23 @@ export async function acceptInvitation(user: User, token: string): Promise<Org> 
  * it is the only owner of an organisation that has other members, and
  * returns the organisations it owns alone, which go with it.
  */
-export async function orgsBlockingDeletion(userId: string): Promise<{ blocking: Org[]; soleOwned: Org[] }> {
+export async function orgsBlockingDeletion(userId: string): Promise<{ blocking: Org[]; renewing: Org[]; soleOwned: Org[] }> {
   const data = await getData();
   const blocking: Org[] = [];
+  const renewingOrgs: Org[] = [];
   const soleOwned: Org[] = [];
   for (const { org, role } of await data.orgs.listForUser(userId)) {
     if (role !== "owner") continue;
     const members = await data.orgs.listMembers(org.id);
-    if (members.length === 1) soleOwned.push(org);
-    else if (members.filter((m) => m.role === "owner").length === 1) blocking.push(org);
+    // A team that would go with the account mustn't take a renewing subscription with it: whoever pays
+    // (perhaps someone no longer in it) would be charged for nothing.
+    const renewing = (await liveOrgSubscriptions(org.id)).some((s) => !s.cancelAtPeriodEnd);
+    if (members.length > 1) {
+      if (members.filter((m) => m.role === "owner").length === 1) blocking.push(org);
+    } else if (renewing) renewingOrgs.push(org);
+    else soleOwned.push(org);
   }
-  return { blocking, soleOwned };
+  return { blocking, renewing: renewingOrgs, soleOwned };
 }
 
 // ---------------------------------------------------------------- the site admin's view

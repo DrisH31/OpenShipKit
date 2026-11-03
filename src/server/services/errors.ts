@@ -47,7 +47,8 @@ export function parseInput<S extends z.ZodType>(schema: S, input: unknown): z.ou
 /** Map an adapter's DataError to a ServiceError; rethrow anything else. */
 export function fromDataError(error: unknown): never {
   if (error instanceof DataError) {
-    throw new ServiceError(error.code === "invalid" ? "invalid" : error.code, error.message);
+    if (error.code === "limit") throw new ServiceError("conflict", error.message, { reason: "limit" });
+    throw new ServiceError(error.code, error.message);
   }
   throw error;
 }

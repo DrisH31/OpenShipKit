@@ -163,8 +163,10 @@ and Open Graph cards are drawn by Satori, which can’t read CSS variables
 3:1 — DESIGN.md has the check. Everything else stays the system’s.
 
 ### Gate a feature behind a plan
-Server side: `await hasPlan(user.id, ["pro"])` from `src/server/services/billing.ts`.
-It reads webhook-written rows only. Never trust `?success=1` or the client.
+Server side: `await requirePlan(user, ["pro"])` from `src/server/services/billing.ts` (redirects to
+pricing), or `await hasPlan(user.id, ["pro"])` for a yes/no. With teams on (OPENSHIPKIT_TENANCY=org),
+`requirePlan` checks the current organisation's plan (`hasOrgPlan`), and a personal plan still counts.
+Both read webhook-written rows only. Never trust `?success=1` or the client.
 
 ## Environment
 

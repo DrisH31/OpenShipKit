@@ -53,7 +53,7 @@ actions, which comes with the first product feature that needs it.
 |---|---|
 | 2.1 | Organisations as app-owned DataStore tables: create, switch, rename, delete |
 | 2.2 | Invitations by email: accept, expire, revoke |
-| 2.3 | Org roles (owner, admin, member) and a permission map in `src/core`, checked by `requireOrgRole()` |
+| 2.3 | Org roles (owner, admin, member) and a permission map in `src/core`, checked by `requireOrgPermission()` |
 | 2.4 | Org-scoped billing: a subscription belongs to an org, with seats |
 | 2.5 | A permission matrix test: every role against every org action |
 | 2.6 | MCP and admin aware of orgs; audit rows carry the org |

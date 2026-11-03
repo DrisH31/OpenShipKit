@@ -16,6 +16,7 @@ import type { PlanInput, User } from "@/core/types";
 let store: DataStore;
 vi.mock("@/server/data", () => ({ getData: async () => store }));
 vi.mock("@/server/email", () => ({ sendEmail: async () => ({ id: "em" }) }));
+vi.mock("@/server/auth", () => ({ getAuth: async () => ({ id: "better-auth", deleteIdentity: async () => {}, revokeSessions: async () => {} }) }));
 
 const h = vi.hoisted(() => ({
   checkouts: [] as CheckoutInput[],
@@ -50,6 +51,8 @@ vi.mock("next/navigation", () => ({
 
 const orgs = await import("@/server/services/orgs");
 const billing = await import("@/server/services/billing");
+const { deleteUser } = await import("@/server/services/users");
+const self = (u: User) => ({ type: "user" as const, id: u.id, label: u.email });
 
 const TEAM_PLAN: PlanInput = {
   key: "team",
@@ -246,5 +249,94 @@ describe("the portal and deleting", () => {
     const { owner, org } = await teamWith(0);
     await webhookFor(owner, org);
     await expect(orgs.deleteOrg(owner, org.id)).rejects.toMatchObject({ code: "conflict", message: expect.stringMatching(/keep renewing/) });
+  });
+});
+
+describe("whoever pays (review: every way out says what happens to the money)", () => {
+  it("can't leave or be removed while the subscription renews, and can once it's set to end", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(members[0], org); // a member pays (they bought it, then ownership moved)
+    await expect(orgs.leaveOrg(members[0], org.id)).rejects.toMatchObject({ details: { reason: "payer" } });
+    await expect(orgs.removeMember(owner, org.id, members[0].id)).rejects.toMatchObject({ details: { reason: "payer" } });
+    await webhookFor(members[0], org, { cancelAtPeriodEnd: true });
+    await orgs.removeMember(owner, org.id, members[0].id);
+  });
+
+  it("can still open the portal to cancel after handing over ownership", async () => {
+    const { owner, org, members } = await teamWith(1);
+    await webhookFor(owner, org);
+    await orgs.transferOwnership(owner, org.id, members[0].id); // owner is an admin now, and still pays
+    await expect(billing.openOrgPortal(owner, org.id)).resolves.toBe("https://polar.example.com/portal");
+    await expect(billing.openOrgPortal(members[0], org.id)).rejects.toMatchObject({ details: { reason: "managed_by_other" } });
+    const plain = await person("plain");
+    await store.orgs.addMember(org.id, plain.id, "member");
+    await expect(billing.openOrgPortal(plain, org.id)).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("deleting an account never takes a renewing team with it, nor cuts a team's paid time short", async () => {
+    // C bought for the team and handed it to A; the team is A's alone, and C is out (subscription set to end later).
+    const c = await person("c");
+    const org = await orgs.createOrg(c, { name: "Handed Over" });
+    const a = await person("a");
+    await store.orgs.addMember(org.id, a.id, "member");
+    await webhookFor(c, org);
+    await orgs.transferOwnership(c, org.id, a.id);
+    await expect(deleteUser(a.id, self(a))).rejects.toMatchObject({ code: "conflict" }); // A isn't alone yet: C is still in it
+    await webhookFor(c, org, { cancelAtPeriodEnd: true });
+    await orgs.leaveOrg(c, org.id);
+    // Now A owns it alone, and the subscription still runs: A can delete the account only once it's set to end... it is.
+    await webhookFor(c, org, { cancelAtPeriodEnd: false }); // C changed their mind in Polar: it renews again
+    await expect(deleteUser(a.id, self(a))).rejects.toMatchObject({ message: expect.stringMatching(/keep renewing/) });
+    expect(await store.orgs.get(org.id)).not.toBeNull();
+
+    // The buyer of a team's plan that is still running out its paid period can't delete the account yet.
+    await webhookFor(c, org, { cancelAtPeriodEnd: true });
+    await expect(deleteUser(c.id, self(c))).rejects.toMatchObject({ message: expect.stringMatching(/still running/) });
+    expect(await billing.hasOrgPlan(org.id)).toBe(true);
+  });
+});
+
+describe("turning teams on", () => {
+  it("keeps a personal plan bought before: requirePlan still lets its holder through", async () => {
+    const early = await person("early");
+    await billingWebhookSink.applySubscription({
+      provider: "polar",
+      providerSubscriptionId: "psub_personal",
+      providerCustomerId: "pcus_early",
+      userIdHints: [early.id],
+      productId: "prod_team_month",
+      planKeyHint: null,
+      checkoutProductId: null,
+      orgIdHint: null,
+      seats: null,
+      interval: "month",
+      status: "active",
+      currentPeriodEnd: PERIOD_END,
+      cancelAtPeriodEnd: false,
+    });
+    await expect(billing.requirePlan(early, ["team"])).resolves.toBeUndefined(); // no organisation needed
+  });
+});
+
+describe("invitations can't be used to send mail at will", () => {
+  it("are limited per person per hour", async () => {
+    const { owner, org } = await teamWith(0);
+    let refused = 0;
+    for (let i = 0; i < 35; i++) {
+      await orgs.inviteMember(owner, org.id, { email: `spam${i}@example.com`, role: "member" }).catch((e: { code?: string }) => {
+        if (e.code === "rate_limited") refused += 1;
+      });
+    }
+    expect(refused).toBe(5);
+  });
+});
+
+describe("seats under concurrency", () => {
+  it("simultaneous invitations can't overshoot the seats bought", async () => {
+    const { owner, org } = await teamWith(1); // 2 used
+    await webhookFor(owner, org, { seats: 3 });
+    const results = await Promise.allSettled([0, 1, 2].map((i) => orgs.inviteMember(owner, org.id, { email: `race${i}@example.com`, role: "member" })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect((await orgs.orgSeats(org.id)).used).toBe(3);
   });
 });

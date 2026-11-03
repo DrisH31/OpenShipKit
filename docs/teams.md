@@ -27,9 +27,10 @@ organisation.
 | Manage billing, delete the organisation, transfer ownership | | | ✓ |
 
 The one list is `PERMISSIONS` in `src/core/orgs.ts`, checked with `can()`.
-`tests/orgs.test.ts` runs every role, plus someone outside the organisation,
-against every action through the real services. Changing who may do what is
-a one-line change there, and that test shows exactly what moved.
+`tests/orgs.test.ts` holds the same table written out and runs every role,
+plus someone outside the organisation, against every action through the real
+services. Changing who may do what therefore means changing both, and the test
+fails until you do.
 
 Rules the services keep, whatever the page shows:
 
@@ -43,6 +44,11 @@ Rules the services keep, whatever the page shows:
   organisation with other members. Organisations it owns alone are deleted
   with it.
 - **Every change is audited** under the organisation's id (`/admin/audit`).
+- **Whoever pays can't walk away from the bill.** The person paying for a
+  renewing subscription can't leave or be removed until it's cancelled. They
+  can still open Manage billing whatever their role, for example after
+  handing over ownership. Deleting an account is refused while it would take
+  a team with a renewing subscription, or cut short a team's paid time.
 
 ## Invitations
 
@@ -51,12 +57,16 @@ An admin or owner invites an address with a role. The email holds a link
 stored, so a database backup can't be used to join anyone's team.
 
 - The link works **once**, for **7 days**, and only for an account with the
-  invited address. A signed-out visitor is sent to sign in or sign up and
+  invited address. That proves the person controls the address while sign-up
+  requires email verification (the production default). A signed-out visitor is sent to sign in or sign up and
   then back to the link.
 - Inviting the same address again replaces the open invitation, and the old
   link stops working. Admins and owners can revoke one from the Team page.
 - If the email can't be sent, the invitation still exists and the service
   returns the link, so it can be passed on another way.
+- **Limits, so invitations can't be used to send spam from your domain.** 30
+  per person per hour, 100 per organisation per day, and at most 100 waiting
+  at once.
 
 ## Building on it
 
@@ -82,7 +92,8 @@ With teams on, the organisation holds the plan, and everyone in it shares it:
 
 - **Gates:** `requirePlan(user, ["pro"])` checks the plan of the
   organisation the person is working in. Someone in no organisation is sent
-  to the Team page.
+  to the Team page. A personal plan bought before teams were turned on still
+  counts, so turning teams on cuts nobody off.
 - **The billing page:** it shows the organisation's plan, seats and
   payments. Any member can look, but only an owner can buy. An
   organisation's plan is a subscription (monthly or yearly), one at a time;
@@ -96,14 +107,16 @@ With teams on, the organisation holds the plan, and everyone in it shares it:
 give it a Polar product with seat-based pricing. A checkout then buys one
 seat per member and open invitation. The verified webhook records the seats,
 and inviting or accepting stops at that number ("All 5 seats are in use").
-A resend doesn't take a second seat. Without a per-seat subscription there's
-no seat limit.
+A resend doesn't take a second seat. The check happens in the same database
+transaction as the write, with the organisation's row locked, so simultaneous
+invitations can't overshoot. Without a per-seat subscription there's no seat
+limit.
 
 **Who pays.** Polar keys a customer by email, so the subscription is billed
 to the owner who bought it, and their Polar customer portal manages it. The
 checkout's metadata ties it to the organisation, and the webhook reads it from
-there. After an ownership transfer, the billing page and Manage billing say
-who manages payment, until that's changed in Polar.
+there. After an ownership transfer, the payer can still open Manage billing,
+and the new owner is told who pays, until that's changed in Polar.
 
 ## For the site admin
 

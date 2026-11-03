@@ -341,6 +341,19 @@ const toMember = (r: { orgId: string; userId: string; role: OrgRole; joinedAt: D
 });
 /** Owners first, then admins, then members. */
 const ROLE_ORDER = sql`case ${orgMembers.role} when 'owner' then 0 when 'admin' then 1 else 2 end`;
+/**
+ * Inside a transaction: lock the organisation's row (so concurrent invitations and joins queue
+ * behind each other), then refuse with DataError "limit" when members plus pending invitations,
+ * plus `adding`, would pass `limit`.
+ */
+async function assertSeats(tx: Pick<Db, "execute" | "select">, orgId: string, limit: number, adding: number): Promise<void> {
+  await tx.execute(sql`select 1 from ${orgs} where ${orgs.id} = ${orgId} for update`);
+  const [m] = await tx.select({ n: sql<number>`count(*)::int` }).from(orgMembers).where(eq(orgMembers.orgId, orgId));
+  const [i] = await tx.select({ n: sql<number>`count(*)::int` }).from(orgInvitations).where(and(eq(orgInvitations.orgId, orgId), pendingInvitation));
+  const used = Number(m?.n ?? 0) + Number(i?.n ?? 0);
+  if (used + adding > limit) throw new DataError("limit", `All ${limit} seats are in use.`);
+}
+
 /** Pending: neither accepted nor revoked, and not past its expiry. */
 const pendingInvitation = sql`(${orgInvitations.acceptedAt} is null and ${orgInvitations.revokedAt} is null and ${orgInvitations.expiresAt} > now())`;
 
@@ -1129,14 +1142,18 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .returning({ userId: orgMembers.userId });
         return rows.length > 0;
       },
-      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt }) {
+      async createInvitation({ orgId, email, role, tokenHash, invitedBy, expiresAt, seatLimit = null }) {
         if (!isUuid(orgId)) throw new DataError("invalid", `No organisation ${orgId}`);
         if (invitedBy !== null && !isUuid(invitedBy)) throw new DataError("invalid", `No user ${invitedBy}`);
-        const [row] = await write("invitation", () =>
-          db()
-            .insert(orgInvitations)
-            .values({ orgId, email: email.trim().toLowerCase(), role, tokenHash, invitedBy, expiresAt: toDate(expiresAt, "expiresAt")! })
-            .returning(),
+        const row = await write("invitation", () =>
+          db().transaction(async (tx) => {
+            if (seatLimit !== null) await assertSeats(tx, orgId, seatLimit, 1);
+            const [inserted] = await tx
+              .insert(orgInvitations)
+              .values({ orgId, email: email.trim().toLowerCase(), role, tokenHash, invitedBy, expiresAt: toDate(expiresAt, "expiresAt")! })
+              .returning();
+            return inserted;
+          }),
         );
         return toInvitation(row);
       },
@@ -1167,10 +1184,16 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
           .returning();
         return row ? toInvitation(row) : null;
       },
-      async acceptInvitation(id, userId) {
+      async acceptInvitation(id, userId, opts = {}) {
         if (!isUuid(id) || !isUuid(userId)) return null;
+        const seatLimit = opts.seatLimit ?? null;
         return write("membership", () =>
           db().transaction(async (tx) => {
+            if (seatLimit !== null) {
+              const [open] = await tx.select({ orgId: orgInvitations.orgId }).from(orgInvitations).where(eq(orgInvitations.id, id)).limit(1);
+              // Joining turns an open invitation into a member: it adds nobody, so only an overfull team refuses.
+              if (open) await assertSeats(tx, open.orgId, seatLimit, 0);
+            }
             const [inv] = await tx
               .update(orgInvitations)
               .set({ acceptedAt: now })

@@ -22,7 +22,25 @@ vi.mock("@/server/email", () => ({
   },
 }));
 
+// deleteUser asks the auth adapter to delete the identity: a stand-in, so this file never opens a real
+// database (the default adapter would open the developer's .data/pglite).
+vi.mock("@/server/auth", () => ({ getAuth: async () => ({ id: "better-auth", deleteIdentity: async () => {}, revokeSessions: async () => {} }) }));
+
+// Billing's own services, for the billing rows of the matrix: a provider that only records, and the org cookie.
+const billingState = vi.hoisted(() => ({ cookie: undefined as string | undefined }));
+vi.mock("@/server/billing", () => ({
+  getBilling: async () => ({
+    id: "polar",
+    label: "Polar",
+    createCheckout: async () => ({ url: "https://polar.example.com/checkout" }),
+    createPortal: async () => ({ url: "https://polar.example.com/portal" }),
+    handleWebhook: async () => new Response(null),
+  }),
+}));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => (billingState.cookie ? { value: billingState.cookie } : undefined), set: () => {} }) }));
+
 const orgs = await import("@/server/services/orgs");
+const billing = await import("@/server/services/billing");
 const { deleteUser } = await import("@/server/services/users");
 
 let seq = 0;
@@ -50,8 +68,13 @@ async function team() {
 
 const linkOf = (m: EmailMessage) => /\/invite\/([A-Za-z0-9_-]+)/.exec(m.text)?.[1] ?? "";
 
-beforeEach(() => {
+beforeEach(async () => {
   store = createMemoryStore({ fresh: true });
+  billingState.cookie = undefined;
+  await store.plans.upsert({
+    key: "pro", name: "Pro", description: "", features: [], highlighted: false, contactSales: false, ctaLabel: "Buy", trialDays: null, active: true, sortOrder: 1,
+    prices: [{ interval: "month", amountCents: 1000, currency: "usd", polarProductId: "prod_pro" }],
+  });
   outbox.length = 0;
   vi.stubEnv("OPENSHIPKIT_TENANCY", "org");
   vi.stubEnv("NEXT_PUBLIC_SITE_URL", "https://example.com");
@@ -102,9 +125,12 @@ describe("the permission matrix: every role against every action, through the se
     "members.remove": (t, who) => orgs.removeMember(who, t.org.id, t.target.id),
     "members.setRole": (t, who) => orgs.setMemberRole(who, t.org.id, t.target.id, "member"),
     "ownership.transfer": (t, who) => orgs.transferOwnership(who, t.org.id, t.target.id),
-    // Billing's own services arrive with org billing (ROADMAP 2.4); until then the gate they will call.
-    "billing.view": (t, who) => orgs.requireOrgPermission(who, t.org.id, "billing.view"),
-    "billing.manage": (t, who) => orgs.requireOrgPermission(who, t.org.id, "billing.manage"),
+    // Billing's own services: the billing page's read, and buying a plan.
+    "billing.view": (t, who) => {
+      billingState.cookie = t.org.id;
+      return billing.getOrgBillingView(who).then((v) => v ?? Promise.reject(Object.assign(new Error("no org"), { code: "not_found" })));
+    },
+    "billing.manage": (t, who) => billing.startOrgCheckout(who, t.org.id, "pro", "month"),
     "org.leave": (t, who) => orgs.leaveOrg(who, t.org.id),
   };
 
@@ -112,10 +138,33 @@ describe("the permission matrix: every role against every action, through the se
     expect(Object.keys(CASES).sort()).toEqual([...ORG_ACTIONS].sort());
   });
 
+  /**
+   * The permission map, written out: what each role may do. Deliberately not derived from can():
+   * a change to PERMISSIONS turns this red until this table is changed too, as its own visible decision.
+   */
+  const EXPECTED: Record<OrgAction, Record<OrgRole, boolean>> = {
+    "org.view": { owner: true, admin: true, member: true },
+    "org.leave": { owner: true, admin: true, member: true },
+    "members.view": { owner: true, admin: true, member: true },
+    "billing.view": { owner: true, admin: true, member: true },
+    "org.rename": { owner: true, admin: true, member: false },
+    "members.invite": { owner: true, admin: true, member: false },
+    "members.remove": { owner: true, admin: true, member: false },
+    "members.setRole": { owner: true, admin: true, member: false },
+    "billing.manage": { owner: true, admin: false, member: false },
+    "org.delete": { owner: true, admin: false, member: false },
+    "ownership.transfer": { owner: true, admin: false, member: false },
+  };
+
+  it("the table and the map agree, for every action", () => {
+    expect(Object.keys(EXPECTED).sort()).toEqual([...ORG_ACTIONS].sort());
+    for (const action of ORG_ACTIONS) for (const role of ["owner", "admin", "member"] as const) expect(can(role, action), `${role} ${action}`).toBe(EXPECTED[action][role]);
+  });
+
   const WHO: Who[] = ["owner", "admin", "member", "outsider"];
   for (const action of ORG_ACTIONS) {
     for (const who of WHO) {
-      const allowed = who !== "outsider" && can(who, action);
+      const allowed = who !== "outsider" && EXPECTED[action][who];
       it(`${who} ${allowed ? "may" : "may not"} ${action}`, async () => {
         const t = await team();
         const actor = who === "outsider" ? t.outsider : t[who];
@@ -268,14 +317,15 @@ describe("deleting an account", () => {
     expect(await store.users.getById(t.owner.id)).not.toBeNull();
   });
 
-  it("takes the teams it owns alone with it, and leaves teams with another owner", async () => {
+  it("takes the teams it owns alone with it, and leaves the teams it is only in", async () => {
     const solo = await person("solo");
     const mine: Org = await orgs.createOrg(solo, { name: "Just Me" });
     const t = await team();
-    await store.orgs.addMember(t.org.id, solo.id, "owner"); // a second owner of Acme
+    await store.orgs.addMember(t.org.id, solo.id, "member");
     await deleteUser(solo.id, self(solo));
     expect(await store.orgs.get(mine.id)).toBeNull();
     expect(await store.orgs.get(t.org.id)).not.toBeNull();
+    expect(await store.orgs.getMember(t.org.id, solo.id)).toBeNull();
     expect((await store.audit.list({ entity: "org", entityId: mine.id })).items.map((e) => e.action)).toContain("org.delete");
   });
 });

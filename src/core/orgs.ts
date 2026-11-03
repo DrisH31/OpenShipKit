@@ -15,8 +15,8 @@
 //
 // The permission map below is the one list of what each role may do. A
 // service checks it with can() (src/server/services/orgs.ts), and
-// tests/orgs-permissions.test.ts checks every role against every action, so a
-// change here is a visible decision.
+// tests/orgs.test.ts holds the same table written out and runs every role
+// against every action, so a change here fails until that table changes too.
 //
 
 export type Tenancy = "personal" | "org";
@@ -51,7 +51,10 @@ export interface OrgMember {
 export interface OrgInvitation {
   id: string;
   orgId: string;
-  /** Lower-cased. The invitation can only be accepted by an account with this verified email. */
+  /**
+ * Lower-cased. Only an account with this email can accept it. That proves the person controls the
+ * address only while sign-up requires a verified email (the production default; AUTH_REQUIRE_EMAIL_VERIFICATION).
+ */
   email: string;
   /** Never owner: ownership is handed over with transferOwnership, not by invitation. */
   role: Exclude<OrgRole, "owner">;

@@ -24,6 +24,7 @@ import "server-only";
 //
 
 import { redirect } from "next/navigation";
+import { can } from "@/core/orgs";
 import { comparePlanRank, planCovers, type PlanRef } from "@/core/plans";
 import { grantsAccess, type Entitlement, type Plan, type PriceInterval, type Purchase, type Subscription, type User } from "@/core/types";
 import { getBilling } from "../billing";
@@ -219,7 +220,9 @@ export async function hasPlan(userId: string, planKeys?: string[]): Promise<bool
 export async function requirePlan(user: User, planKeys?: string[], redirectTo?: string): Promise<void> {
   const fallback = redirectTo ?? (siteProfile() === "site" ? "/dashboard" : "/pricing");
   if (teamsEnabled()) {
-    // With teams, the plan is the organisation's: the one this person is working in.
+    // With teams, the plan is the organisation's: the one this person is working in. A personal plan
+    // bought before teams were turned on still counts, so turning them on cuts nobody off.
+    if (await hasPlan(user.id, planKeys)) return;
     const access = await currentOrg(user);
     if (!access) redirect("/dashboard/team");
     if (!(await hasOrgPlan(access.org.id, planKeys))) redirect(fallback);
@@ -349,17 +352,19 @@ export async function startOrgCheckout(user: User, orgId: string, planKey: strin
 }
 
 /**
- * The provider's portal for an organisation's subscription: owners only. Polar ties a subscription
- * to the customer who paid, so the portal opens for that person; after an ownership transfer, the
- * new owner is told who manages payment until it's moved in Polar.
+ * The provider's portal for an organisation's subscription. Polar ties a subscription to the
+ * customer who paid, so it opens for that person, whatever their role now (after an ownership
+ * transfer they must still be able to cancel what they pay for). An owner who doesn't pay is told
+ * who does; anyone else is refused by the permission map.
  */
 export async function openOrgPortal(user: User, orgId: string): Promise<string> {
   assertNotDemo(user);
   const billing = await getBilling();
   if (!billing) throw new ServiceError("unavailable", "Billing isn't configured");
-  const { org } = await requireOrgPermission(user, orgId, "billing.manage");
+  const { org, role } = await requireOrgPermission(user, orgId, "billing.view");
   const subs = (await (await getData()).billing.listSubscriptions({ orgId, limit: 50 })).items;
   const current = subs[0];
+  if (current?.userId !== user.id && !can(role, "billing.manage")) throw new ServiceError("forbidden", `Your role (${role}) can't manage billing here.`);
   if (!current) throw new ServiceError("not_found", `${org.name} has no subscription yet; choose a plan first.`);
   if (current.userId !== user.id) {
     const buyer = await (await getData()).users.getById(current.userId);
@@ -379,8 +384,10 @@ export type OrgBillingView = {
   seats: { limit: number | null; used: number };
   entitlement: Entitlement;
   subscriptions: Subscription[];
-  /** Who pays: the owner whose Polar customer holds the subscription, if any. */
+  /** Who pays: the person whose Polar customer holds the subscription, if any. */
   payerEmail: string | null;
+  /** This person pays: they get Manage billing whatever their role. */
+  youPay: boolean;
   /** startOrgCheckout's rule, for the plan cards: the same shape as getCheckoutGuard. */
   refuse: (planKey: string, interval: PriceInterval) => CheckoutRefusal | null;
 };
@@ -411,6 +418,7 @@ export async function getOrgBillingView(user: User): Promise<OrgBillingView | nu
     entitlement: computeEntitlement(subscriptions, purchases, new Date(), plans),
     subscriptions,
     payerEmail: payer?.email ?? null,
+    youPay: payer?.id === user.id,
     refuse,
   };
 }

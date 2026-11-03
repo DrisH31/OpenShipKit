@@ -18,7 +18,7 @@ import "server-only";
 //
 
 import { MAX_LIMIT } from "@/core/data";
-import type { Actor, Page, Role, SubscriptionStatus, User } from "@/core/types";
+import { grantsAccess, type Actor, type Page, type Role, type SubscriptionStatus, type User } from "@/core/types";
 import { getAuth } from "../auth";
 import { assertNotDemo } from "../demo";
 import { getData } from "../data";
@@ -181,6 +181,19 @@ const RENEWING: readonly SubscriptionStatus[] = ["trialing", "active", "past_due
 
 async function assertNothingRenews(user: User, self: boolean): Promise<void> {
   const subs = await (await getData()).billing.listSubscriptions({ userId: user.id, limit: 50 });
+  // An organisation's subscription the person paid for, still running out its paid period: deleting
+  // the account would delete that row (subscriptions.user_id cascades) and cut the team off early.
+  const now = Date.now();
+  const teamTime = subs.items.find((s) => s.orgId !== null && s.cancelAtPeriodEnd && s.planKey !== null && grantsAccess(s, now));
+  if (teamTime) {
+    const end = teamTime.currentPeriodEnd?.slice(0, 10) ?? null;
+    throw new ServiceError(
+      "conflict",
+      self
+        ? `You paid for an organisation's plan that is still running${end ? ` until ${end}` : ""}. Deleting your account now would cut the team off early; try again once it ends.`
+        : `${user.email} paid for an organisation's plan that is still running${end ? ` until ${end}` : ""}; deleting the account now would end it early for the team. Try again after it ends.`,
+    );
+  }
   const renewing = subs.items.find((s) => RENEWING.includes(s.status) && !s.cancelAtPeriodEnd);
   if (!renewing) return;
   throw new ServiceError(
@@ -211,10 +224,13 @@ export async function deleteUser(id: string, actor: Actor): Promise<void> {
     await assertNotLastAdmin(before);
     await assertNothingRenews(before, actor.type === "user" && actor.id === id);
     // An organisation must keep an owner: refuse while this is the only one of a team with others in it.
-    const { blocking, soleOwned } = await orgsBlockingDeletion(id);
+    const { blocking, renewing, soleOwned } = await orgsBlockingDeletion(id);
+    const names = (orgs: { name: string }[]) => orgs.map((o) => `“${o.name}”`).join(", ");
     if (blocking.length > 0) {
-      const names = blocking.map((o) => `“${o.name}”`).join(", ");
-      throw new ServiceError("conflict", `${before.email} is the only owner of ${names}. Transfer ownership first, so the team keeps someone in charge.`);
+      throw new ServiceError("conflict", `${before.email} is the only owner of ${names(blocking)}. Transfer ownership first, so the team keeps someone in charge.`);
+    }
+    if (renewing.length > 0) {
+      throw new ServiceError("conflict", `${names(renewing)} would be deleted with the account, but has a subscription that would keep renewing. Cancel it in Billing first.`);
     }
     const auth = await getAuth();
     // Before the row goes: deleting the user clears agent_keys.created_by.

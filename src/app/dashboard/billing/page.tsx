@@ -222,7 +222,7 @@ export default async function BillingPage({ searchParams }: { searchParams: Prom
             ? `${orgView.org.name}'s plan, shared by everyone in it, and its payments. Payments are handled by Polar, which issues the receipts.`
             : "Your plan, what it costs, and your payment history. Payments are handled by Polar, which issues the receipts."
         }
-        action={billingOn && hasAccount && (!orgView || orgView.role === "owner") ? <PortalButton /> : undefined}
+        action={billingOn && hasAccount && (!orgView || orgView.role === "owner" || orgView.youPay) ? <PortalButton /> : undefined}
       />
       {orgView ? (
         <Notice tone="info" title={orgView.seats.limit === null ? `${orgView.seats.used} in the team` : `${orgView.seats.used} of ${orgView.seats.limit} seats in use`}>
