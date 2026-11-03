@@ -49,6 +49,7 @@ need no database.
 | `drizzle/` | Generated SQL migrations | Generated, committed, never hand-edited after release |
 | `tests/` | Vitest; `tests/contract/` runs on memory and on Postgres with `TEST_DATABASE_URL` | |
 | `modules/` | Opt-in modules (AI, RAG, Redis), off until enabled per `modules/README.md` | Same rules as the core: services, store contracts and Drizzle custom migrations; `npm run typecheck:modules` checks them |
+| `examples/` | Two example apps on the kit (a B2B projects tool, a usage-billed API), not imported by the app | Built like the core: services, store contracts, SQL migrations; typechecked and tested by `npm run check` |
 | `docs/`, `deploy/` | Guides (also the website’s `/docs`, in the order of `docs/nav.json`); `deploy/backups/` backs up the database **and** the uploads | Update them when behaviour changes; a new page goes in `docs/nav.json` (CONTRIBUTING.md → “Writing docs”) |
 | `scripts/` | CLIs: setup, db-migrate, seed, mcp-key, smoke, e2e, ds-sync; `load-env.mts` (the shared .env loader) | `setup` and `ds-sync` run on plain Node (no `@/` imports) |
 

@@ -1,5 +1,6 @@
 {
-  // Typechecks the opt-in modules (modules/**) and their tests on their own:
+  // Typechecks the opt-in modules (modules/**), the example apps (examples/**)
+// and their tests on their own:
   //   npx tsc --noEmit -p tsconfig.modules.json
   // The app never imports modules/ until you enable one (modules/README.md),
   // so this is what keeps them from rotting while they sit unused. The core
@@ -8,6 +9,6 @@
   "compilerOptions": {
     "incremental": false
   },
-  "include": ["next-env.d.ts", "modules/**/*.ts", "modules/**/*.mts", "tests/modules/**/*.ts"],
+  "include": ["next-env.d.ts", "modules/**/*.ts", "modules/**/*.mts", "tests/modules/**/*.ts", "examples/**/*.ts", "tests/examples/**/*.ts"],
   "exclude": ["node_modules"]
 }

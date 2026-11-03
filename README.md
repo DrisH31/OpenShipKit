@@ -463,6 +463,7 @@ the site is still named OpenShipKit.
 | [MCP](docs/mcp.md) | Agent keys, clients, tools |
 | [API reference](docs/api.md) | Every HTTP endpoint and MCP tool, with their fields (generated) |
 | [Modules](docs/modules/README.md) | Opt-in AI, document search (RAG) and Redis, off until enabled |
+| [Examples](examples/README.md) | Two apps built on the kit: a B2B projects tool and a usage-billed API |
 | [Security](docs/security.md) | The security model |
 | [Teams](docs/teams.md) | Organisations, roles, invitations (OPENSHIPKIT_TENANCY=org) |
 | [Usage and limits](docs/usage.md) | Plan limits, usage metering, metered prices on Polar or Stripe |
