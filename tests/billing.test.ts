@@ -887,8 +887,11 @@ describe("switching billing providers", () => {
     const admin = await store.users.upsertFromIdentity({ provider: "better-auth", providerUserId: "adm", email: "admin@example.com", name: "A", image: null, emailVerified: true }, { makeAdmin: true });
     expect(await endStrandedSubscriptions(admin, "polar")).toBe(2);
     expect(await strandedSubscriptions()).toEqual({});
-    expect((await store.billing.getSubscription("polar", "p1"))?.status).toBe("canceled");
+    // Stops renewing; keeps what was paid for (a period through 2099 stays through 2099).
+    expect(await store.billing.getSubscription("polar", "p1")).toMatchObject({ status: "active", cancelAtPeriodEnd: true, currentPeriodEnd: "2099-01-01T00:00:00.000Z" });
     await expect(endStrandedSubscriptions(admin, "stripe")).rejects.toMatchObject({ code: "invalid" });
+    h.billing = null;
+    await expect(endStrandedSubscriptions(admin, "polar")).rejects.toMatchObject({ code: "invalid" }); // billing off: refused
     await expect(endStrandedSubscriptions(user, "polar")).rejects.toMatchObject({ code: "forbidden" });
   });
 });

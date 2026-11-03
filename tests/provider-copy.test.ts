@@ -30,7 +30,7 @@ const SHOWCASE = "the showcase's own copy says which providers the kit supports"
 const SIBLING = "describes the sibling project's hosted stack";
 const POSTS = "the kit's own seed posts (its launch notes and guides), about the default provider";
 const LEGAL = "legal page templates written for Polar as merchant of record, with notes for the others";
-const ALLOWED: { file: string; text: string; why: string }[] = [
+const ALLOWED: { file: string; text: string; why: string; /** The whole string it anchors (a post that names providers throughout). */ whole?: true }[] = [
   { file: "src/components/admin/plan-editor-config.ts", text: "From Polar → Products", why: FIELD },
   { file: "src/components/admin/plan-editor-config.ts", text: "the Stripe price’s id", why: FIELD },
   { file: "src/components/admin/plan-editor-config.ts", text: "the Razorpay plan’s id", why: FIELD },
@@ -42,16 +42,16 @@ const ALLOWED: { file: string; text: string; why: string }[] = [
   { file: "src/components/billing/format.ts", text: "In Polar, add a webhook endpoint", why: SETUP },
   { file: "src/components/billing/format.ts", text: "Polar product id into /admin/plans", why: SETUP },
   { file: "src/components/billing/format.ts", text: "(Polar, Stripe or Razorpay: see .env.example", why: "the developer message lists every provider" },
-  { file: "src/components/billing/billing-off-notice.tsx", text: "These are the steps for Polar, the default", why: SETUP },
+  { file: "src/components/billing/billing-off-notice.tsx", text: "These are the steps for Polar, the default", why: SETUP, whole: true },
   { file: "src/components/sections/own-stack.tsx", text: '"Polar"', why: SHOWCASE },
   { file: "src/components/site/site-footer.tsx", text: "Polar for payments", why: SIBLING },
   { file: "src/content/defaults.ts", text: "Polar, Stripe or Razorpay", why: SHOWCASE },
   { file: "src/content/defaults.ts", text: "Polar for payments", why: SIBLING },
-  { file: "src/content/seed-posts.ts", text: "OpenShipKit is a free, MIT-licensed starter", why: POSTS },
-  { file: "src/content/seed-posts.ts", text: "OpenShipKit 1.0 is a self-hosted, ground-up rewrite", why: POSTS },
+  { file: "src/content/seed-posts.ts", text: "OpenShipKit is a free, MIT-licensed starter", why: POSTS, whole: true },
+  { file: "src/content/seed-posts.ts", text: "OpenShipKit 1.0 is a self-hosted, ground-up rewrite", why: POSTS, whole: true },
   { file: "src/content/seed-posts.ts", text: "optional Polar billing", why: POSTS },
-  { file: "src/content/seed-posts.ts", text: "our payment provider Polar collects", why: LEGAL },
-  { file: "src/content/seed-posts.ts", text: "Purchases are processed by Polar", why: LEGAL },
+  { file: "src/content/seed-posts.ts", text: "our payment provider Polar collects", why: LEGAL, whole: true },
+  { file: "src/content/seed-posts.ts", text: "Purchases are processed by Polar", why: LEGAL, whole: true },
 ];
 
 function files(dir: string, out: string[] = []): string[] {
@@ -92,7 +92,9 @@ describe("provider names in copy", () => {
   it("come from the provider in use, outside the files about one provider on purpose", () => {
     const found = DIRS.flatMap((d) => files(join(ROOT, d)))
       .flatMap(hits)
-      .filter((h) => !ALLOWED.some((a) => h.file === a.file && h.raw.includes(a.text)))
+      // The allowed text is removed before looking again: a second, hard-coded name elsewhere in the
+      // same string still fails.
+      .filter((h) => !ALLOWED.some((a) => h.file === a.file && h.raw.includes(a.text) && (a.whole || !NAME.test(h.raw.split(a.text).join("")))))
       .map((h) => `${h.file}:${h.line}: ${h.raw.slice(0, 120)}`);
     expect(found).toEqual([]);
   });

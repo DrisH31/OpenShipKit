@@ -20,6 +20,6 @@ export async function endStrandedAction(provider: string): Promise<ActionState> 
   return attempt("admin.billing.end_stranded", async () => {
     const n = await endStrandedSubscriptions(admin, provider as PaidProviderId);
     refresh();
-    return n === 1 ? "Ended 1 subscription." : `Ended ${n} subscriptions.`;
+    return n === 1 ? "1 subscription stops renewing at the end of its period." : `${n} subscriptions stop renewing at the end of their periods.`;
   });
 }

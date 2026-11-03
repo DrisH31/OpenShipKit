@@ -104,8 +104,8 @@ export default async function AdminOverview() {
       key: "stranded",
       icon: TriangleAlertIcon,
       title: `${plural(n, "subscription")} still billed by ${strandedLines.map(([p]) => PROVIDER_LABEL[p]).join(" and ")}`,
-      body: "Billing now uses another provider, so their renewals and cancellations no longer reach this site. Cancel them there (or switch back), then mark them handled here: their access ends (docs/billing.md, “Switching providers”).",
-      control: (
+      body: "Billing now uses another provider, so their renewals and cancellations no longer reach this site. Cancel them there (or switch back), then mark them handled here: they stop renewing, and each keeps what it paid for (docs/billing.md, “Switching providers”).",
+      control: o.stack.billing === "none" ? undefined : (
         <div className="flex shrink-0 flex-col gap-2">
           {strandedLines.map(([p, c]) => (
             <ConfirmAction
@@ -113,9 +113,9 @@ export default async function AdminOverview() {
               action={endStrandedAction.bind(null, p)}
               triggerVariant="outline"
               trigger={<>Mark {PROVIDER_LABEL[p]} handled</>}
-              title={`End ${plural(c, "subscription")} still at ${PROVIDER_LABEL[p]}?`}
-              description={`Do this once they're cancelled at ${PROVIDER_LABEL[p]} (or the people are told). Their access here ends now. Each change is in the audit log.`}
-              confirmLabel="End them"
+              title={`Mark ${plural(c, "subscription")} at ${PROVIDER_LABEL[p]} as handled?`}
+              description={`Do this once they're cancelled at ${PROVIDER_LABEL[p]} (or the people are told). They stop renewing here, and each keeps its access to the end of what it paid for. Each change is in the audit log.`}
+              confirmLabel="Mark handled"
             />
           ))}
         </div>

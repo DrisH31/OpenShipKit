@@ -162,6 +162,24 @@ describe("Razorpay", () => {
     expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
   });
 
+  it("accepted by Razorpay but the re-fetch fails: still a success, and the row says it ends", async () => {
+    const { client, sub } = razorpayFake();
+    sub.notes.userId = user.id;
+    const rzp = createRazorpayProvider({ client, webhookSecret: SECRET, sink: billingWebhookSink });
+    await activate(rzp, "a1");
+    (client.subscriptions.fetch as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => ({ ...sub })).mockRejectedValueOnce(new Error("network"));
+    await expect(rzp.cancelAtPeriodEnd!("sub_1", me())).resolves.toBeUndefined();
+    expect(client.subscriptions.cancel).toHaveBeenCalledTimes(1);
+    expect((await store.billing.getSubscription("razorpay", "sub_1"))?.cancelAtPeriodEnd).toBe(true);
+  });
+
+  it("a checkout abandoned before its mandate and cancelled later is no trial", () => {
+    const now = Date.parse("2026-11-03T00:00:00Z");
+    const base = { id: "sub_y", status: "cancelled", plan_id: "plan_1", notes: {}, quantity: 1, current_start: null, current_end: null, paid_count: 0, ended_at: now / 1000, start_at: now / 1000 + 14 * 86_400 };
+    expect(razorpaySubscriptionState({ ...base, customer_id: null } as unknown as RazorpaySubscription, now).status).toBe("canceled");
+    expect(razorpaySubscriptionState({ ...base, customer_id: "cust_1" } as unknown as RazorpaySubscription, now).status).toBe("trialing");
+  });
+
   it("a trial is cancelled at Razorpay now (no first charge) and keeps its access until the trial's end", async () => {
     const { client, sub } = razorpayFake();
     sub.notes.userId = user.id;

@@ -197,9 +197,9 @@ What's different about Razorpay:
   buy the new plan once the old one ends.
 - **A cancellation is remembered by the app.** Razorpay keeps a subscription
   cancelled "at the end of the cycle" as `active`, with no field saying it will
-  end. The app records the cancellation when you press the button and keeps it
-  until Razorpay moves the subscription to `cancelled`. A cancellation made in
-  Razorpay's dashboard isn't seen until then.
+  end, so the app keeps the cancellation it recorded (within that period, as
+  above). A cancellation made in Razorpay's dashboard isn't seen until Razorpay
+  moves the subscription to `cancelled`.
 - **Subscriptions run for at most 120 months (10 years).** Razorpay needs a
   cycle count. When it runs out, the subscription shows as completed.
 - **Refunds of one-time purchases** are recognised because the app copies its
@@ -238,8 +238,9 @@ charged** while their access runs out at the period end. The server logs how
 many there are at startup (`… still renew, but billing is now …`). Before
 switching, cancel those subscriptions at the old provider (or let them run
 out), and ask the people to subscribe again. The admin overview lists them under
-"Needs you" until you mark them handled there, which ends their access here
-(each change is in the audit log). Their past purchases and history stay in the
+"Needs you" until you mark them handled there: they stop renewing, and each
+keeps its access to the end of the period its customer paid for (each change is
+in the audit log). Not offered while billing is off. Their past purchases and history stay in the
 database.
 
 ## Variables

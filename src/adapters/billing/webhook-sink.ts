@@ -297,6 +297,7 @@ async function applyOrder(state: ProviderOrderState): Promise<WebhookApplyResult
 async function requestCancel(provider: PaidProvider, providerSubscriptionId: string, actor: Actor): Promise<boolean> {
   const before = await (await getData()).billing.requestCancel(provider, providerSubscriptionId);
   if (!before) return false;
+  // recordAudit never throws (a lost audit row is logged, never turned into a failed write).
   await recordAudit(actor, "subscription.update", "subscription", before.id, before, { ...before, cancelAtPeriodEnd: true });
   return true;
 }

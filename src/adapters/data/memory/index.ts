@@ -404,7 +404,7 @@ export function createMemoryStore(opts: { fresh?: boolean } = {}): DataStore {
       },
       async requestCancel(provider, providerSubscriptionId) {
         const s = t.subscriptions.get(`${provider}:${providerSubscriptionId}`);
-        if (!s || s.cancelAtPeriodEnd) return null;
+        if (!s || !isRenewing(s)) return null;
         const before = clone(s);
         s.cancelAtPeriodEnd = true;
         s.updatedAt = now();

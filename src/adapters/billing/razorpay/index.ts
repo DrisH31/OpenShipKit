@@ -24,7 +24,8 @@ import "server-only";
 //    cancelAtPeriodEnd() cancels at the end of the cycle through the API.
 //    Razorpay keeps such a subscription "active" with no field saying it
 //    will end, so its state is cancelAtPeriodEndKnown: false, and the sink
-//    keeps the cancellation we recorded until Razorpay moves it to cancelled.
+//    keeps the cancellation we recorded within the period it was recorded
+//    in (a later period means Razorpay charged again: the cancel didn't take).
 //  - One-time purchases: when a payment link is paid, our notes are copied onto
 //    the payment, so a refund event (which names only the payment) can be
 //    traced back to the purchase.
@@ -127,7 +128,9 @@ export function razorpaySubscriptionState(sub: RazorpaySubscription, now = Date.
   // A trial cancelled before its first charge: Razorpay says cancelled, but the person keeps the trial
   // until it would have ended (start_at), as with every other provider. Derived from Razorpay's own
   // object, so a webhook's re-fetch agrees.
-  const trialLeft = typeof sub.start_at === "number" && sub.start_at * 1000 > now && !sub.current_start && !sub.paid_count;
+  // Only for a real trial: the mandate was set up (Razorpay names the customer on authentication). A
+  // checkout abandoned before that and cancelled later never had a trial.
+  const trialLeft = typeof sub.start_at === "number" && sub.start_at * 1000 > now && !sub.current_start && !sub.paid_count && Boolean(sub.customer_id);
   const cancelledTrial = status === "canceled" && sub.status === "cancelled" && trialLeft;
   if (cancelledTrial) status = "trialing";
   return {
@@ -304,8 +307,14 @@ export function createRazorpayProvider(options: RazorpayProviderOptions = {}): B
           "Razorpay didn't answer, so it's marked here as ending. If Razorpay charges it again anyway, it shows as renewing on this page and you can cancel it again.",
         );
       }
-      const state = razorpaySubscriptionState(await razorpay().subscriptions.fetch(providerSubscriptionId));
-      await out.applySubscription({ ...state, cancelAtPeriodEnd: state.status !== "canceled" || state.cancelAtPeriodEnd, cancelAtPeriodEndKnown: true }, { actor });
+      // Razorpay accepted: the cancel is done, and the row already says it ends. A failure from here (the
+      // re-fetch, the write) isn't the person's problem: logged, and the next webhook settles the row.
+      try {
+        const state = razorpaySubscriptionState(await razorpay().subscriptions.fetch(providerSubscriptionId));
+        await out.applySubscription({ ...state, cancelAtPeriodEnd: state.status !== "canceled" || state.cancelAtPeriodEnd, cancelAtPeriodEndKnown: true }, { actor });
+      } catch (error) {
+        logWebhook("razorpay", `cancel ${providerSubscriptionId}: accepted by Razorpay, but recording its new state failed; the next webhook will`, error);
+      }
     },
 
     async describePrice(id: string) {

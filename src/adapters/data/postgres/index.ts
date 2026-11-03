@@ -825,7 +825,14 @@ export function createPostgresStore(opts: { db?: Db } = {}): DataStore {
         const [row] = await db()
           .update(subscriptions)
           .set({ cancelAtPeriodEnd: true, updatedAt: now })
-          .where(and(eq(subscriptions.provider, provider), eq(subscriptions.providerSubscriptionId, providerSubscriptionId), eq(subscriptions.cancelAtPeriodEnd, false)))
+          .where(
+            and(
+              eq(subscriptions.provider, provider),
+              eq(subscriptions.providerSubscriptionId, providerSubscriptionId),
+              eq(subscriptions.cancelAtPeriodEnd, false),
+              inArray(subscriptions.status, [...RENEWING_STATUSES]),
+            ),
+          )
           .returning();
         return row ? { ...toSubscription(row), cancelAtPeriodEnd: false } : null;
       },

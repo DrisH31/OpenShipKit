@@ -494,14 +494,18 @@ export async function strandedSubscriptions(): Promise<Partial<Record<PaidProvid
 }
 
 /**
- * An admin's "handled": end every subscription still renewing at `provider` (not the one configured),
- * once they've been cancelled there or the people told. Their access ends now; each row is audited as
- * the admin. Refused for the provider in use, whose own webhooks keep its rows true.
+ * An admin's "handled": stop every subscription still renewing at `provider` (not the one configured)
+ * from renewing here, once they've been cancelled there or the people told. Each keeps the access its
+ * customer paid for, to the end of its period, then lapses on its own; no row is cut short. Each is
+ * audited as the admin. Refused for the provider in use, whose own webhooks keep its rows true, and
+ * while billing is off (every live subscriber would look stranded).
  */
 export async function endStrandedSubscriptions(admin: User, provider: PaidProviderId): Promise<number> {
   assertNotDemo(admin);
   if (admin.role !== "admin") throw new ServiceError("forbidden", "Only an admin can do that.");
-  if ((await getBilling())?.id === provider) throw new ServiceError("invalid", `${PROVIDER_LABEL[provider]} is the provider in use: its webhooks keep these subscriptions up to date.`);
+  const inUse = (await getBilling())?.id;
+  if (!inUse) throw new ServiceError("invalid", "Billing is off, so every live subscription looks stranded. Turn billing back on first.");
+  if (inUse === provider) throw new ServiceError("invalid", `${PROVIDER_LABEL[provider]} is the provider in use: its webhooks keep these subscriptions up to date.`);
   const data = await getData();
   // Collect first, then end: ending rows while paging would shift the pages under the cursor.
   const stranded: Subscription[] = [];
@@ -516,7 +520,7 @@ export async function endStrandedSubscriptions(admin: User, provider: PaidProvid
   const actor = { type: "user" as const, id: admin.id, label: admin.email };
   for (const sub of stranded) {
     const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = sub; // eslint-disable-line @typescript-eslint/no-unused-vars
-    const after = await data.billing.upsertSubscription({ ...rest, status: "canceled", cancelAtPeriodEnd: false, currentPeriodEnd: new Date().toISOString() });
+    const after = await data.billing.upsertSubscription({ ...rest, cancelAtPeriodEnd: true });
     await recordAudit(actor, "subscription.update", "subscription", sub.id, sub, after);
   }
   return stranded.length;
