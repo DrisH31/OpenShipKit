@@ -395,7 +395,8 @@ src/
   styles/             design tokens (tokens.css), brand colour (brand.css), prose
 drizzle/              generated SQL migrations
 modules/              opt-in modules (AI, RAG, Redis): tested, off until you enable one
-scripts/              setup, db-migrate, seed, mcp-key, smoke, e2e, ds-sync
+examples/             two example apps on the kit (a B2B tool, a usage-billed API)
+scripts/              setup, upgrade, db-migrate, seed, mcp-key, smoke, e2e, ds-sync
 deploy/               VPS + Caddy, Dokploy, Coolify, plain Node, backups, hardening
 docs/                 guides for people and agents
 tests/                Vitest (contract tests run on memory and, with TEST_DATABASE_URL, Postgres)

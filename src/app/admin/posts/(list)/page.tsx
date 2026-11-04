@@ -21,6 +21,7 @@ import { POST_KIND, POST_STATUS } from "@/lib/status";
 import { requireAdmin } from "@/server/session";
 import { listPosts } from "@/server/services/posts";
 import { featureOn } from "@/server/profile";
+import { defaultPostKind } from "../list-href";
 
 export const metadata: Metadata = { title: "Posts" };
 
@@ -31,7 +32,8 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
   await requireAdmin();
   const sp = await searchParams;
   // With the blog switched off the list opens on the changelog (blog posts are still a tab: to unpublish or delete).
-  const kind: PostKind = one(sp.kind) === "changelog" ? "changelog" : one(sp.kind) === "page" ? "page" : one(sp.kind) === "post" || featureOn("blog") ? "post" : "changelog";
+  const asked = one(sp.kind);
+  const kind: PostKind = asked === "changelog" || asked === "page" || asked === "post" ? asked : defaultPostKind();
   const status: PostStatus | undefined = one(sp.status) === "draft" ? "draft" : one(sp.status) === "published" ? "published" : undefined;
   const q = one(sp.q)?.trim().slice(0, 100) || undefined;
   const cursor = one(sp.cursor) ?? null;
@@ -40,7 +42,7 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
 
   const word = POST_KIND[kind];
   // The default kind goes unsaid in links; with the blog off the default is the changelog, so "post" is said.
-  const defaultKind: PostKind = featureOn("blog") ? "post" : "changelog";
+  const defaultKind: PostKind = defaultPostKind();
   const base = { kind: kind === defaultKind ? undefined : kind, status, q };
   // OPENSHIPKIT_WITHOUT=blog: existing blog posts stay listed (to unpublish or delete), no new ones.
   const canWrite = kind !== "post" || featureOn("blog");

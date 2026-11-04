@@ -28,19 +28,23 @@ export async function connectExample(example: "projects" | "usage-api"): Promise
   await admin.db.execute(sql.raw(`create database "${name}"`));
   await admin.close();
   const handle = createDrizzle(url.toString(), { max: 10 });
-  await migrate(handle.db as never, { migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)) });
-  const file = fileURLToPath(new URL(`../../examples/${example}/migration.sql`, import.meta.url));
-  for (const statement of readFileSync(file, "utf8").split("--> statement-breakpoint")) if (statement.trim()) await handle.db.execute(sql.raw(statement));
-  return {
-    db: handle.db,
-    close: async () => {
-      await handle.close();
-      const drop = createDrizzle(TEST_DATABASE_URL!, { max: 1 });
-      try {
-        await drop.db.execute(sql.raw(`drop database if exists "${name}" with (force)`));
-      } finally {
-        await drop.close();
-      }
-    },
+  const close = async () => {
+    await handle.close();
+    const drop = createDrizzle(TEST_DATABASE_URL!, { max: 1 });
+    try {
+      await drop.db.execute(sql.raw(`drop database if exists "${name}" with (force)`));
+    } finally {
+      await drop.close();
+    }
   };
+  try {
+    await migrate(handle.db as never, { migrationsFolder: fileURLToPath(new URL("../../drizzle", import.meta.url)) });
+    const file = fileURLToPath(new URL(`../../examples/${example}/migration.sql`, import.meta.url));
+    for (const statement of readFileSync(file, "utf8").split("--> statement-breakpoint")) if (statement.trim()) await handle.db.execute(sql.raw(statement));
+  } catch (error) {
+    // A broken migration (the case this per-run database is for) mustn't leave the database behind.
+    await close();
+    throw error;
+  }
+  return { db: handle.db, close };
 }

@@ -54,23 +54,23 @@ function describeContract(name: string, make: () => Promise<{ store: ApiKeyStore
       // Leased: another claim (same or other body) gets it back as it is.
       expect(await claim("b2")).toMatchObject({ claimed: false, request: { id: first.request.id, bodyHash: "b1", response: null } });
       expect((await claim("b1")).claimed).toBe(false);
-      // The lease over (a zero lease here), same body: taken back with the SAME id; another body isn't.
-      expect(await claim("b2", { leaseMs: 0 })).toMatchObject({ claimed: false });
-      expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: true, request: { id: first.request.id } });
+      // The lease over (a lease already over, with a margin: stored times are rounded to the millisecond), same body: taken back with the SAME id; another body isn't.
+      expect(await claim("b2", { leaseMs: -1000 })).toMatchObject({ claimed: false });
+      expect(await claim("b1", { leaseMs: -1000 })).toMatchObject({ claimed: true, request: { id: first.request.id } });
       // A renewed lease holds off a takeover for its length again (the work is still running).
       await s.renewLease(first.request.id);
       expect((await claim("b1", { leaseMs: 60_000 })).claimed).toBe(false);
       // Answered: replayed, whatever the lease.
       await s.saveResponse(first.request.id, { result: "A" });
-      expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: false, request: { response: { result: "A" } } });
-      // Past the window (a zero window here), the key is a new request with a new id.
-      const later = await claim("b9", { windowMs: 0 });
+      expect(await claim("b1", { leaseMs: -1000 })).toMatchObject({ claimed: false, request: { response: { result: "A" } } });
+      // Past the window (a window already over, with a margin), the key is a new request with a new id.
+      const later = await claim("b9", { windowMs: -1000 });
       expect(later).toMatchObject({ claimed: true, request: { bodyHash: "b9", response: null } });
       expect(later.request.id).not.toBe(first.request.id);
       // Given back, it's claimed afresh; pruning deletes what's past the window.
       await s.releaseRequest(later.request.id);
       expect((await claim("b3")).claimed).toBe(true);
-      expect(await s.pruneRequests(k.id, 0)).toBeGreaterThanOrEqual(1);
+      expect(await s.pruneRequests(k.id, -1000)).toBeGreaterThanOrEqual(1);
     });
   });
 }
@@ -226,6 +226,31 @@ describe("the usage-billed API", () => {
     }
     expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(1);
     expect(meter.reports).toHaveLength(1);
+  });
+
+  it("slow work keeps its lease (renewed while it runs): a retry past a minute gets 409, and it runs once", async () => {
+    const { mintApiKey, getApiKeyStore } = await svc();
+    const { key } = await mintApiKey(user, { name: "CI" });
+    const apiStore = await getApiKeyStore();
+    let finish!: () => void;
+    const held = new Promise<void>((resolve) => (finish = resolve));
+    const realSave = apiStore.saveResponse.bind(apiStore);
+    const save = vi.spyOn(apiStore, "saveResponse").mockImplementationOnce(async (id, response) => {
+      await held; // the "work" is still going
+      return realSave(id, response);
+    });
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      const first = call(key, { text: "slow" }, "slow-1");
+      await vi.advanceTimersByTimeAsync(130_000); // past two leases: the heartbeat must have renewed it
+      expect((await call(key, { text: "slow" }, "slow-1")).status).toBe(409);
+      finish();
+      expect((await first).status).toBe(200);
+    } finally {
+      vi.useRealTimers();
+      save.mockRestore();
+    }
+    expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(1);
   });
 
   it("refuses an Idempotency-Key over 200 characters instead of cutting it", async () => {

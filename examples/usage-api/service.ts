@@ -33,6 +33,7 @@ import { z } from "zod";
 import type { User } from "@/core/types";
 import { getData } from "@/server/data";
 import { assertNotDemo } from "@/server/demo";
+import { log } from "@/server/log";
 import { dataProvider } from "@/server/env";
 import { recordAudit } from "@/server/services/audit";
 import { ServiceError, parseInput } from "@/server/services/errors";
@@ -94,8 +95,9 @@ export async function authenticateApiKey(header: string | null): Promise<{ user:
 export const callSchema = z.strictObject({ text: z.string().min(1).max(10_000) });
 
 /**
- * Stand-in for your API's real work. Slow work is fine: while it runs, its Idempotency-Key's lease is
- * renewed, so a client's retry gets 409 rather than running it a second time.
+ * Stand-in for your API's real work. Slow *async* work is fine: while it awaits, its Idempotency-Key's
+ * lease is renewed, so a client's retry gets 409 rather than running it a second time. Work that
+ * blocks the event loop (CPU-bound) can't renew it: put that in a background job.
  */
 async function runWork({ text }: z.output<typeof callSchema>): Promise<{ result: string }> {
   return { result: text.toUpperCase() };
@@ -155,7 +157,9 @@ export async function callApi(caller: { user: User; apiKey: ApiKey }, idempotenc
   }
   // Counted from here: a failure leaves the claim, so the retry reuses this id and isn't charged again.
   // The lease is renewed while the work runs, so a slow job isn't taken over (and run twice) by a retry.
-  const heartbeat = idempotencyKey ? setInterval(() => void store.renewLease(requestId).catch(() => {}), IDEMPOTENCY_LEASE_MS / 3) : null;
+  const heartbeat = idempotencyKey
+    ? setInterval(() => void store.renewLease(requestId).catch((error: unknown) => log.warn("usage-api", `couldn't renew the lease of request ${requestId}`, error)), IDEMPOTENCY_LEASE_MS / 3)
+    : null;
   try {
     const answer: Answer = { ...(await runWork(parsed)), usage: { used: counted.used, limit: counted.limit } };
     if (idempotencyKey) await store.saveResponse(requestId, answer);

@@ -13,6 +13,7 @@ import { requireAdmin } from "@/server/session";
 import { createPostAction, previewMarkdown } from "../actions";
 import { featureOn } from "@/server/profile";
 import { notFound } from "next/navigation";
+import { postsListHref } from "../list-href";
 
 export const metadata: Metadata = { title: "New post" };
 
@@ -27,7 +28,7 @@ export default async function NewPostPage({ searchParams }: { searchParams: Prom
     <>
       <PageHeader
         eyebrow={
-          <Link href={`/admin/posts${kind === "post" ? "" : `?kind=${kind}`}`} className="underline-offset-4 hover:underline">
+          <Link href={postsListHref(kind)} className="underline-offset-4 hover:underline">
             {word.plural}
           </Link>
         }

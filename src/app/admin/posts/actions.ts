@@ -22,6 +22,7 @@ import { siteUrl } from "@/server/env";
 import { renderMarkdown } from "@/server/markdown";
 import { actorFor, requireAdmin } from "@/server/session";
 import { createPost, deletePost, getPostById, updatePost } from "@/server/services/posts";
+import { postsListHref } from "./list-href";
 
 const KINDS: readonly PostKind[] = ["post", "changelog", "page"];
 
@@ -75,12 +76,15 @@ export async function updatePostAction(id: string, _state: ActionState, form: Fo
 
 export async function deletePostAction(id: string): Promise<ActionState> {
   const admin = await requireAdmin();
+  // Back to the list of the kind it was (the changelog's, say), not the default tab.
+  let kind: PostKind = "post";
   const result = await attempt("admin.posts.delete", async () => {
+    kind = (await getPostById(id))?.kind ?? kind;
     await deletePost(id, actorFor(admin));
     return "Deleted.";
   });
   if (!result.ok) return result;
-  redirect("/admin/posts?deleted=1");
+  redirect(postsListHref(kind, { deleted: "1" }));
 }
 
 /**

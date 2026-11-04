@@ -78,8 +78,8 @@ npm run setup -- --without blog,mcp     # or set OPENSHIPKIT_WITHOUT=blog,mcp
 
 | Feature | What goes |
 |---|---|
-| `blog` | `/blog`, its posts, tag pages, feed and post images (404); the Blog links in the navigation, the latest-posts section, the blog in the sitemap and `llms.txt`, and the feed link in every page's head. The changelog and the legal pages are posts too, and stay. |
-| `mcp` | The MCP server at `/api/mcp` (404) and the admin's agent keys page. |
+| `blog` | `/blog`, its posts, tag pages, feed and post images (404); the Blog links in the navigation, the latest-posts section, the blog in the sitemap and `llms.txt`, and the feed link in every page's head. In the admin and MCP, new blog posts and publishing one are refused; existing ones can still be edited, unpublished or deleted, and the posts list opens on the changelog. The changelog and the legal pages are posts too, and stay. |
+| `mcp` | The MCP server at `/api/mcp` (404, every method), the admin's agent keys page, the setup checklist's agent step, and `npm run setup`'s local agent key. |
 
 It's a switch, like the profile, not a deletion: the code and the stored
 posts and keys stay, so emptying `OPENSHIPKIT_WITHOUT` brings everything back,

@@ -110,3 +110,16 @@ describe("switched off beyond links", () => {
     expect((await mcp.DELETE()).status).toBe(404);
   });
 });
+
+describe("the admin posts list follows the blog switch", () => {
+  it("opens on the changelog with the blog off, and every link names a kind that isn't the default", async () => {
+    const { defaultPostKind, postsListHref } = await import("@/app/admin/posts/list-href");
+    expect(defaultPostKind()).toBe("post");
+    expect(postsListHref("post")).toBe("/admin/posts");
+    expect(postsListHref("changelog", { deleted: "1" })).toBe("/admin/posts?kind=changelog&deleted=1");
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "blog");
+    expect(defaultPostKind()).toBe("changelog");
+    expect(postsListHref("post")).toBe("/admin/posts?kind=post");
+    expect(postsListHref("changelog")).toBe("/admin/posts");
+  });
+});

@@ -21,6 +21,7 @@ import { requireAdmin } from "@/server/session";
 import { getPostById } from "@/server/services/posts";
 import { deletePostAction, previewMarkdown, updatePostAction } from "../actions";
 import { featureOn } from "@/server/profile";
+import { postsListHref } from "../list-href";
 
 export const metadata: Metadata = { title: "Edit post" };
 
@@ -41,14 +42,15 @@ export default async function EditPostPage({ params, searchParams }: { params: P
       <BreadcrumbLeaf name={post.title} />
       <PageHeader
         eyebrow={
-          <Link href={`/admin/posts${post.kind === "post" ? "" : `?kind=${post.kind}`}`} className="underline-offset-4 hover:underline">
+          <Link href={postsListHref(post.kind)} className="underline-offset-4 hover:underline">
             {word.plural}
           </Link>
         }
         title={post.title}
         action={
           <>
-            {post.status === "published" ? (
+            {/* A published blog post with the blog switched off isn't on the site: no "View live" to a 404. */}
+            {post.status === "published" && (post.kind !== "post" || featureOn("blog")) ? (
               <Link href={`${word.publicPath}/${post.slug}`} target="_blank" className={pill}>
                 <ExternalLinkIcon aria-hidden className="size-3.5" /> View live<span className="sr-only"> (opens a new tab)</span>
               </Link>

@@ -342,23 +342,23 @@ function fills(options: Options, creating: boolean): Map<string, Fill> {
   out.set("BETTER_AUTH_SECRET", { value: secret(32), note: "generated (32 random bytes)" });
   if (options.compose) {
     out.set("POSTGRES_PASSWORD", { value: randomBytes(32).toString("hex"), note: "generated (64 hex characters)" });
-    if (options.domain) choose("DOMAIN", options.domain, "from --domain");
+    if (options.domain) choose("DOMAIN", options.domain, "your domain (--domain)");
     // Only in a new file: renaming the project of a running site would point it at an empty volume.
     if (options.domain && creating) {
-      out.set("COMPOSE_PROJECT_NAME", { value: projectNameFor(options.domain), note: "from --domain (containers, images and the database volume are named after it)" });
+      out.set("COMPOSE_PROJECT_NAME", { value: projectNameFor(options.domain), note: "from your domain (containers, images and the database volume are named after it)" });
     }
     const site = options.siteUrl ?? (options.domain ? `https://${options.domain}` : undefined);
-    if (site) choose("NEXT_PUBLIC_SITE_URL", site, options.siteUrl ? "from --site-url" : "from --domain");
+    if (site) choose("NEXT_PUBLIC_SITE_URL", site, options.siteUrl ? "your site URL (--site-url)" : "from your domain");
   } else {
-    if (options.siteUrl) choose("NEXT_PUBLIC_SITE_URL", options.siteUrl, "from --site-url");
+    if (options.siteUrl) choose("NEXT_PUBLIC_SITE_URL", options.siteUrl, "your site URL (--site-url)");
     else out.set("NEXT_PUBLIC_SITE_URL", { value: "http://localhost:3000", note: "development default" });
     // No agent key for an MCP server that's switched off.
     if (!options.without?.includes("mcp")) out.set("MCP_DEV_KEY", { value: `osk_${secret(32)}`, note: "generated (local-only agent key; ignored in production)" });
   }
-  if (options.adminEmail) choose("ADMIN_EMAILS", options.adminEmail.toLowerCase(), "from --admin-email");
-  if (options.profile) choose("OPENSHIPKIT_PROFILE", options.profile, "from --profile");
+  if (options.adminEmail) choose("ADMIN_EMAILS", options.adminEmail.toLowerCase(), "your admin email (--admin-email)");
+  if (options.profile) choose("OPENSHIPKIT_PROFILE", options.profile, "your choice of profile (--profile)");
   // A content site sells nothing: billing stays off even if a Polar token is set later.
-  if (options.profile === "site") choose("BILLING_PROVIDER", "none", "from --profile site (no checkout, no webhooks)");
+  if (options.profile === "site") choose("BILLING_PROVIDER", "none", "a content site sells nothing (no checkout, no webhooks)");
   else if (options.billing) choose("BILLING_PROVIDER", options.billing, "your choice of billing provider");
   if (options.email) choose("EMAIL_PROVIDER", options.email, "your choice of email");
   if (options.without?.length) choose("OPENSHIPKIT_WITHOUT", options.without.join(","), `switched off: ${options.without.join(", ")} (their pages answer 404)`);

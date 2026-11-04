@@ -104,6 +104,12 @@ Status: done (November 2026). 5.2 is a switch, not a deletion, by decision:
 `--without blog,mcp` (`OPENSHIPKIT_WITHOUT`) turns a feature off everywhere
 (404s, and every link to it gone) while the code stays, so template updates keep
 merging and switching back restores everything, the same as the site profile.
+Four rounds of independent review: the example API's idempotency now holds
+Stripe's rule at every point the process can die (a key never buys free work,
+a call is charged once whatever fails), the projects limit holds under
+concurrency on a real server, and the upgrade script keeps the template's tags
+apart from yours. Open, from the last round: a sweep for revoked API keys'
+idempotency rows (the README gives the SQL).
 
 | # | Item |
 |---|---|

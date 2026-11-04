@@ -16,13 +16,15 @@ billed. Built on the kit's own pieces; read it as the shape of an API product.
   the first answer (with `Idempotent-Replayed: true`, and its usage figures as
   of that answer; no work, no charge), the same key with another body is 422,
   and one still being answered is 409. A key can never buy new work for free.
-- **Charged once, whatever fails.** A call refused before anything was counted
-  gives its key back. One that was counted and then failed (the work threw,
-  the process died) keeps it, as a one-minute lease: a retry after that takes
-  the same request back with the same id, so the usage already recorded is
-  deduplicated, never charged again. Only a refusal known to have written
-  nothing (the limit, bad input) gives the key back. While the work runs, the
-  lease is renewed, so a slow call is never run twice. Each API key's expired
+- **Charged once, whatever fails.** Only a refusal known to have written
+  nothing (the limit, bad input) gives the key back. Any other failure (the
+  work threw, the process died, the database blipped, even before anything was
+  counted) keeps it as a one-minute lease: the client gets 409 until it ends,
+  then a retry takes the same request back with the same id, so any usage
+  already recorded is deduplicated, never charged again. While async work runs
+  the lease is renewed, so a slow call isn't run twice; work that blocks the
+  event loop for a minute (CPU-bound) can't renew it, so put that in a
+  background job. Each API key's expired
   keys are deleted whenever it calls; a revoked key's go with a sweep of your
   own (`delete from example_api_requests where created_at < now() - interval '1 day'`)
   or when you delete the key.
