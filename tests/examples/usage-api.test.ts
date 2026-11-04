@@ -57,6 +57,9 @@ function describeContract(name: string, make: () => Promise<{ store: ApiKeyStore
       // The lease over (a zero lease here), same body: taken back with the SAME id; another body isn't.
       expect(await claim("b2", { leaseMs: 0 })).toMatchObject({ claimed: false });
       expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: true, request: { id: first.request.id } });
+      // A renewed lease holds off a takeover for its length again (the work is still running).
+      await s.renewLease(first.request.id);
+      expect((await claim("b1", { leaseMs: 60_000 })).claimed).toBe(false);
       // Answered: replayed, whatever the lease.
       await s.saveResponse(first.request.id, { result: "A" });
       expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: false, request: { response: { result: "A" } } });
@@ -202,6 +205,27 @@ describe("the usage-billed API", () => {
       vi.useRealTimers();
     }
     expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(1);
+  });
+
+  it("a failure after the usage was committed (queueing its report) keeps the key: one event, one meter report", async () => {
+    const { mintApiKey } = await svc();
+    const { runDueJobs } = await import("@/server/jobs");
+    const { sweepUsageReports } = await import("@/server/services/usage");
+    await store.billing.setCustomerId(user.id, "stripe", "cus_api");
+    const { key } = await mintApiKey(user, { name: "CI" });
+    const enqueue = vi.spyOn(store.jobs, "enqueue").mockRejectedValueOnce(new Error("db blip"));
+    await expect(call(key, { text: "a" }, "outbox-1")).rejects.toThrow("db blip");
+    enqueue.mockRestore();
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 61_000 });
+    try {
+      expect(await (await call(key, { text: "a" }, "outbox-1")).json()).toMatchObject({ usage: { used: 1 } });
+      await sweepUsageReports(Date.now() + 10 * 60_000);
+      await runDueJobs();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(1);
+    expect(meter.reports).toHaveLength(1);
   });
 
   it("refuses an Idempotency-Key over 200 characters instead of cutting it", async () => {

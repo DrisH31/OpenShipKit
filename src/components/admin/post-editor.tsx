@@ -249,11 +249,14 @@ export function PostEditor({
   post,
   action,
   preview,
+  canPublish = true,
 }: {
   kind: PostKind;
   post: Post | null;
   action: FormAction;
   preview: FormAction;
+  /** False when this kind can't be published here (a blog post with OPENSHIPKIT_WITHOUT=blog): drafts only. */
+  canPublish?: boolean;
 }) {
   const isNew = !post;
   const published = post?.status === "published";
@@ -330,12 +333,15 @@ export function PostEditor({
           </>
         ) : (
           <>
-            <SubmitButton name="intent" value="publish">
-              Publish {word}
-            </SubmitButton>
-            <SubmitButton name="intent" value="save" variant="outline">
+            {canPublish ? (
+              <SubmitButton name="intent" value="publish">
+                Publish {word}
+              </SubmitButton>
+            ) : null}
+            <SubmitButton name="intent" value="save" variant={canPublish ? "outline" : "default"}>
               Save draft
             </SubmitButton>
+            {canPublish ? null : <span className="text-caption text-ink-3">The blog is switched off, so this stays a draft.</span>}
           </>
         )}
         <FormMessage />

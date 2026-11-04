@@ -93,8 +93,11 @@ export async function authenticateApiKey(header: string | null): Promise<{ user:
 
 export const callSchema = z.strictObject({ text: z.string().min(1).max(10_000) });
 
-/** Stand-in for your API's real work. */
-function runWork({ text }: z.output<typeof callSchema>) {
+/**
+ * Stand-in for your API's real work. Slow work is fine: while it runs, its Idempotency-Key's lease is
+ * renewed, so a client's retry gets 409 rather than running it a second time.
+ */
+async function runWork({ text }: z.output<typeof callSchema>): Promise<{ result: string }> {
   return { result: text.toUpperCase() };
 }
 
@@ -127,8 +130,9 @@ export async function callApi(caller: { user: User; apiKey: ApiKey }, idempotenc
   const store = await getApiKeyStore();
   const bodyHash = createHash("sha256").update(JSON.stringify(parsed)).digest("hex");
   let requestId: string = crypto.randomUUID();
+  // Every call of this API key clears its own expired keys, with or without one of its own.
+  await store.pruneRequests(caller.apiKey.id, IDEMPOTENCY_WINDOW_MS);
   if (idempotencyKey) {
-    await store.pruneRequests(caller.apiKey.id, IDEMPOTENCY_WINDOW_MS);
     const { claimed, request } = await store.claimRequest({ apiKeyId: caller.apiKey.id, key: idempotencyKey, bodyHash, windowMs: IDEMPOTENCY_WINDOW_MS, leaseMs: IDEMPOTENCY_LEASE_MS });
     if (!claimed) {
       if (request.bodyHash !== bodyHash) throw new ServiceError("conflict", "This Idempotency-Key was used for a different request. Use a new key for new work.", { reason: "idempotency_mismatch" });
@@ -141,12 +145,22 @@ export async function callApi(caller: { user: User; apiKey: ApiKey }, idempotenc
   try {
     counted = await consumeUsage({ type: "user", id: caller.user.id }, METRIC, 1, { key: requestId });
   } catch (error) {
-    // Nothing was counted (refused, or the count itself failed): the key is free for a retry.
-    if (idempotencyKey) await store.releaseRequest(requestId);
+    // The key is given back ONLY for a refusal known to have written nothing: the limit, or input
+    // consumeUsage refused before writing. Any other error may come after the usage was committed
+    // (queueing its report, a lost commit acknowledgement), so the claim stays: the retry after the
+    // lease takes the same id, and the usage already recorded under it is deduplicated.
+    const nothingWritten = error instanceof ServiceError && (error.code === "invalid" || (error.details as { reason?: string } | undefined)?.reason === "limit_reached");
+    if (idempotencyKey && nothingWritten) await store.releaseRequest(requestId);
     throw error;
   }
   // Counted from here: a failure leaves the claim, so the retry reuses this id and isn't charged again.
-  const answer: Answer = { ...runWork(parsed), usage: { used: counted.used, limit: counted.limit } };
-  if (idempotencyKey) await store.saveResponse(requestId, answer);
-  return answer;
+  // The lease is renewed while the work runs, so a slow job isn't taken over (and run twice) by a retry.
+  const heartbeat = idempotencyKey ? setInterval(() => void store.renewLease(requestId).catch(() => {}), IDEMPOTENCY_LEASE_MS / 3) : null;
+  try {
+    const answer: Answer = { ...(await runWork(parsed)), usage: { used: counted.used, limit: counted.limit } };
+    if (idempotencyKey) await store.saveResponse(requestId, answer);
+    return answer;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
 }

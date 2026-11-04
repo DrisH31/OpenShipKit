@@ -30,7 +30,8 @@ const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : u
 export default async function PostsPage({ searchParams }: { searchParams: SP }) {
   await requireAdmin();
   const sp = await searchParams;
-  const kind: PostKind = one(sp.kind) === "changelog" ? "changelog" : one(sp.kind) === "page" ? "page" : "post";
+  // With the blog switched off the list opens on the changelog (blog posts are still a tab: to unpublish or delete).
+  const kind: PostKind = one(sp.kind) === "changelog" ? "changelog" : one(sp.kind) === "page" ? "page" : one(sp.kind) === "post" || featureOn("blog") ? "post" : "changelog";
   const status: PostStatus | undefined = one(sp.status) === "draft" ? "draft" : one(sp.status) === "published" ? "published" : undefined;
   const q = one(sp.q)?.trim().slice(0, 100) || undefined;
   const cursor = one(sp.cursor) ?? null;
@@ -38,7 +39,9 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
   const page = await listPage(() => listPosts({ kind, status, search: q, cursor, limit: 25 }));
 
   const word = POST_KIND[kind];
-  const base = { kind: kind === "post" ? undefined : kind, status, q };
+  // The default kind goes unsaid in links; with the blog off the default is the changelog, so "post" is said.
+  const defaultKind: PostKind = featureOn("blog") ? "post" : "changelog";
+  const base = { kind: kind === defaultKind ? undefined : kind, status, q };
   // OPENSHIPKIT_WITHOUT=blog: existing blog posts stay listed (to unpublish or delete), no new ones.
   const canWrite = kind !== "post" || featureOn("blog");
 
@@ -64,7 +67,7 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
         <FilterTabs
           label="Kind"
           options={(["post", "changelog", "page"] as const).map((k) => ({
-            href: hrefWith("/admin/posts", { kind: k === "post" ? undefined : k, status }),
+            href: hrefWith("/admin/posts", { kind: k === defaultKind ? undefined : k, status }),
             label: POST_KIND[k].plural,
             active: k === kind,
           }))}
@@ -88,7 +91,13 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
         ) : (
           <EmptyState
             title={`No ${word.plural.toLowerCase()} yet`}
-            body={kind === "page" ? "Pages are for things like privacy, terms and about. They live at /legal/<address>." : `Write the first one. It stays a draft until you publish it.`}
+            body={
+              kind === "page"
+                ? "Pages are for things like privacy, terms and about. They live at /legal/<address>."
+                : canWrite
+                  ? `Write the first one. It stays a draft until you publish it.`
+                  : "The blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog)."
+            }
             action={canWrite ? <Link href={`/admin/posts/new?kind=${kind}`} className={buttonVariants({ size: "sm" })}>New {word.label.toLowerCase()}</Link> : undefined}
           />
         )

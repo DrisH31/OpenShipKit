@@ -72,6 +72,10 @@ export function createPostgresApiKeyStore(opts: { db?: Db } = {}): ApiKeyStore {
       if (!isUuid(requestId)) return;
       await db().execute(sql`update example_api_requests set response = ${JSON.stringify(response)}::jsonb where id = ${requestId}`);
     },
+    async renewLease(requestId) {
+      if (!isUuid(requestId)) return;
+      await db().execute(sql`update example_api_requests set locked_at = now() where id = ${requestId} and response is null`);
+    },
     async releaseRequest(requestId) {
       if (!isUuid(requestId)) return;
       await db().execute(sql`delete from example_api_requests where id = ${requestId} and response is null`);

@@ -54,7 +54,10 @@ npm run e2e                    # with `npm run dev` running: signs up, publishes
 **Postgres tests.** The data-contract tests also run on a real Postgres when
 `TEST_DATABASE_URL` is set (that database is truncated before every test — use
 a throwaway one), and the Better Auth tests when `AUTH_TEST_DATABASE_URL`
-points at a migrated database:
+points at a migrated database. With `TEST_DATABASE_URL` set, the example apps'
+stores (`tests/examples/`) also run on that server, each in a database of its
+own that the suite creates and drops, so the role needs `CREATEDB` (the
+container's `postgres` superuser has it):
 
 ```bash
 docker run -d --name ol-test -e POSTGRES_PASSWORD=test -p 55432:5432 postgres:18-alpine

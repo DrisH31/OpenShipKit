@@ -6,7 +6,7 @@ import "server-only";
 //   401 no or bad key · 400 bad input · 429 the plan's api_calls are used up this period ·
 //   Idempotency-Key (24 h, up to 200 characters): the same key and body replay the first answer
 //   (Idempotent-Replayed: true; its usage figures are as of that answer), another body is 422, one
-//   still running is 409 for up to a minute. A retry after a failure is never charged twice.
+//   still running is 409 while it runs. A retry after a failure is never charged twice.
 //
 // Key-authenticated, not cookie-authenticated: there is no session to ride, so
 // no Origin check (that's for cookies). Servers call this, not browsers.

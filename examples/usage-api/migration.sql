@@ -29,4 +29,4 @@ CREATE TABLE IF NOT EXISTS "example_api_requests" (
 	UNIQUE ("api_key_id", "idempotency_key")
 );
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "example_api_requests_created_idx" ON "example_api_requests" ("created_at");
+CREATE INDEX IF NOT EXISTS "example_api_requests_key_created_idx" ON "example_api_requests" ("api_key_id", "created_at");

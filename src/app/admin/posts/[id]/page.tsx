@@ -20,6 +20,7 @@ import { POST_KIND, POST_STATUS } from "@/lib/status";
 import { requireAdmin } from "@/server/session";
 import { getPostById } from "@/server/services/posts";
 import { deletePostAction, previewMarkdown, updatePostAction } from "../actions";
+import { featureOn } from "@/server/profile";
 
 export const metadata: Metadata = { title: "Edit post" };
 
@@ -86,7 +87,7 @@ export default async function EditPostPage({ params, searchParams }: { params: P
           {justCreated}
         </p>
       ) : null}
-      <PostEditor kind={post.kind} post={post} action={updatePostAction.bind(null, post.id)} preview={previewMarkdown} />
+      <PostEditor kind={post.kind} post={post} action={updatePostAction.bind(null, post.id)} preview={previewMarkdown} canPublish={post.kind !== "post" || featureOn("blog")} />
     </>
   );
 }

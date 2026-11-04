@@ -492,7 +492,7 @@ List the pricing plans in display order, inactive ones included unless activeOnl
 
 ### post_create
 
-Create a blog post (kind post, the default), changelog entry or static page. It is saved as a DRAFT unless you pass status "published" — create drafts, show the person the result, and publish when they say so. The slug is derived from the title when omitted and must be unique within its kind. body is Markdown: start sections at ##, never #, because the title is the page's heading (check it first with render_markdown_preview). A published post can't be dated in the future (there is no scheduling). Returns the saved post with its id and url.
+Create a blog post (kind post, the default), changelog entry or static page. It is saved as a DRAFT unless you pass status "published" — create drafts, show the person the result, and publish when they say so. The slug is derived from the title when omitted and must be unique within its kind. body is Markdown: start sections at ##, never #, because the title is the page's heading (check it first with render_markdown_preview). A published post can't be dated in the future (there is no scheduling). If the site has the blog switched off (OPENSHIPKIT_WITHOUT=blog; guide says), blog posts are refused: write a changelog entry or page instead. Returns the saved post with its id and url.
 
 **Scope:** write. **Kind:** additive write.
 

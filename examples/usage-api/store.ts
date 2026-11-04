@@ -41,6 +41,8 @@ export interface ApiKeyStore {
   claimRequest(input: { apiKeyId: string; key: string; bodyHash: string; windowMs: number; leaseMs: number }): Promise<{ claimed: boolean; request: ApiRequest }>;
   /** The answer to replay for a claimed request. */
   saveResponse(requestId: string, response: unknown): Promise<void>;
+  /** Keep an unanswered claim's lease while its work runs. */
+  renewLease(requestId: string): Promise<void>;
   /** Give back a claim that counted nothing (refused before any work), so a retry is a fresh request. */
   releaseRequest(requestId: string): Promise<void>;
   /** Delete this API key's requests older than the window. Returns how many. */
@@ -107,6 +109,9 @@ export function createMemoryApiKeyStore(): ApiKeyStore {
     },
     async saveResponse(requestId, response) {
       for (const r of requests.values()) if (r.id === requestId) r.response = response;
+    },
+    async renewLease(requestId) {
+      if (lockedAt.has(requestId)) lockedAt.set(requestId, new Date().toISOString());
     },
     async releaseRequest(requestId) {
       for (const [k, r] of requests) if (r.id === requestId && r.response === null) requests.delete(k);

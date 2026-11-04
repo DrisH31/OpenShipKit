@@ -20,8 +20,12 @@ billed. Built on the kit's own pieces; read it as the shape of an API product.
   gives its key back. One that was counted and then failed (the work threw,
   the process died) keeps it, as a one-minute lease: a retry after that takes
   the same request back with the same id, so the usage already recorded is
-  deduplicated, never charged again. Expired keys are deleted as each API key
-  calls.
+  deduplicated, never charged again. Only a refusal known to have written
+  nothing (the limit, bad input) gives the key back. While the work runs, the
+  lease is renewed, so a slow call is never run twice. Each API key's expired
+  keys are deleted whenever it calls; a revoked key's go with a sweep of your
+  own (`delete from example_api_requests where created_at < now() - interval '1 day'`)
+  or when you delete the key.
 - **Whose plan:** the person's (keys belong to a person). For a team API, mint
   keys per organisation and meter `{ type: "org" }` instead.
 - **Billing for usage, with nothing provider-specific here.** Set
