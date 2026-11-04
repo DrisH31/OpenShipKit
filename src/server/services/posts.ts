@@ -95,17 +95,26 @@ async function requirePost(id: string): Promise<Post> {
   return post;
 }
 
-/** With the blog switched off (OPENSHIPKIT_WITHOUT=blog), a blog post would publish to a 404: refused. */
-function assertKindOn(kind: Post["kind"]): void {
+/**
+ * With the blog switched off (OPENSHIPKIT_WITHOUT=blog), a blog post would publish to a 404, so two
+ * acts are refused: creating one, and moving one into published (an edit or a restore). Everything
+ * else on an existing one still works: unpublish, unlist, fix a typo, delete. Exported for the restore.
+ */
+export function assertBlogWrite(kind: Post["kind"], act: "create" | "publish"): void {
   if (kind === "post" && !featureOn("blog")) {
-    throw new ServiceError("invalid", "The blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog), so blog posts can't be written or published. Changelog entries and pages still can.");
+    throw new ServiceError(
+      "invalid",
+      act === "create"
+        ? "The blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog), so new blog posts can't be written. Changelog entries and pages still can."
+        : "The blog is switched off on this site (OPENSHIPKIT_WITHOUT=blog), so a blog post can't be published. It can still be edited, unpublished or deleted.",
+    );
   }
 }
 
 export async function createPost(input: unknown, actor: Actor): Promise<Post> {
   assertNotDemo(actor);
   const parsed = parseInput(postCreateSchema, input);
-  assertKindOn(parsed.kind);
+  assertBlogWrite(parsed.kind, "create");
   const slug = parsed.slug ?? slugify(parsed.title);
   if (!slug) throw new ServiceError("invalid", "Could not derive a slug from the title, so give the post an explicit slug");
   const data = await getData();
@@ -129,7 +138,7 @@ export async function updatePost(id: string, patch: unknown, actor: Actor): Prom
   assertNotDemo(actor);
   const parsed = parseInput(postUpdateSchema, patch);
   const before = await requirePost(id);
-  assertKindOn(before.kind);
+  if (parsed.status === "published" && before.status !== "published") assertBlogWrite(before.kind, "publish");
   const data = await getData();
   if (parsed.slug && parsed.slug !== before.slug) {
     const clash = await data.posts.getBySlug(before.kind, parsed.slug);

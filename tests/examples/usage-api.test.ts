@@ -13,6 +13,7 @@ import { createMemoryStore } from "@/adapters/data/memory";
 import { createPostgresStore } from "@/adapters/data/postgres";
 import { drizzleOverPglite } from "@/adapters/data/postgres/db";
 import { migrateEmbedded } from "@/adapters/data/postgres/embedded";
+import { TEST_DATABASE_URL, connectExample } from "./postgres";
 import type { DataStore } from "@/core/data";
 import type { PlanInput, User } from "@/core/types";
 import { createMemoryApiKeyStore, type ApiKeyStore } from "../../examples/usage-api/store";
@@ -43,23 +44,30 @@ function describeContract(name: string, make: () => Promise<{ store: ApiKeyStore
       expect(await s.findActiveByHash(hash)).toMatchObject({ userId: b });
     });
 
-    it("claims an Idempotency-Key once per window, keeps its answer, and gives back an unanswered claim", async () => {
+    it("claims an Idempotency-Key once per window, takes back an unanswered one after its lease with the same id", async () => {
       const { store: s, users: [a] } = await make();
       const k = await s.create({ userId: a, name: "CI", prefix: "uk_abcde", hash: `h-${crypto.randomUUID()}` });
-      const since = new Date(Date.now() - 60_000).toISOString();
-      const first = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b1", since });
+      const claim = (bodyHash: string, o: { windowMs?: number; leaseMs?: number } = {}) =>
+        s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash, windowMs: o.windowMs ?? 86_400_000, leaseMs: o.leaseMs ?? 60_000 });
+      const first = await claim("b1");
       expect(first.claimed).toBe(true);
-      const second = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b2", since });
-      expect(second).toMatchObject({ claimed: false, request: { id: first.request.id, bodyHash: "b1", response: null } });
+      // Leased: another claim (same or other body) gets it back as it is.
+      expect(await claim("b2")).toMatchObject({ claimed: false, request: { id: first.request.id, bodyHash: "b1", response: null } });
+      expect((await claim("b1")).claimed).toBe(false);
+      // The lease over (a zero lease here), same body: taken back with the SAME id; another body isn't.
+      expect(await claim("b2", { leaseMs: 0 })).toMatchObject({ claimed: false });
+      expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: true, request: { id: first.request.id } });
+      // Answered: replayed, whatever the lease.
       await s.saveResponse(first.request.id, { result: "A" });
-      expect((await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b1", since })).request.response).toEqual({ result: "A" });
-      // Past the window, the key is a new request.
-      const later = await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b9", since: new Date(Date.now() + 60_000).toISOString() });
+      expect(await claim("b1", { leaseMs: 0 })).toMatchObject({ claimed: false, request: { response: { result: "A" } } });
+      // Past the window (a zero window here), the key is a new request with a new id.
+      const later = await claim("b9", { windowMs: 0 });
       expect(later).toMatchObject({ claimed: true, request: { bodyHash: "b9", response: null } });
       expect(later.request.id).not.toBe(first.request.id);
-      // An unanswered claim given back can be claimed again; an answered one isn't removed.
+      // Given back, it's claimed afresh; pruning deletes what's past the window.
       await s.releaseRequest(later.request.id);
-      expect((await s.claimRequest({ apiKeyId: k.id, key: "i1", bodyHash: "b3", since })).claimed).toBe(true);
+      expect((await claim("b3")).claimed).toBe(true);
+      expect(await s.pruneRequests(k.id, 0)).toBeGreaterThanOrEqual(1);
     });
   });
 }
@@ -84,6 +92,22 @@ describe("api key store on postgres (PGlite)", () => {
     const make = async () =>
       (await users.upsertFromIdentity({ provider: "better-auth", providerUserId: crypto.randomUUID(), email: `${crypto.randomUUID()}@example.com`, name: null, image: null, emailVerified: true }, { makeAdmin: false })).id;
     return { store: createPostgresApiKeyStore({ db }), users: [await make(), await make()] };
+  });
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("api key store on a Postgres server (TEST_DATABASE_URL)", () => {
+  let handle: Awaited<ReturnType<typeof connectExample>>;
+  beforeAll(async () => {
+    handle = await connectExample("usage-api");
+  }, 60_000);
+  afterAll(async () => {
+    await handle?.close();
+  });
+  describeContract("postgres server", async () => {
+    const users = createPostgresStore({ db: handle.db }).users;
+    const make = async () =>
+      (await users.upsertFromIdentity({ provider: "better-auth", providerUserId: crypto.randomUUID(), email: `${crypto.randomUUID()}@example.com`, name: null, image: null, emailVerified: true }, { makeAdmin: false })).id;
+    return { store: createPostgresApiKeyStore({ db: handle.db }), users: [await make(), await make()] };
   });
 });
 
@@ -157,6 +181,33 @@ describe("the usage-billed API", () => {
     // A refused call gives its key back: after an upgrade the same key works.
     await store.plans.upsert(plan("free", { sortOrder: 0, limits: { api_calls: 10 } }));
     expect((await call(key, { text: "d" }, "req-4")).status).toBe(200);
+  });
+
+  it("a call that fails after it was counted is never charged twice: the retry after the lease reuses its id", async () => {
+    const { mintApiKey, getApiKeyStore } = await svc();
+    const { key } = await mintApiKey(user, { name: "CI" });
+    const apiStore = await getApiKeyStore();
+    const save = vi.spyOn(apiStore, "saveResponse").mockRejectedValueOnce(new Error("disk full"));
+    await expect(call(key, { text: "a" }, "crash-1")).rejects.toThrow("disk full");
+    save.mockRestore();
+    // Within the lease: still being answered.
+    expect((await call(key, { text: "a" }, "crash-1")).status).toBe(409);
+    // After it: taken back with the same id; the usage already recorded is deduplicated.
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() + 61_000 });
+    try {
+      const retry = await call(key, { text: "a" }, "crash-1");
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toMatchObject({ result: "A", usage: { used: 1 } });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await store.usage.sum({ type: "user", id: user.id }, "api_calls", "2000-01-01T00:00:00Z", "2100-01-01T00:00:00Z")).toBe(1);
+  });
+
+  it("refuses an Idempotency-Key over 200 characters instead of cutting it", async () => {
+    const { mintApiKey } = await svc();
+    const { key } = await mintApiKey(user, { name: "CI" });
+    expect((await call(key, { text: "a" }, "k".repeat(201))).status).toBe(400);
   });
 
   it("holds the plan's limit exactly under concurrency", async () => {

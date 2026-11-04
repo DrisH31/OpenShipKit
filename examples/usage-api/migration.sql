@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS "example_api_requests" (
 	"idempotency_key" text NOT NULL,
 	"body_hash" text NOT NULL,
 	"response" jsonb,
+	-- While unanswered, a lease: a retry after it ends takes the request back with the same id, so the
+	-- usage already counted for it is deduplicated, never charged again.
+	"locked_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	"created_at" timestamp (3) with time zone DEFAULT now() NOT NULL,
 	UNIQUE ("api_key_id", "idempotency_key")
 );
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "example_api_requests_created_idx" ON "example_api_requests" ("created_at");

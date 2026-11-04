@@ -73,13 +73,23 @@ describe("switched off beyond links", () => {
     expect(isHiddenPath("/admin/posts/new?kind=post", "saas", [])).toBe(false);
   });
 
-  it("the posts service refuses blog posts with the blog off (admin and MCP alike), not changelog entries", async () => {
-    vi.stubEnv("OPENSHIPKIT_WITHOUT", "blog");
+  it("with the blog off, blog posts can't be created or published (edit, restore), but existing ones can be edited, unpublished, deleted", async () => {
     store = createMemoryStore({ fresh: true });
-    const { createPost } = await import("@/server/services/posts");
+    const { createPost, updatePost, setPostStatus, deletePost } = await import("@/server/services/posts");
+    const { restoreAuditEntry } = await import("@/server/services/audit");
     const actor = { type: "system" as const, id: null, label: "test" };
+    const live = await createPost({ kind: "post", title: "Live one", body: "x", status: "published" }, actor);
+    const draft = await createPost({ kind: "post", title: "Draft one", body: "x" }, actor);
+    vi.stubEnv("OPENSHIPKIT_WITHOUT", "blog");
     await expect(createPost({ kind: "post", title: "Hello", body: "x" }, actor)).rejects.toMatchObject({ code: "invalid", message: expect.stringMatching(/blog is switched off/) });
     await expect(createPost({ kind: "changelog", title: "1.1", body: "x" }, actor)).resolves.toMatchObject({ kind: "changelog" });
+    await expect(setPostStatus(draft.id, "published", actor)).rejects.toMatchObject({ code: "invalid" });
+    await expect(updatePost(live.id, { title: "Typo fixed" }, actor)).resolves.toMatchObject({ title: "Typo fixed" });
+    await expect(setPostStatus(live.id, "draft", actor)).resolves.toMatchObject({ status: "draft" });
+    // Restoring the "published" before of that unpublish would publish it again: refused.
+    const entry = (await store.audit.list({ entity: "post", entityId: live.id, limit: 10 })).items.find((e) => (e.after as { status?: string } | null)?.status === "draft")!;
+    await expect(restoreAuditEntry(entry.id, actor)).rejects.toMatchObject({ code: "invalid" });
+    await deletePost(live.id, actor);
   });
 
   it("the setup checklist drops a step whose action is switched off", async () => {

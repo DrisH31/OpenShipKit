@@ -100,37 +100,53 @@ function runWork({ text }: z.output<typeof callSchema>) {
 
 /** How long an Idempotency-Key means "the same request" (Stripe keeps them 24 hours). */
 export const IDEMPOTENCY_WINDOW_MS = 24 * 60 * 60_000;
+/** How long an unanswered request holds its key before a retry may take it over (with the same id). */
+export const IDEMPOTENCY_LEASE_MS = 60_000;
 
 type Answer = { result: string; usage: { used: number; limit: number | null } };
 
 /**
  * One API call: validated, counted against the plan (atomically, refused past the limit), then done.
- * With an Idempotency-Key, Stripe's rule: the same key and body replay the saved answer (`replayed`),
- * another body is a conflict (reason idempotency_mismatch), one still running is a conflict (reason
- * in_progress). A call refused or failed before it was answered gives its key back, to be retried.
+ *
+ * With an Idempotency-Key, Stripe's rule, safe at every point the process can die:
+ *   - the same key and body, answered: the saved answer is replayed (`replayed`), with the usage as
+ *     of that first answer; no work, no charge;
+ *   - another body: a conflict (reason idempotency_mismatch, 422);
+ *   - still being answered: a conflict (reason in_progress, 409), until its lease (a minute) ends;
+ *   - refused before anything was counted (the limit, bad input): the key is given back;
+ *   - counted, then failed (the work threw, the process died): the key is NOT given back. A retry
+ *     after the lease takes the same request id, the usage event already recorded under it is
+ *     deduplicated, the work runs again, and the answer is saved. One request is charged once.
+ * Each API key's expired requests are deleted as it calls.
  */
 export async function callApi(caller: { user: User; apiKey: ApiKey }, idempotencyKey: string | null, input: unknown): Promise<Answer & { replayed?: true }> {
   const parsed = parseInput(callSchema, input);
+  if (idempotencyKey !== null && (idempotencyKey.length < 1 || idempotencyKey.length > 200)) {
+    throw new ServiceError("invalid", "An Idempotency-Key is 1 to 200 characters.");
+  }
   const store = await getApiKeyStore();
   const bodyHash = createHash("sha256").update(JSON.stringify(parsed)).digest("hex");
   let requestId: string = crypto.randomUUID();
   if (idempotencyKey) {
-    const since = new Date(Date.now() - IDEMPOTENCY_WINDOW_MS).toISOString();
-    const { claimed, request } = await store.claimRequest({ apiKeyId: caller.apiKey.id, key: idempotencyKey, bodyHash, since });
+    await store.pruneRequests(caller.apiKey.id, IDEMPOTENCY_WINDOW_MS);
+    const { claimed, request } = await store.claimRequest({ apiKeyId: caller.apiKey.id, key: idempotencyKey, bodyHash, windowMs: IDEMPOTENCY_WINDOW_MS, leaseMs: IDEMPOTENCY_LEASE_MS });
     if (!claimed) {
       if (request.bodyHash !== bodyHash) throw new ServiceError("conflict", "This Idempotency-Key was used for a different request. Use a new key for new work.", { reason: "idempotency_mismatch" });
-      if (request.response === null) throw new ServiceError("conflict", "A request with this Idempotency-Key is still being answered. Retry in a moment.", { reason: "in_progress" });
+      if (request.response === null) throw new ServiceError("conflict", "A request with this Idempotency-Key is still being answered. Retry in a minute.", { reason: "in_progress" });
       return { ...(request.response as Answer), replayed: true };
     }
     requestId = request.id;
   }
+  let counted: { used: number; limit: number | null };
   try {
-    const { used, limit } = await consumeUsage({ type: "user", id: caller.user.id }, METRIC, 1, { key: requestId });
-    const answer: Answer = { ...runWork(parsed), usage: { used, limit } };
-    if (idempotencyKey) await store.saveResponse(requestId, answer);
-    return answer;
+    counted = await consumeUsage({ type: "user", id: caller.user.id }, METRIC, 1, { key: requestId });
   } catch (error) {
+    // Nothing was counted (refused, or the count itself failed): the key is free for a retry.
     if (idempotencyKey) await store.releaseRequest(requestId);
     throw error;
   }
+  // Counted from here: a failure leaves the claim, so the retry reuses this id and isn't charged again.
+  const answer: Answer = { ...runWork(parsed), usage: { used: counted.used, limit: counted.limit } };
+  if (idempotencyKey) await store.saveResponse(requestId, answer);
+  return answer;
 }

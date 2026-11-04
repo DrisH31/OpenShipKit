@@ -31,15 +31,20 @@ export interface ApiKeyStore {
   revoke(userId: string, id: string): Promise<boolean>;
   touch(id: string, at: string): Promise<void>;
   /**
-   * Claim an Idempotency-Key for this API key: a new row (claimed: true) unless one younger than
-   * `since` exists, which comes back as it is (claimed: false). An older one is replaced: keys last
-   * for the window, then mean a new request.
+   * Claim an Idempotency-Key for this API key, within a window of `windowMs`:
+   *   - none, or one older than the window: a new request (claimed, a new id);
+   *   - unanswered, same body, its lease (`leaseMs`) over: taken back WITH THE SAME ID (claimed), so
+   *     whatever it already counted is deduplicated by that id;
+   *   - anything else comes back as it is (not claimed): answered, still leased, or another body.
+   * Times are the database's own clock.
    */
-  claimRequest(input: { apiKeyId: string; key: string; bodyHash: string; since: string }): Promise<{ claimed: boolean; request: ApiRequest }>;
+  claimRequest(input: { apiKeyId: string; key: string; bodyHash: string; windowMs: number; leaseMs: number }): Promise<{ claimed: boolean; request: ApiRequest }>;
   /** The answer to replay for a claimed request. */
   saveResponse(requestId: string, response: unknown): Promise<void>;
-  /** Give a claim back when the request failed before it was answered (it may be retried). */
+  /** Give back a claim that counted nothing (refused before any work), so a retry is a fresh request. */
   releaseRequest(requestId: string): Promise<void>;
+  /** Delete this API key's requests older than the window. Returns how many. */
+  pruneRequests(apiKeyId: string, windowMs: number): Promise<number>;
 }
 
 export interface ApiRequest {
@@ -58,6 +63,7 @@ export const isUuid = (value: string): boolean => UUID.test(value);
 export function createMemoryApiKeyStore(): ApiKeyStore {
   const rows = new Map<string, ApiKey & { hash: string }>();
   const requests = new Map<string, ApiRequest>();
+  const lockedAt = new Map<string, string>();
   const pub = ({ hash: _h, ...k }: ApiKey & { hash: string }): ApiKey => ({ ...k }); // eslint-disable-line @typescript-eslint/no-unused-vars
   let seq = 0;
   return {
@@ -84,12 +90,19 @@ export function createMemoryApiKeyStore(): ApiKeyStore {
       const r = rows.get(id);
       if (r) r.lastUsedAt = at;
     },
-    async claimRequest({ apiKeyId, key, bodyHash, since }) {
+    async claimRequest({ apiKeyId, key, bodyHash, windowMs, leaseMs }) {
       const id = `${apiKeyId}:${key}`;
       const seen = requests.get(id);
-      if (seen && seen.createdAt >= new Date(since).toISOString()) return { claimed: false, request: { ...seen } };
-      const request: ApiRequest = { id: crypto.randomUUID(), apiKeyId, key, bodyHash, response: null, createdAt: new Date().toISOString() };
+      const now = Date.now();
+      if (seen && Date.parse(seen.createdAt) > now - windowMs) {
+        const lapsed = seen.response === null && seen.bodyHash === bodyHash && Date.parse(lockedAt.get(seen.id) ?? seen.createdAt) <= now - leaseMs;
+        if (!lapsed) return { claimed: false, request: { ...seen } };
+        lockedAt.set(seen.id, new Date(now).toISOString());
+        return { claimed: true, request: { ...seen } };
+      }
+      const request: ApiRequest = { id: crypto.randomUUID(), apiKeyId, key, bodyHash, response: null, createdAt: new Date(now).toISOString() };
       requests.set(id, request);
+      lockedAt.set(request.id, request.createdAt);
       return { claimed: true, request: { ...request } };
     },
     async saveResponse(requestId, response) {
@@ -97,6 +110,16 @@ export function createMemoryApiKeyStore(): ApiKeyStore {
     },
     async releaseRequest(requestId) {
       for (const [k, r] of requests) if (r.id === requestId && r.response === null) requests.delete(k);
+    },
+    async pruneRequests(apiKeyId, windowMs) {
+      let n = 0;
+      for (const [k, r] of requests) {
+        if (r.apiKeyId === apiKeyId && Date.parse(r.createdAt) <= Date.now() - windowMs) {
+          requests.delete(k);
+          n++;
+        }
+      }
+      return n;
     },
   };
 }

@@ -14,7 +14,7 @@ import { getData } from "../data";
 import { ServiceError, fromDataError } from "./errors";
 import { assertSafePlanChange, carryPlanRename, validatePlanWrite } from "./plans";
 import { announcePostChange } from "./indexnow";
-import { assertNotFutureDated } from "./posts";
+import { assertNotFutureDated, assertBlogWrite } from "./posts";
 import { log } from "@/server/log";
 
 export async function recordAudit(
@@ -92,8 +92,10 @@ export async function restoreAuditEntry(entryId: string, actor: Actor): Promise<
         seoDescription: before.seoDescription,
         publishedAt: before.publishedAt,
       };
-      // Same rule as editing: no published post dated ahead (there is no scheduling).
+      // Same rules as editing: no published post dated ahead (there is no scheduling), and no blog post
+      // brought back to published with the blog switched off.
       assertNotFutureDated(fields.status, fields.publishedAt);
+      if (fields.status === "published" && current?.status !== "published") assertBlogWrite(before.kind, "publish");
       // A deleted post comes back with its own id and creation date, so its earlier audit entries still restore.
       // A slug now taken by another post is a DataError("conflict"): shown to the admin, not logged as a bug.
       const restored = current

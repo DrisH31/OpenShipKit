@@ -135,10 +135,15 @@ function main(): void {
 
   // The target: --to (a release name or any ref), else the template's newest release, else its main.
   const tags = (git(["for-each-ref", "--format=%(refname:strip=3)", TAGS]) ?? "").split("\n").filter((t) => semver(t)[0] >= 0).sort(compare);
-  const target = o.to ?? tags.at(-1) ?? `${o.remote}/main`;
+  // --to names the template's, never yours: one of its releases, else one of its branches ("main" is
+  // <remote>/main, not your own main, which would always read "nothing to upgrade").
+  const target = o.to ?? tags.at(-1) ?? "main";
   const isRelease = tags.includes(target);
-  const ref = git(["rev-parse", "--verify", "--quiet", `${isRelease ? `${TAGS}/${target}` : target}^{commit}`], true);
-  if (!ref) fail(`"${target}" isn't one of ${o.remote}'s releases or a ref here. Releases: ${tags.length ? tags.join(", ") : "none fetched"}`);
+  const templateBranch = target.startsWith(`${o.remote}/`) ? target.slice(o.remote.length + 1) : target;
+  const ref =
+    (isRelease ? git(["rev-parse", "--verify", "--quiet", `${TAGS}/${target}^{commit}`], true) : null) ??
+    git(["rev-parse", "--verify", "--quiet", `refs/remotes/${o.remote}/${templateBranch}^{commit}`], true);
+  if (!ref) fail(`"${target}" isn't one of ${o.remote}'s releases or branches. Releases: ${tags.length ? tags.join(", ") : "none fetched"}`);
 
   const versionAt = (rev: string | null) => {
     const pkg = rev ? git(["show", `${rev}:package.json`], true) : null;
@@ -163,7 +168,7 @@ function main(): void {
   // What changed, per version, from the target's own changelog.
   // Upgrading to a branch (main) crosses its unreleased work too.
   const sections = changelogSections(git(["show", `${ref}:CHANGELOG.md`], true) ?? "").filter((s) => {
-    if (s.version === "Unreleased") return !isRelease && s.body.length > 0;
+    if (s.version === "Unreleased") return !isRelease && s.body.length > 0; // a branch carries its unreleased work
     if (semver(s.version)[0] < 0) return false;
     return (mine === "?" || compare(s.version, mine) > 0) && compare(s.version, theirs) <= 0;
   });

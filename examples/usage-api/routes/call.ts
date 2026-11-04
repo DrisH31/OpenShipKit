@@ -4,8 +4,9 @@ import "server-only";
 // POST /api/v1/shout — the example API. Authorization: Bearer <a key from /api/api-keys>.
 //   { text } → 200 { result, usage: { used, limit } }
 //   401 no or bad key · 400 bad input · 429 the plan's api_calls are used up this period ·
-//   Idempotency-Key (24 h): the same key and body replay the first answer (Idempotent-Replayed:
-//   true), another body is 422, one still running is 409.
+//   Idempotency-Key (24 h, up to 200 characters): the same key and body replay the first answer
+//   (Idempotent-Replayed: true; its usage figures are as of that answer), another body is 422, one
+//   still running is 409 for up to a minute. A retry after a failure is never charged twice.
 //
 // Key-authenticated, not cookie-authenticated: there is no session to ride, so
 // no Origin check (that's for cookies). Servers call this, not browsers.
@@ -32,7 +33,8 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return json(400, { error: "invalid", message: "Send a JSON body." });
   }
-  const idempotencyKey = request.headers.get("idempotency-key")?.trim().slice(0, 200) || null;
+  // Whole, never cut: two long keys mustn't collide. Over 200 characters is a 400 (the service says so).
+  const idempotencyKey = request.headers.get("idempotency-key")?.trim() || null;
   try {
     const { replayed, ...answer } = await callApi(caller, idempotencyKey, body);
     return json(200, answer, replayed ? { "idempotent-replayed": "true" } : {});

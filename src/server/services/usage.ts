@@ -149,7 +149,8 @@ function assertQuantity(quantity: number): void {
 
 export type LimitCheck = { allowed: boolean; limit: number | null; used: number; metric: string; plan: string | null };
 
-const limitReached = (metric: string, limit: number | null, used: number, metered: boolean) =>
+/** The refusal for a limit that's used up: ServiceError("conflict", reason "limit_reached"). The one wording; features with their own counts throw it too. */
+export const limitReached = (metric: string, limit: number | null, used: number, metered: boolean) =>
   new ServiceError("conflict", `Your plan allows ${limit} ${metric.replace(/_/g, " ")}${metered ? " a month" : ""}, and that's used up. Upgrade for more.`, {
     reason: "limit_reached",
     metric,

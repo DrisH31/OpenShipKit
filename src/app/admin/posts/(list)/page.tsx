@@ -20,6 +20,7 @@ import { formatDate } from "@/lib/format";
 import { POST_KIND, POST_STATUS } from "@/lib/status";
 import { requireAdmin } from "@/server/session";
 import { listPosts } from "@/server/services/posts";
+import { featureOn } from "@/server/profile";
 
 export const metadata: Metadata = { title: "Posts" };
 
@@ -38,6 +39,8 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
 
   const word = POST_KIND[kind];
   const base = { kind: kind === "post" ? undefined : kind, status, q };
+  // OPENSHIPKIT_WITHOUT=blog: existing blog posts stay listed (to unpublish or delete), no new ones.
+  const canWrite = kind !== "post" || featureOn("blog");
 
   return (
     <>
@@ -45,9 +48,11 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
         title="Posts"
         answer="Everything long-form: the blog, the changelog and static pages like privacy and terms. Drafts stay off the site until you publish."
         action={
-          <Link href={`/admin/posts/new?kind=${kind}`} className={buttonVariants({ size: "sm" })}>
-            <PlusIcon aria-hidden /> New {word.label.toLowerCase()}
-          </Link>
+          canWrite ? (
+            <Link href={`/admin/posts/new?kind=${kind}`} className={buttonVariants({ size: "sm" })}>
+              <PlusIcon aria-hidden /> New {word.label.toLowerCase()}
+            </Link>
+          ) : undefined
         }
       />
       {sp.deleted ? (
@@ -84,7 +89,7 @@ export default async function PostsPage({ searchParams }: { searchParams: SP }) 
           <EmptyState
             title={`No ${word.plural.toLowerCase()} yet`}
             body={kind === "page" ? "Pages are for things like privacy, terms and about. They live at /legal/<address>." : `Write the first one. It stays a draft until you publish it.`}
-            action={<Link href={`/admin/posts/new?kind=${kind}`} className={buttonVariants({ size: "sm" })}>New {word.label.toLowerCase()}</Link>}
+            action={canWrite ? <Link href={`/admin/posts/new?kind=${kind}`} className={buttonVariants({ size: "sm" })}>New {word.label.toLowerCase()}</Link> : undefined}
           />
         )
       ) : (

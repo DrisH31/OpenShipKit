@@ -43,18 +43,30 @@ export function createPostgresApiKeyStore(opts: { db?: Db } = {}): ApiKeyStore {
       if (!isUuid(id)) return;
       await db().execute(sql`update example_api_keys set last_used_at = ${at} where id = ${id}`);
     },
-    async claimRequest({ apiKeyId, key, bodyHash, since }) {
-      // One statement: insert, or replace a row older than the window; a younger one stays and is read.
-      const claimed = await db().execute<ReqRow>(sql`
-        insert into example_api_requests (api_key_id, idempotency_key, body_hash)
-        values (${apiKeyId}, ${key}, ${bodyHash})
-        on conflict (api_key_id, idempotency_key) do update
-          set id = gen_random_uuid(), body_hash = excluded.body_hash, response = null, created_at = now()
-          where example_api_requests.created_at < ${since}
-        returning *`);
-      if (claimed.rows[0]) return { claimed: true, request: toRequest(claimed.rows[0]) };
-      const seen = await db().execute<ReqRow>(sql`select * from example_api_requests where api_key_id = ${apiKeyId} and idempotency_key = ${key}`);
-      return { claimed: false, request: toRequest(seen.rows[0]) };
+    async claimRequest({ apiKeyId, key, bodyHash, windowMs, leaseMs }) {
+      const window = sql`now() - make_interval(secs => ${windowMs / 1000})`;
+      const lease = sql`now() - make_interval(secs => ${leaseMs / 1000})`;
+      // A release can delete the row between the two statements: then claim again (bounded).
+      for (let attempt = 0; attempt < 3; attempt++) {
+        // One statement, on the database's clock: insert; or replace a row older than the window (a new
+        // id); or take back an unanswered one with the same body whose lease is over (the SAME id).
+        const claimed = await db().execute<ReqRow>(sql`
+          insert into example_api_requests (api_key_id, idempotency_key, body_hash)
+          values (${apiKeyId}, ${key}, ${bodyHash})
+          on conflict (api_key_id, idempotency_key) do update set
+            id = case when example_api_requests.created_at < ${window} then gen_random_uuid() else example_api_requests.id end,
+            body_hash = excluded.body_hash,
+            response = case when example_api_requests.created_at < ${window} then null else example_api_requests.response end,
+            created_at = case when example_api_requests.created_at < ${window} then now() else example_api_requests.created_at end,
+            locked_at = now()
+          where example_api_requests.created_at < ${window}
+             or (example_api_requests.response is null and example_api_requests.body_hash = excluded.body_hash and example_api_requests.locked_at < ${lease})
+          returning *`);
+        if (claimed.rows[0]) return { claimed: true, request: toRequest(claimed.rows[0]) };
+        const seen = await db().execute<ReqRow>(sql`select * from example_api_requests where api_key_id = ${apiKeyId} and idempotency_key = ${key}`);
+        if (seen.rows[0]) return { claimed: false, request: toRequest(seen.rows[0]) };
+      }
+      throw new Error("Couldn't claim the Idempotency-Key (it kept being released); retry the request.");
     },
     async saveResponse(requestId, response) {
       if (!isUuid(requestId)) return;
@@ -63,6 +75,13 @@ export function createPostgresApiKeyStore(opts: { db?: Db } = {}): ApiKeyStore {
     async releaseRequest(requestId) {
       if (!isUuid(requestId)) return;
       await db().execute(sql`delete from example_api_requests where id = ${requestId} and response is null`);
+    },
+    async pruneRequests(apiKeyId, windowMs) {
+      if (!isUuid(apiKeyId)) return 0;
+      const r = await db().execute<{ id: string }>(
+        sql`delete from example_api_requests where api_key_id = ${apiKeyId} and created_at < now() - make_interval(secs => ${windowMs / 1000}) returning id`,
+      );
+      return r.rows.length;
     },
   };
 }

@@ -11,11 +11,17 @@ billed. Built on the kit's own pieces; read it as the shape of an API product.
   `consumeUsage(subject, "api_calls", 1)`: the plan's `api_calls` limit is
   checked and the call recorded in one atomic step, so ten requests at the
   last unit let exactly one through (the rest get 429).
-- **Idempotency the way Stripe does it.** An `Idempotency-Key` is kept per API
-  key for 24 hours: the same key and body replay the first answer (with
-  `Idempotent-Replayed: true`; no work, no charge), the same key with another
-  body is 422, and one still being answered is 409. A key can never buy new
-  work for free.
+- **Idempotency the way Stripe does it.** An `Idempotency-Key` (up to 200
+  characters) is kept per API key for 24 hours: the same key and body replay
+  the first answer (with `Idempotent-Replayed: true`, and its usage figures as
+  of that answer; no work, no charge), the same key with another body is 422,
+  and one still being answered is 409. A key can never buy new work for free.
+- **Charged once, whatever fails.** A call refused before anything was counted
+  gives its key back. One that was counted and then failed (the work threw,
+  the process died) keeps it, as a one-minute lease: a retry after that takes
+  the same request back with the same id, so the usage already recorded is
+  deduplicated, never charged again. Expired keys are deleted as each API key
+  calls.
 - **Whose plan:** the person's (keys belong to a person). For a team API, mint
   keys per organisation and meter `{ type: "org" }` instead.
 - **Billing for usage, with nothing provider-specific here.** Set

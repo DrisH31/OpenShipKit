@@ -40,7 +40,9 @@ const PROVIDER_KEYS: Record<PaidProviderId, [string, string]> = {
  * own words (isStarterContent): one read per starter slug, a handful.
  */
 async function liveStarterPosts(): Promise<number> {
-  const starters = SEED_POSTS.filter((p) => p.kind === "post" || p.kind === "changelog");
+  // Blog posts count only while the blog is on: switched off, they aren't on the site to rewrite.
+  const blog = !without().includes("blog");
+  const starters = SEED_POSTS.filter((p) => (p.kind === "post" && blog) || p.kind === "changelog");
   const found = await Promise.all(starters.map((p) => getPublishedPost(p.kind, p.slug)));
   return found.filter((post) => post !== null && isStarterContent(post)).length;
 }

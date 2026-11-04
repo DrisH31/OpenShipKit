@@ -11,6 +11,8 @@ import { PostEditor } from "@/components/admin/post-editor";
 import { POST_KIND } from "@/lib/status";
 import { requireAdmin } from "@/server/session";
 import { createPostAction, previewMarkdown } from "../actions";
+import { featureOn } from "@/server/profile";
+import { notFound } from "next/navigation";
 
 export const metadata: Metadata = { title: "New post" };
 
@@ -18,6 +20,8 @@ export default async function NewPostPage({ searchParams }: { searchParams: Prom
   await requireAdmin();
   const sp = await searchParams;
   const kind: PostKind = sp.kind === "changelog" ? "changelog" : sp.kind === "page" ? "page" : "post";
+  // OPENSHIPKIT_WITHOUT=blog: no new blog posts (the service refuses them too), so no editor for one.
+  if (kind === "post" && !featureOn("blog")) notFound();
   const word = POST_KIND[kind];
   return (
     <>

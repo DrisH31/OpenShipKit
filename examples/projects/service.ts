@@ -25,7 +25,7 @@ import { dataProvider } from "@/server/env";
 import { recordAudit } from "@/server/services/audit";
 import { ServiceError, parseInput } from "@/server/services/errors";
 import { orgAccess } from "@/server/services/orgs";
-import { limitContext, limitOf, usageSubject } from "@/server/services/usage";
+import { limitContext, limitOf, limitReached, usageSubject } from "@/server/services/usage";
 import { createMemoryProjectStore, type Project, type ProjectStore } from "./store";
 
 export const projectInputSchema = z.strictObject({ name: z.string().trim().min(1, "Give the project a name.").max(80) });
@@ -57,9 +57,7 @@ export async function createProject(user: User, orgId: string, input: unknown): 
   // creates can't overshoot it.
   const limit = limitOf(await limitContext(await usageSubject(user, { orgId })), "projects");
   const { project, count } = await store.create({ orgId, name, createdBy: user.id, limit });
-  if (!project) {
-    throw new ServiceError("conflict", `Your plan allows ${limit} projects, and that's used up. Upgrade for more.`, { reason: "limit_reached", metric: "projects", limit, used: count });
-  }
+  if (!project) throw limitReached("projects", limit, count, false);
   await recordAudit(actor(user), "example_project.create", "example_project", project.id, null, project);
   return project;
 }

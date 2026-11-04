@@ -12,6 +12,7 @@ import { createMemoryStore } from "@/adapters/data/memory";
 import { createPostgresStore } from "@/adapters/data/postgres";
 import { drizzleOverPglite } from "@/adapters/data/postgres/db";
 import { migrateEmbedded } from "@/adapters/data/postgres/embedded";
+import { TEST_DATABASE_URL, connectExample } from "./postgres";
 import type { DataStore } from "@/core/data";
 import type { PlanInput, User } from "@/core/types";
 import { createMemoryProjectStore, type ProjectStore } from "../../examples/projects/store";
@@ -94,6 +95,26 @@ describe("projects store on postgres (PGlite)", () => {
     await data.orgs.delete(org.id);
     expect(await s.count(org.id)).toBe(0);
   }, 30_000);
+});
+
+describe.skipIf(!TEST_DATABASE_URL)("projects store on a Postgres server (TEST_DATABASE_URL)", () => {
+  let handle: Awaited<ReturnType<typeof connectExample>>;
+  beforeAll(async () => {
+    handle = await connectExample("projects");
+  }, 60_000);
+  afterAll(async () => {
+    await handle?.close();
+  });
+  describeContract("postgres server", async () => {
+    const data = createPostgresStore({ db: handle.db });
+    const u = await data.users.upsertFromIdentity(
+      { provider: "better-auth", providerUserId: crypto.randomUUID(), email: `${crypto.randomUUID()}@example.com`, name: null, image: null, emailVerified: true },
+      { makeAdmin: false },
+    );
+    const a = await data.orgs.create({ name: "A", slug: `a-${crypto.randomUUID().slice(0, 8)}`, ownerId: u.id });
+    const b = await data.orgs.create({ name: "B", slug: `b-${crypto.randomUUID().slice(0, 8)}`, ownerId: u.id });
+    return { store: createPostgresProjectStore({ db: handle.db }), orgs: [a.id, b.id], userId: u.id };
+  });
 });
 
 // ---------------------------------------------------------------- the service

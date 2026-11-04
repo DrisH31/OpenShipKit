@@ -116,13 +116,16 @@ describe("npm run upgrade", () => {
     // The template's tags went into their own namespace; the site's are untouched.
     expect(git(site, "rev-parse", "v1.1.0")).not.toBe(git(site, "rev-parse", "refs/openshipkit/tags/v1.1.0"));
     expect(upgrade(site, "--to=v1.1.0").out).toMatch(/Target: v1\.1\.0/);
+    // "main" is the template's main, not the site's own (which would read "nothing to upgrade").
+    expect(upgrade(site, "--to", "main").out).toMatch(/Target: main \(1\.1\.0\)/);
+    expect(upgrade(site, "--to", "v2.0.0").out).toMatch(/isn't one of openshipkit's releases or branches/);
   });
 
   it("a branch target shows the template's Unreleased section too", () => {
     const { template, site } = setup("branch");
     write(template, "CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n### Upgrade notes\n\nNew thing coming.\n\n## [1.1.0]\n\n### Upgrade notes\n\nRun the new migration; set NEW_VAR.\n\n## [1.0.0]\n\nFirst.\n");
     git(template, "commit", "-qam", "unreleased");
-    expect(upgrade(site, "--to", "openshipkit/main").out).toMatch(/── Unreleased[\s\S]*New thing coming\./);
+    expect(upgrade(site, "--to", "main").out).toMatch(/── Unreleased[\s\S]*New thing coming\./);
   });
 
   it("names the remote to add when there is none, and says when there's nothing to do", () => {
