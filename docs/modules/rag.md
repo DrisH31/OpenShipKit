@@ -26,7 +26,7 @@ There is no shared, site-wide knowledge base; that is a different feature
 | `package.json` | `@electric-sql/pglite-pgvector`, for the embedded development database |
 | `src/adapters/data/postgres/db.ts` | the embedded database registers the `vector` extension |
 | `drizzle/` | one custom migration: `rag_documents`, `rag_chunks` and their indexes |
-| `src/app/api/rag/**/route.ts` | four re-export files |
+| `src/app/api/rag/**/route.ts` | four re-export files, each listed in `tests/authz.test.ts` and `src/server/api-reference.ts` ([modules](README.md)) |
 | `src/instrumentation.ts` | optional: a boot-time check that the tables exist |
 | `.env.example` / your environment | the `EMBEDDING_*` and `RAG_*` block |
 

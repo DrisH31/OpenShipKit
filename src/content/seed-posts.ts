@@ -1,5 +1,5 @@
 //
-// Starter content: three real blog posts, the 1.0 changelog entry, and the
+// Starter content: three real blog posts, the 1.0 and 1.1 changelog entries, and the
 // privacy and terms templates (kind "page", served at /legal/<slug>). Inserted
 // by the embedded database's first boot and by `npm run db:seed` (only where
 // the slug is missing, so an edit is never overwritten). Edit or delete freely
@@ -460,6 +460,28 @@ There is no in-place upgrade: 1.0 is a new codebase. To move a GetShipKit projec
 Still MIT. Use it for anything, commercial included.
 `;
 
+const CHANGELOG_1_1 = `OpenShipKit 1.1 takes the kit from a single-tenant starter to a SaaS foundation you can run in production: teams, three billing providers, plan limits and usage billing, and the operations work a real site needs. Everything new is off until you turn it on, and nothing you set up on 1.0 changes.
+
+## Highlights
+
+- **Teams.** Set \`OPENSHIPKIT_TENANCY=org\` for organisations with owner, admin and member roles, email invitations and per-seat billing by the organisation.
+- **More ways to get paid.** Stripe and Razorpay join Polar behind one billing contract. Webhooks are verified and re-fetched before anything is written, and chargebacks and failed refunds are handled.
+- **Plan limits and usage billing.** Give a plan limits such as \`projects: 3\` or \`api_calls: 10000\`, meter usage with an atomic consume, and report metered prices to Polar or Stripe meters through an outbox. Customers see a Usage card on their billing page.
+- **Production hardening.** Security scanning in CI, an authorization test that fails closed, structured logs with optional error tracking, a Postgres job queue with \`/admin/jobs\`, SMTP email, and a health check that knows when migrations are behind.
+- **Uploads on S3.** Any S3-compatible bucket can hold the media library instead of the local disk.
+- **A friendlier start.** \`npm run setup\` asks what you need, \`OPENSHIPKIT_WITHOUT=blog,mcp\` switches features off everywhere, a generated API reference, \`npm run upgrade\` for merging new template releases, and two example apps to copy from.
+
+## Upgrading from 1.0
+
+1. Merge the release (\`npm run upgrade\` reports what changes, then \`npm run upgrade -- --merge\` does it on a new branch).
+2. Stop \`npm run dev\` and run \`npm run db:migrate\`: eight new migrations, all additive.
+3. Point your load balancer's readiness check at \`/api/health\` and its liveness check at \`/api/health/live\`.
+
+## What stays the same
+
+The stack is still Next.js, Postgres and Better Auth on your own server, with no hosted auth or database company. Every write still goes through a service and lands in the audit log, access is still granted only by verified webhooks, and the build still needs no secrets. Every new setting is optional; the docs for teams, billing and usage say what each one does.
+`;
+
 const PRIVACY = `> **This is a template, not legal advice.** It was written as a starting point for a SaaS built on OpenShipKit and run on servers you control. Replace every \`[bracketed placeholder]\`, delete what doesn’t apply, add what’s missing for your product and your users’ countries, and have a qualified lawyer review it before you rely on it.
 
 **Effective date:** [Effective date]
@@ -717,6 +739,16 @@ export const SEED_POSTS: PostInput[] = [
     tags: ["mcp", "ai-agents"],
     status: "published",
     publishedAt: "2026-10-05T09:00:00.000Z",
+  },
+  {
+    kind: "changelog",
+    slug: "openshipkit-1-1",
+    title: "OpenShipKit 1.1",
+    description: "Teams, Stripe and Razorpay beside Polar, plan limits and usage billing, a job queue and production hardening. Everything new is opt-in.",
+    body: CHANGELOG_1_1,
+    tags: ["release"],
+    status: "published",
+    publishedAt: "2026-11-04T08:00:00.000Z",
   },
   {
     kind: "changelog",

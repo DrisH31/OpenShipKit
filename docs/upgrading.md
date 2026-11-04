@@ -21,7 +21,7 @@ history isn't the template's. `--merge` needs a clean working tree. It creates
 a branch, merges with `--no-commit` and lists the conflicts and next steps; you
 review, run the checks and commit. It never commits, pushes or migrates.
 `--to v1.2.0` picks a release; `--remote upstream` if you named the remote
-differently. `--to` always names the template's: one of its releases, or one
+differently; `--no-fetch` uses what's already fetched (offline). `--to` always names the template's: one of its releases, or one
 of its branches (`--to main` is the template's main, not yours). Its release
 tags are fetched into their own namespace (`refs/<remote>/tags/…`), so they
 never mix with your own tags, and "your version" is the template release your
@@ -33,7 +33,7 @@ The same by hand: keep the template as a second remote and merge its releases:
 git remote add openshipkit https://github.com/DrisH31/openshipkit.git   # once
 # its release tags in their own namespace, so they never mix with yours (what npm run upgrade does):
 git fetch --no-tags openshipkit '+refs/tags/v*:refs/openshipkit/tags/v*' '+refs/heads/*:refs/remotes/openshipkit/*'
-git merge openshipkit/main            # or a release: git merge refs/openshipkit/tags/v1.0.0
+git merge openshipkit/main            # or a release: git merge refs/openshipkit/tags/v1.1.0
 ```
 
 If your repository was made with GitHub’s **Use this template** button, or
@@ -168,7 +168,8 @@ OpenShipKit keeps auth and data in your own Postgres:
   ask users to reset their password on first sign-in.
 - **Data**: your old tables were already Postgres; `pg_dump --data-only` the
   ones you need and load them into new tables you define in `schema.ts`.
-- **Payments**: OpenShipKit uses Polar. Re-create products there and connect
+- **Payments**: OpenShipKit uses Polar, Stripe or Razorpay
+  ([billing.md](billing.md)). Re-create products there and connect
   them in `/admin/plans`.
 
 The README's [comparison](../README.md#openshipkit-or-getshipkit) sets out

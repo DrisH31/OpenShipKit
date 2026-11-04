@@ -113,10 +113,10 @@ party, so the privacy page should say so (AGENTS.md, rule 15).
 
 | Endpoint | Answers | Point at it |
 |---|---|---|
-| `/api/health` | 200 when the database answers, 503 when it doesn't | Uptime monitors and load balancers (readiness) |
+| `/api/health` | 200 when the database answers with every migration applied, 503 when it doesn't (below) | Uptime monitors and load balancers (readiness) |
 | `/api/health/live` | 200 whenever the process can answer, without touching the database | Restart policies (liveness): a database blip shouldn't restart a healthy app |
 
-`/api/health` also reports `"schema": {"ok": …, "state": "current" | "behind" | "ahead"}`:
+`/api/health` also reports `"schema": {"ok": …, "state": "current" | "behind" | "ahead" | "unknown"}`:
 whether the database has every migration this build expects (the newest entry in
 `drizzle/meta/_journal.json`). **Behind** is a 503: a deploy skipped
 `npm run db:migrate`, and queries for new columns would fail, so a load balancer

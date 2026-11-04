@@ -39,7 +39,7 @@ policy (`/legal/privacy`, a page you edit in the admin).
 | Where | Change |
 |---|---|
 | `drizzle/` | one custom migration: the `ai_usage` table (one row per person per UTC day) |
-| `src/app/api/ai/{chat,image,usage}/route.ts` | three re-export files (leave out what you don’t use) |
+| `src/app/api/ai/{chat,image,usage}/route.ts` | three re-export files (leave out what you don’t use), each listed in `tests/authz.test.ts` and `src/server/api-reference.ts` ([modules](README.md)) |
 | `.env.example` / your environment | the `AI_*` block from the module README |
 | `package.json` | nothing |
 
@@ -50,7 +50,7 @@ or the service, from server code. Nothing about it is shown publicly.
 
 Billing is in the core, so the paywall is configuration:
 `AI_UNMETERED_PLANS=pro` makes Pro holders unmetered (checked with
-`hasPlan()`, from rows a verified Polar webhook wrote), and
+`hasPlan()`, from rows a verified billing webhook wrote), and
 `AI_FREE_CALLS_PER_DAY` is everyone else’s allowance (`0` for plan holders
 only). With billing off, the free allowance is the whole policy.
 

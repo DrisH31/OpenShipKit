@@ -17,9 +17,10 @@ before details go public.
 ## Scope
 
 In scope: the code in this repository — auth flows, sessions and admin checks,
-the services write path and audit log, the Polar webhook handling, the MCP
-server and agent keys, the forms, the Dockerfile, compose file and deploy
-guides.
+the services write path and audit log, the billing webhook handling (Polar,
+Stripe, Razorpay), organisations, roles and invitations, uploads (on disk or in
+a bucket), the MCP server and agent keys, the forms, the Dockerfile, compose
+file and deploy guides.
 
 Out of scope: vulnerabilities in a dependency with no OpenShipKit-specific
 exploit (report them upstream — Next.js, Better Auth, Drizzle, etc.), a
@@ -37,6 +38,6 @@ releases (Watch → Custom → Releases and Security alerts) and
 ## Keeping your deployment safe
 
 - Patch Next.js the week a security release ships (`npm run check && npm run build`, deploy).
-- Keep Dependabot on in your copy, and merge its security PRs.
+- Keep Dependabot on in your copy, and merge its security PRs. The Security workflow (`.github/workflows/security.yml`: CodeQL, `npm audit`, gitleaks, dependency review) comes with your copy; keep it green.
 - Follow [deploy/hardening.md](deploy/hardening.md).
 - The security model — what is checked where — is in [docs/security.md](docs/security.md).

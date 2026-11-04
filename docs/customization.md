@@ -125,18 +125,36 @@ icon gets a key there and in `src/components/product/nav-icons.tsx`). New data g
   billing or plans): `npm run setup -- --profile site`
   ([site-profile.md](site-profile.md) — a switch, so template updates still
   merge; the same page lists what to delete if you want the code gone).
-- **No billing**: leave `POLAR_ACCESS_TOKEN` unset. Free plans work; or hide
-  the pricing section in `/admin/content/pricing` and remove `/pricing` from
-  the navigation.
-- **No blog/changelog**: remove the links from `navigation`; the routes stay
-  harmless with no posts, or delete their folders under `src/app/(marketing)/`
-  and their entries in `src/app/sitemap.ts`.
-- **No MCP**: deleting `src/app/api/mcp/` turns the endpoint off, but a few
-  things still point at it. Remove them too, or `npm run smoke` (and CI)
-  fails and the admin offers keys for a dead endpoint:
+- **No billing**: set no billing provider (`BILLING_PROVIDER` and the
+  Polar, Stripe and Razorpay keys unset; [billing.md](billing.md)). Free plans
+  work; or hide the pricing section in `/admin/content/pricing` and remove
+  `/pricing` from the navigation.
+- **No blog**: `OPENSHIPKIT_WITHOUT=blog` (or `npm run setup -- --without blog`)
+  switches it off: `/blog` and its feed answer 404 and every link to them goes,
+  while the changelog and legal pages stay
+  ([site-profile.md](site-profile.md#switching-features-off)). No changelog
+  either: remove its links from `navigation`; the routes stay harmless with no
+  posts. To delete the folders under `src/app/(marketing)/` instead, also
+  remove their entries in `src/app/sitemap.ts`, and their route handlers' (the
+  feeds, the Open Graph images) in `ROUTES` in `tests/authz.test.ts` and in
+  `src/server/api-reference.ts`, then `npm run docs:api`.
+- **No MCP**: `OPENSHIPKIT_WITHOUT=mcp` (or `npm run setup -- --without mcp`)
+  switches it off: `/api/mcp` answers 404, and the agent keys page and the
+  setup checklist's agent step go
+  ([site-profile.md](site-profile.md#switching-features-off)). A switch keeps
+  template updates merging. To delete the code instead: deleting
+  `src/app/api/mcp/` turns the endpoint off, but a few things still point at
+  it. Remove them too, or `npm run smoke` (and CI) fails and the admin offers
+  keys for a dead endpoint:
   - `src/app/api/mcp/` and `src/server/mcp/`, except
     `src/server/mcp/server-info.ts` (`/api/health` reads the version from it;
     move it if you like), and `tests/mcp.test.ts`;
+  - the tests that import them: the “MCP under site” tests in
+    `tests/profile.test.ts` and the `/api/mcp` tests in `tests/without.test.ts`;
+  - the `/api/mcp` entry in `ROUTES` in `tests/authz.test.ts`, and in
+    `src/server/api-reference.ts` both its `/api/mcp` entry and the MCP tools
+    part (which imports `src/server/mcp/tools`, as
+    `tests/api-reference.test.ts` does); then `npm run docs:api`;
   - the “mcp refuses no key” check and `--mcp-key` in `scripts/smoke.mts`;
   - `/admin/agents` (`src/app/admin/agents/`) and its nav item in
     `src/lib/app-nav.ts`, plus `src/lib/mcp-snippets.ts`;

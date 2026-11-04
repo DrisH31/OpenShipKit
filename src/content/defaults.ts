@@ -92,7 +92,7 @@ export const DEFAULT_CONTENT: { [K in ContentKey]: ContentValue<K> } = {
   },
   announcement: {
     enabled: true,
-    text: "OpenShipKit 1.0 is out: the whole stack on your own server.",
+    text: "OpenShipKit 1.1 is out: teams, Stripe and Razorpay, and usage billing.",
     link: { label: "What’s new", href: "/changelog" },
   },
   hero: {

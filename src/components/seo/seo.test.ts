@@ -492,8 +492,9 @@ describe("seed content", () => {
     for (const t of tags) expect(posts.every((p) => p.tags?.includes(t)), t).toBe(false);
   });
 
-  it("uses stable October 2026 dates", () => {
-    for (const p of SEED_POSTS) expect(p.publishedAt).toMatch(/^2026-10-\d\dT/);
+  // Fixed literals, never the clock: 1.0's starter content dates from October 2026, the 1.1 notes from November.
+  it("uses stable October and November 2026 dates", () => {
+    for (const p of SEED_POSTS) expect(p.publishedAt).toMatch(/^2026-1[01]-\d\dT/);
   });
 
   it("renders every body with a TOC and no raw HTML leaking through", () => {
@@ -544,7 +545,9 @@ describe("seed content", () => {
   });
 
   it("describes the one independent stack: no removed vendors, no stack switcher", () => {
-    const removed = /\b(clerk|workos|supabase|convex|stripe|nodemailer|smtp)\b|npm run stack|five stacks/i;
+    // Stripe and SMTP left with 1.0's single stack and came back in 1.1 as optional adapters behind the
+    // same contracts, so the 1.1 release notes name them; the hosted auth and database services never return.
+    const removed = /\b(clerk|workos|supabase|convex|nodemailer)\b|npm run stack|five stacks/i;
     for (const p of SEED_POSTS) {
       const text = `${p.title}\n${p.description}\n${p.seoTitle ?? ""}\n${p.seoDescription ?? ""}\n${p.body ?? ""}`;
       // Not even the 1.0 changelog names them: it ships on every fork's public /changelog.

@@ -68,18 +68,25 @@ CA if it does.
 | `users` | the app’s users: role, ban, last seen — keyed by the auth identity |
 | `content` | one JSON document per editable section (`site`, `hero`, `faq`, …) |
 | `posts` | blog posts, changelog entries and pages (`kind`), drafts and published; `listed` (false = unlisted: live, off the lists — [content.md](content.md#posts-changelog-and-pages)) |
-| `plans` | pricing plans and their prices (`polarProductId` per price) |
-| `subscriptions`, `purchases`, `billing_customers` | what Polar’s webhooks reported |
-| `webhook_events` | processed webhook ids (idempotency) |
+| `plans` | pricing plans, their prices (each with its Polar product, Stripe price or Razorpay plan id) and their `limits` ([usage.md](usage.md)) |
+| `subscriptions`, `purchases`, `billing_customers` | what the billing provider’s webhooks reported (`provider`: Polar, Stripe or Razorpay); a subscription an organisation pays for carries its `org_id` and `seats` |
+| `webhook_events` | processed webhook ids, per provider (idempotency) |
 | `feedback` | feedback and contact-form messages |
 | `subscribers` | newsletter sign-ups |
 | `agent_keys` | MCP keys (SHA-256 only) |
 | `audit_log` | every change, with before and after |
+| `orgs`, `org_members`, `org_invitations` | teams (`OPENSHIPKIT_TENANCY=org`): organisations, members and their roles, invitations (the token’s SHA-256 only) — [teams.md](teams.md) |
+| `usage_events` | metered usage per user or organisation, append-only; also the outbox for metered prices — [usage.md](usage.md#storage) |
+| `jobs` | the background job queue — [jobs.md](jobs.md) |
 | `auth_user`, `auth_session`, `auth_account`, `auth_verification`, `auth_two_factor`, `auth_rate_limit` | Better Auth |
 
 The schema is `src/adapters/data/postgres/schema.ts`. Ids are uuids,
 timestamps `timestamptz`. Deleting a user deletes their subscriptions,
-purchases and billing customer rows; their feedback stays, unlinked.
+purchases, billing customer rows and team memberships; their feedback stays,
+unlinked, and so do their usage events. An organisation only they belong to
+goes with them (refused while it has a renewing subscription); one where they
+are the only owner and others remain must get another owner first
+([teams.md](teams.md)).
 
 ## Migrations
 
@@ -138,12 +145,14 @@ are **one** backup, taken together every time: a dump restored without its
 uploads gives posts whose covers 404; uploads without the matching dump are
 files nothing points at. Put the folder on persistent storage (the compose
 `uploads` volume) — a container’s own filesystem is replaced on every
-deploy.
+deploy. Or keep the images in an S3-compatible bucket (`MEDIA_STORAGE=s3`):
+the database still stores only the URLs, and you back the bucket up yourself
+([content.md](content.md#media-library)).
 
 ## Backups
 
 `deploy/backups/backup.sh` takes both halves nightly — `pg_dump` and an archive
-of the uploads, with one timestamp — keeps 14 days, and optionally copies them
+of the uploads folder (not a bucket), with one timestamp — keeps 14 days, and optionally copies them
 off-site with rclone. `restore.sh --rehearse` restores the dump into a scratch
 database, unpacks the uploads into a scratch folder and counts both;
 `--replace` puts both back. [deploy/backups/](../deploy/backups/README.md) —

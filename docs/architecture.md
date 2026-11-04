@@ -28,15 +28,19 @@ page is the map; [SPEC.md](../SPEC.md) is the contract.
   │                                          ▼                                     │
   │  src/server/services/*   THE write path: zod validate → DataStore → audit log  │
   │                                          │                                     │
-  │  src/server/{data,auth,billing,email}.ts registries: pick the adapter (lazy)   │
+  │  src/server/{data,auth,billing,email,media-store}.ts registries (lazy)         │
   │                                          │                                     │
   │  src/adapters/*  the only place a driver or SDK is imported                    │
-  │    data/postgres (Drizzle) · auth/better-auth · billing/polar · email/resend   │
+  │    data/postgres (Drizzle) · auth/better-auth · media/s3                       │
+  │    billing/{polar,stripe,razorpay} · email/{resend,smtp,console}               │
+  │                                                                                │
+  │  src/server/jobs  the runner in every process: claims due jobs in Postgres     │
   └──────────────┬───────────────────────────────┬───────────────────┬─────────────┘
                  ▼                               ▼                   ▼
-          Postgres (yours)              Polar (optional)     Resend (optional)
-   app tables + auth_* tables       checkout, portal,        transactional email
-   (dev: embedded PGlite)           webhooks → /api/billing/webhook
+          Postgres (yours)              Billing (optional)    Email (optional)
+   app tables, jobs, auth_* tables  Polar, Stripe or Razorpay:  Resend or SMTP
+   (dev: embedded PGlite)           checkout, portal, webhooks
+                                    → /api/billing/webhook
 ```
 
 ## Layers
@@ -65,8 +69,8 @@ input ─▶ service (src/server/services/<area>.ts)
          ◀─ the new value
 ```
 
-A Polar webhook takes the same path once its signature is verified and the
-object re-fetched: the billing webhook sink
+A billing webhook (Polar, Stripe or Razorpay) takes the same path once its
+signature is verified and the object re-fetched: the billing webhook sink
 (`src/adapters/billing/webhook-sink.ts` for now, bound for
 `src/server/services/billing-webhooks.ts`) upserts the subscription or
 purchase through the DataStore and records the audit itself.
@@ -99,11 +103,17 @@ only redirects on cookie presence; every page and action calls
 
 ## Billing in one paragraph
 
-`/api/billing/checkout` asks Polar for a hosted checkout for a plan’s
-`polarProductId`. Polar calls `/api/billing/webhook`; the adapter verifies the
-signature, re-fetches the subscription or order from Polar’s API, upserts it,
-and only then marks the event processed. `getEntitlement(userId)` computes
-access from those rows. Nothing else grants access. [billing.md](billing.md).
+One provider at a time — Polar, Stripe or Razorpay (`BILLING_PROVIDER`) —
+each an adapter in `src/adapters/billing/<provider>/` behind the
+`BillingProvider` contract (`src/core/billing.ts`).
+`/api/billing/checkout` asks the provider for a hosted checkout for a plan’s
+price (the Polar product, Stripe price or Razorpay plan set in `/admin/plans`). The provider calls `/api/billing/webhook`;
+the adapter verifies the signature, re-fetches the subscription or order from
+the provider’s API, upserts it, and only then marks the event processed.
+`getEntitlement(userId)` computes access from those rows. Nothing else grants
+access. With teams on, an organisation holds the subscription, per seat
+([teams.md](teams.md)); plan limits and metered usage are
+[usage.md](usage.md). [billing.md](billing.md).
 
 ## Agents
 
@@ -116,8 +126,13 @@ agent’s change is validated and audited exactly like an admin’s. [mcp.md](mc
 
 `src/instrumentation.ts` runs once per server process. Without `DATABASE_URL`
 (and outside production) it opens the embedded database, migrates and seeds
-it. With `DATABASE_URL`, nothing happens at boot: migrations are a deploy step
-(`npm run db:migrate`, the compose `migrate` service).
+it. In production it checks the environment first and refuses to start without
+what every request needs (`src/server/boot-check.ts`). Either way it then starts
+the background job runner ([jobs.md](jobs.md); `JOBS_RUNNER=off` skips it).
+It never migrates a Postgres server: migrations are a deploy step
+(`npm run db:migrate`, the compose `migrate` service), and `/api/health`
+answers 503 while the database is behind the code
+([observability.md](observability.md#health)).
 
 All env is read lazily in `src/server/env.ts` — never at module scope — so
 `next build` runs with no secrets and no database, and one image runs anywhere.

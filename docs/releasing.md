@@ -52,9 +52,9 @@ between releases: start from a tag.
 ## Starting a site from a release
 
 ```bash
-npx degit DrisH31/openshipkit#v1.0.0 my-site     # the files at that tag, no history
+npx degit DrisH31/openshipkit#v1.1.0 my-site     # the files at that tag, no history
 cd my-site
-git init && git add -A && git commit -m "Start from OpenShipKit v1.0.0"
+git init && git add -A && git commit -m "Start from OpenShipKit v1.1.0"
 npm install
 npm run setup                                   # or: npm run setup -- --profile site
 npm run dev
@@ -65,7 +65,7 @@ which changelog entries you’ve already got. `degit` copies files without
 history, so the first time you pull a later release, merge with
 `--allow-unrelated-histories` ([upgrading.md](upgrading.md#pulling-template-updates));
 after that, merges are normal. Want the history from day one instead?
-`git clone --branch v1.0.0 https://github.com/DrisH31/openshipkit.git my-site`,
+`git clone --branch v1.1.0 https://github.com/DrisH31/openshipkit.git my-site`,
 then rename the `origin` remote to `openshipkit` and add your own.
 
 ## Repository settings

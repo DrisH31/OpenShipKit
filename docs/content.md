@@ -104,7 +104,7 @@ One table, three kinds, edited at **`/admin/posts`**:
 
 ## Media library
 
-**`/admin/media`** stores images on your own disk: upload one (it works
+**`/admin/media`** stores images on your own disk (or in a bucket, below): upload one (it works
 without JavaScript), copy its address into a post’s cover or body, or use the
 post editor’s “Upload cover”.
 
@@ -148,16 +148,19 @@ post editor’s “Upload cover”.
 
 `privacy` and `terms` ship as **templates with `[bracketed placeholders]`**.
 They are a starting point, not legal advice. Fill in every placeholder (your
-legal name, address, the processors you actually use — Polar and Resend only if
-you turned them on), then have someone qualified review them for your
+legal name, address, the processors you actually use — your billing provider
+(Polar, Stripe or Razorpay) and email provider (Resend or your SMTP host) only
+if you turned them on), then have someone qualified review them for your
 jurisdiction. The footer links to them.
 
 ## Plans
 
 `/admin/plans`: name, description, features, prices (amount, currency,
-interval, Polar product id), trial days, “highlighted”, “contact sales” and
-active. Free plans have no prices. Order is the `sortOrder`. See
-[billing.md](billing.md).
+interval, and the id of what your billing provider sells: a Polar product id,
+a Stripe price id or a Razorpay plan id; “charged per seat” with teams on),
+trial days, limits, “highlighted”, “contact sales” and active. Free plans have
+no prices. Order is the `sortOrder`. See [billing.md](billing.md), and
+[usage.md](usage.md) for limits.
 
 ## Forms
 

@@ -1,9 +1,9 @@
 # Troubleshooting
 
 Fixes for the errors people actually hit, listed by the message you see: the
-embedded database lock, a refused secret, a failed migration, certificates,
-sign-in loops, emails that don’t arrive, a payment without access, uploads and
-MCP. If yours isn’t here, search the issues or open one with the steps to
+embedded database lock, a refused secret or setting, a failed migration,
+certificates, sign-in loops, emails that don’t arrive, a payment without
+access, stuck background jobs, uploads and MCP. If yours isn’t here, search the issues or open one with the steps to
 reproduce (remove secrets from logs first).
 
 ## Development
@@ -54,6 +54,21 @@ BETTER_AUTH_SECRET in .env (npm run setup -- --compose)*. Changing the secret
 signs everyone out and breaks stored two-factor secrets — on a running site,
 rotate it instead ([auth.md](auth.md#rotating-the-secret)).
 
+**“Refusing to start” after a line naming a provider setting**
+A choice is set without what it needs, and the log line names it:
+- *BILLING_PROVIDER is stripe but STRIPE_WEBHOOK_SECRET is not set* (or the
+  same for Polar or Razorpay): the provider in use needs its key and its
+  webhook secret, and Razorpay its key secret too. `npm run setup -- --billing …`
+  sets only `BILLING_PROVIDER`; add the keys yourself, or unset it
+  ([billing.md](billing.md)).
+- *EMAIL_PROVIDER=smtp but SMTP_URL is not set*, *SMTP needs EMAIL_FROM*, or a
+  message about `SMTP_URL`’s form (the scheme, the host, percent-encoding):
+  [email.md](email.md#send-over-smtp). `EMAIL_PROVIDER=resend` needs
+  `RESEND_API_KEY` the same way.
+- *MEDIA_STORAGE is s3 but S3_… is not set*: [content.md](content.md#media-library).
+- *OPENSHIPKIT_WITHOUT: "…" isn’t a feature that can be switched off*, or
+  *… is not one of: …*: a typo in a switch. The line lists the accepted values.
+
 **`migrate` fails, the app never starts**
 `docker compose logs migrate` has the real cause. Common ones:
 - *password authentication failed*: the Postgres volume was created with a
@@ -74,32 +89,57 @@ Let’s Encrypt rate limits — fix DNS first, then restart Caddy once.
 `Host`.
 
 **Verification emails don’t arrive**
-Without `RESEND_API_KEY` nothing is sent, and production logs only each
-email’s To and Subject, never the link. Set up Resend
+Without `RESEND_API_KEY` or `SMTP_URL` nothing is sent, and production logs
+only each email’s To and Subject, never the link. Set up Resend or SMTP
 ([email.md](email.md)); to verify the first admin before that, set
 `EMAIL_CONSOLE_PRINT_BODIES=true` briefly
 ([email.md](email.md#no-resend-yet-verifying-the-first-admin)). With Resend: the
-domain must be verified in Resend and `EMAIL_FROM` must use it. The app log has
-Resend’s error. [email.md](email.md).
+domain must be verified in Resend and `EMAIL_FROM` must use it. Over SMTP:
+sends that time out usually mean the host blocks outgoing mail ports (25, and
+sometimes 465 and 587); ask your VPS provider. The app log has the provider’s
+error. A send that failed for a reason that can pass is retried from the job
+queue for a few minutes, so look in `/admin/jobs` too ([jobs.md](jobs.md#email-retries)).
 
 **A customer paid but has no access**
-Access comes only from the webhook. In Polar, check the endpoint’s deliveries:
-URL `https://<your-domain>/api/billing/webhook`, format Raw, status codes.
-`403` = wrong `POLAR_WEBHOOK_SECRET`; `404` = billing is off (no
-`POLAR_ACCESS_TOKEN`); `500` = see the app log. Polar retries failed
-deliveries; you can redeliver from its dashboard. [billing.md](billing.md).
+Access comes only from the webhook. At your provider (Polar, Stripe or
+Razorpay), check the endpoint’s deliveries: URL
+`https://<your-domain>/api/billing/webhook` (format Raw on Polar), its events,
+and the status codes. `403` = wrong webhook secret (`POLAR_WEBHOOK_SECRET`,
+`STRIPE_WEBHOOK_SECRET` or `RAZORPAY_WEBHOOK_SECRET`); `404` = billing is off
+(no key set, `BILLING_PROVIDER=none`, or the site profile); `500` = see the
+app log. Providers retry failed deliveries, and you can redeliver from their
+dashboards. Webhooks from a provider you switched away from are refused
+([billing.md](billing.md#switching-providers)). [billing.md](billing.md).
 
-**Checkout says the plan can’t be bought**
-That price has no Polar product id. Set it in `/admin/plans` (sandbox and
-production ids differ).
+**Checkout says the plan isn’t available yet**
+That price has no id for the provider in use: a Polar product id, a Stripe
+price id or a Razorpay plan id. Set it in `/admin/plans` (test and live ids
+differ). `/admin/plans/<key>` also lists any price whose amount, currency or
+interval differs from the provider’s ([billing.md](billing.md#checking-prices)).
 
 **Every visitor shares one rate limit / everyone is “unknown”**
 Your proxy isn’t passing `X-Forwarded-For`. Caddy does by default; nginx needs
 `proxy_set_header X-Forwarded-For $remote_addr;`.
 
 **`/api/health` returns 503**
-The database didn’t answer within 5 seconds. `docker compose ps postgres`,
-`docker compose logs postgres`, and disk space.
+Look at the body. `"data":{"ok":false,…}`: the database didn’t answer within
+5 seconds — `docker compose ps postgres`, `docker compose logs postgres`, and
+disk space. `"schema":{"ok":false,"state":"behind"}`: this build expects a
+migration the database doesn’t have; a deploy skipped `npm run db:migrate`
+(compose: `docker compose run --rm migrate`). `"state":"unknown"`: the
+database answers but its migrations table can’t be read (a missing grant, a
+half-made database). [observability.md](observability.md#health).
+
+**`/api/health` says `"jobs":{"ok":false}`**
+A due background job has waited more than five minutes: the runner is off in
+every process (`JOBS_RUNNER=off`), stuck or behind. The status code stays 200.
+`/admin/jobs` lists waiting and failed jobs with their last error and a Retry
+button ([jobs.md](jobs.md)).
+
+**`/dashboard/team`, `/invite/…` or `/admin/orgs` answer 404**
+Teams are off: set `OPENSHIPKIT_TENANCY=org` and restart ([teams.md](teams.md)).
+Likewise `/blog` or `/api/mcp` answer 404 when `OPENSHIPKIT_WITHOUT` names them
+([site-profile.md](site-profile.md#switching-features-off)).
 
 **Every page says “Something went wrong” (HTTP 500), including the home page**
 The database is unreachable — `/api/health` answers 503 at the same time; fix

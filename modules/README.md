@@ -78,7 +78,9 @@ Each README has the exact steps; they always have this shape:
    Then list the route in `ROUTES` in `tests/authz.test.ts` with
    `guard: "user"`. The test follows the re-export into `modules/` and fails
    unless the handler awaits `apiUser()` and checks `instanceof Response`
-   before it does anything else.
+   before it does anything else. Add it to `ENDPOINTS` in
+   `src/server/api-reference.ts` too, then run `npm run docs:api`:
+   `tests/api-reference.test.ts` fails on a route the reference doesn't list.
 
 4. **Set its variables** in `.env.local` (development) or your server’s
    environment, and add the README’s block to `.env.example`.

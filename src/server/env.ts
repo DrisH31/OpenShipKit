@@ -9,17 +9,18 @@ import "server-only";
 //   DATABASE_URL       your Postgres. Unset in development → embedded Postgres (PGlite)
 //                      in .data/pglite, migrated and seeded at boot. Required in production.
 //   DATA_PROVIDER      postgres (default) | memory (unit tests only; data resets on restart)
-//   BILLING_PROVIDER   polar | none     (POLAR_ACCESS_TOKEN → polar, else none)
+//   BILLING_PROVIDER   polar | stripe | razorpay | none (the first key set: POLAR_ACCESS_TOKEN,
+//                      STRIPE_SECRET_KEY, RAZORPAY_KEY_ID; else none)
 //   EMAIL_PROVIDER     resend | smtp | console (RESEND_API_KEY → resend, else SMTP_URL → smtp, else
 //                      console: printed to the log; in production only To and Subject unless
 //                      EMAIL_CONSOLE_PRINT_BODIES=true)
 //   OPENSHIPKIT_PROFILE saas (default) | site: a landing page + blog with no pricing, billing or
-//                      plans (src/core/profile.ts; billing is then none whatever Polar keys are set)
+//                      plans (src/core/profile.ts; billing is then none whatever provider keys are set)
 //
 // Production boot checks (src/server/boot-check.ts, with the same rules from
 // ./env-rules.ts): no DATABASE_URL, DATA_PROVIDER=memory, a missing or weak
-// BETTER_AUTH_SECRET, or EMAIL_PROVIDER=resend without RESEND_API_KEY → the
-// server exits; NEXT_PUBLIC_SITE_URL unset or local, or email going to the
+// BETTER_AUTH_SECRET, an email, billing or S3 choice without its keys (boot-check.ts
+// has the list) → the server exits; NEXT_PUBLIC_SITE_URL unset or local, or email going to the
 // log → a loud warning, since every canonical, sitemap and email link is built
 // from the URL and nobody can verify an address without email.
 //
@@ -93,7 +94,7 @@ export function tenancy(): Tenancy {
   return resolveTenancy(process.env);
 }
 
-/** Polar or none; none under the site profile whatever keys are set (env-rules.ts). */
+/** The billing provider in use, or none; none under the site profile whatever keys are set (env-rules.ts). */
 export function billingProvider(): BillingProviderId {
   return resolveBillingProvider(process.env);
 }

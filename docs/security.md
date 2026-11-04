@@ -30,7 +30,8 @@ bump rather than the thing holding the site together.
 | Someone reaches a page they shouldn’t | `requireUser()` / `requireAdmin()` in every page **and** server action; the proxy is only a redirect convenience | `src/server/session.ts`, `src/proxy.ts` |
 | A guard someone forgot | `tests/authz.test.ts` parses every admin and dashboard page, server action (inline ones too) and route handler, and fails CI unless the guard runs before anything but a pure request check. What it can't read (a re-export, a wrapped handler) fails too. A new route or public action must be listed with the reason it needs no session | `tests/authz.test.ts` |
 | Probing for the admin | `/admin` 404s for signed-in non-admins (signed out, it redirects to sign-in); disallowed in robots.txt | `requireAdmin()` |
-| Free access to paid features | entitlements only from signature-verified, re-fetched, idempotent Polar webhooks | `src/adapters/billing/` |
+| Free access to paid features | entitlements only from signature-verified, re-fetched, idempotent webhooks from the billing provider (Polar, Stripe or Razorpay); a lost chargeback revokes a purchase for good | `src/adapters/billing/` |
+| Acting in someone else’s organisation (teams on) | the current-organisation cookie is a preference, never a permission: membership is checked on every read, and each action asks the member’s role (`can()`); invitation links hold 32 random bytes, stored as SHA-256, single-use, 7 days, and only for the invited address ([teams.md](teams.md)) | `src/server/orgs.ts`, `src/core/orgs.ts`, `src/server/services/orgs.ts` |
 | Bad or hostile input | every write is validated by a zod schema in a service; refusals are typed `ServiceError`s | `src/server/services/` |
 | Unnoticed changes | every write audited with actor, before and after; restorable | `audit_log`, `/admin/audit` |
 | Stored XSS via posts | Markdown rendered with marked, then sanitized against an allowlist | `src/server/markdown.ts` |
@@ -40,9 +41,11 @@ bump rather than the thing holding the site together.
 | Stolen agent key | keys stored as SHA-256, shown once, scoped (read/write/admin), revocable; every change it makes is audited under the key’s name, and every call updates the key’s last-used time (reads leave no audit row) | `src/server/services/agent-keys.ts` |
 | A web page attacking a local MCP server | `Origin` check on `/api/mcp` (DNS rebinding) | `src/server/mcp/auth.ts` |
 | Leaking secrets in the build | env read lazily at runtime; the build needs none; `.dockerignore` keeps `.env*` out of images | `src/server/env.ts` |
+| Leaking secrets in logs or error reports | one logger; a failed query’s parameter values are cut from every message, stack and cause; request paths are logged without their query string, and error reports carry no headers, cookies or bodies; nothing leaves the server unless `ERROR_TRACKING_DSN` is set ([observability.md](observability.md)) | `src/server/log.ts`, `src/server/scrub.ts`, `src/server/error-reporting.ts` |
+| A vulnerable dependency or a committed secret | CI runs CodeQL, `npm audit` (a high or critical advisory in a production dependency fails), gitleaks over the full history and, on pull requests, dependency review — on pushes, pull requests and weekly; Dependabot opens the update PRs | `.github/workflows/security.yml` |
 | Clickjacking, sniffing, referrer leaks | `X-Frame-Options: DENY`, `nosniff`, `strict-origin-when-cross-origin`, `Permissions-Policy`, COOP, HSTS in production | `next.config.ts` |
 | Image optimizer abuse | short `remotePatterns` allowlist (never a wildcard host: an open optimiser is a bandwidth amplifier anyone can point anywhere), bounded disk cache | `next.config.ts` |
-| A hostile upload | the bytes decide the type (magic numbers), never the filename or the claimed `Content-Type`; SVG refused (it’s a document that can run script with your cookies in scope); random names under `yyyy/mm/`, resolved and required to sit under `UPLOADS_DIR`; served with `nosniff` and a sandboxing CSP | `src/core/media.ts`, `src/server/services/media*.ts`, `src/app/uploads/` |
+| A hostile upload | the bytes decide the type (magic numbers), never the filename or the claimed `Content-Type`; SVG refused (it’s a document that can run script with your cookies in scope); random names under `yyyy/mm/`, checked against that pattern and resolved under `UPLOADS_DIR` (or kept in a private bucket with `MEDIA_STORAGE=s3`); served by the app with `nosniff` and a sandboxing CSP | `src/core/media.ts`, `src/server/services/media*.ts`, `src/app/uploads/` |
 
 ## Passwords, sessions, 2FA
 
@@ -74,11 +77,12 @@ embedded database and is ignored in production.
 - Keep `.env` secret and backed up (password manager), mode 600.
 - Serve only over HTTPS, with the proxy *setting* `X-Forwarded-For`.
 - Patch Next.js and Better Auth promptly (Dependabot PRs; GitHub advisories).
-- Back up the database off-site and rehearse restores.
+- Back up the database (and the uploads with it) off-site and rehearse restores; uploads in a bucket you back up yourself.
 - Turn on email before real users so verification and resets work.
 - Review the legal pages and your data-processing obligations (GDPR and
-  similar): what you collect is in your own Postgres; Polar and Resend are
-  processors only if you enable them.
+  similar): what you collect is in your own Postgres; the billing provider
+  (Polar, Stripe or Razorpay), Resend, an S3 bucket and an error tracker you
+  don’t host are processors only if you enable them.
 
 ## Rate limits, and their honest scope
 
@@ -87,6 +91,7 @@ embedded database and is ignored in production.
 | Sign-in, sign-up, two-factor, emailed links (Better Auth) | per endpoint (e.g. 5 sign-ins a minute), on in production | Postgres |
 | Wrong passwords per account | a lockout that a password reset clears | Postgres |
 | Contact, newsletter and feedback forms; auth server actions; MCP | per IP (IPv6 by /64), fixed window | the app process (`src/server/rate-limit.ts`) |
+| Team invitations (teams on) | per person, per organisation and per address ([teams.md](teams.md#invitations)) | the app process (`src/server/rate-limit.ts`) |
 
 They are speed bumps, not walls. A determined attacker rotates addresses;
 what the limits stop is the accidental and the undirected — a retry loop, a
@@ -142,8 +147,9 @@ In order:
    `BETTER_AUTH_SECRET` with `BETTER_AUTH_SECRETS` and restart. Everyone signs
    in again.
 4. **The server:** if there is any chance someone reached a shell, rotate
-   `POSTGRES_PASSWORD`, the Resend and Polar keys, and the off-site storage
-   key — and rebuild from a clean image.
+   `POSTGRES_PASSWORD`, the email keys (Resend, or the `SMTP_URL` password),
+   the billing provider’s key and webhook secret, the `S3_*` keys, and the
+   off-site storage key — and rebuild from a clean image.
 5. **Look at what changed:** `/admin/audit` lists every content, post, plan,
    user and key change with who made it, and restores content, posts and plans.
    List the uploads folder for anything that isn’t `yyyy/mm/<32 hex>.<ext>` —
@@ -166,5 +172,3 @@ Real gaps, listed so the absence is a decision you can revisit:
 - **No encryption of rows at rest** beyond what your disk and backup
   destination provide: the admin has to read them, and the key would live on
   the same server.
-- **No dependency or secret scanning in CI** beyond Dependabot’s pull requests.
-  `npm audit` before a deploy is the manual version.

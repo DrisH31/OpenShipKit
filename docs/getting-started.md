@@ -19,17 +19,17 @@ already use (fnm, nvm, mise, Volta).
 
 For going live later you will also want a domain, a Linux server (a VPS with
 2 GB of RAM, or one that already runs Dokploy or Coolify:
-[deployment.md](deployment.md#choose-where-it-runs)), a Resend account for
-email ([email.md](email.md)) and, only if you charge, a Polar account
-([billing.md](billing.md)).
+[deployment.md](deployment.md#choose-where-it-runs)), a Resend account or an
+SMTP server for email ([email.md](email.md)) and, only if you charge, a Polar,
+Stripe or Razorpay account ([billing.md](billing.md)).
 
 Starting a real site? Start from a **release tag** rather than `main`, and
 write down which one, so you know which later changes you already have
 ([releasing.md](releasing.md#starting-a-site-from-a-release)):
 
 ```bash
-npx degit DrisH31/openshipkit#v1.0.0 my-saas    # the files at that release, no history
-cd my-saas && git init && git add -A && git commit -m "Start from OpenShipKit v1.0.0"
+npx degit DrisH31/openshipkit#v1.1.0 my-saas    # the files at that release, no history
+cd my-saas && git init && git add -A && git commit -m "Start from OpenShipKit v1.1.0"
 ```
 
 Just looking? Cloning `main` is fine, and that is what the next step does.
@@ -74,6 +74,10 @@ the file. The same choices are flags, for scripts:
 npm run setup -- --billing stripe --email smtp --tenancy org --admin-email you@example.com
 ```
 
+`--without blog,mcp` switches off features you don’t use
+([site-profile.md](site-profile.md#switching-features-off)), and
+`npm run setup -- --help` lists every flag.
+
 Restart `npm run dev`, sign up with that email at `/sign-up`, and open
 `/admin`. (Email verification is off in development; the welcome email is in
 the terminal.)
@@ -85,8 +89,8 @@ the terminal.)
 | `/` | The landing page — every section comes from `/admin/content` |
 | `/pricing` | Plans from `/admin/plans` |
 | `/blog`, `/changelog` | Posts from `/admin/posts` |
-| `/dashboard` | What a signed-in customer sees: home, billing, settings, feedback (an admin’s home adds the setup checklist) |
-| `/admin` | Overview, users, content, posts, media, plans, feedback, subscribers, agent keys, audit log |
+| `/dashboard` | What a signed-in customer sees: home, billing, settings, feedback (an admin’s home adds the setup checklist; with teams on, a Team page too) |
+| `/admin` | Overview, users, content, posts, media, plans, feedback, subscribers, agent keys, background jobs, audit log (and organisations, with teams on) |
 
 ## 4. Make it yours, in this order
 
@@ -98,12 +102,13 @@ the terminal.)
    `/admin/content`. Defaults live in `src/content/defaults.ts` if you prefer
    code. [content.md](content.md).
 3. **Brand colour.** `src/styles/brand.css`, plus its literal copies for the generated icons and cards in `src/components/seo/brand-mark.tsx` (`npm test` checks they match). [customization.md](customization.md).
-4. **Plans.** `/admin/plans`: names, prices, features. Free plans work without
-   billing; connect Polar when you’re ready to charge ([billing.md](billing.md)).
+4. **Plans.** `/admin/plans`: names, prices, features and limits
+   ([usage.md](usage.md)). Free plans work without billing; connect Polar,
+   Stripe or Razorpay when you’re ready to charge ([billing.md](billing.md)).
 5. **Legal pages.** Privacy and terms ship as templates with `[bracketed
    placeholders]` in `/admin/posts`. Fill them in and have someone qualified
    review them.
-6. **Email.** Before real users: Resend and a verified domain ([email.md](email.md)).
+6. **Email.** Before real users: Resend and a verified domain, or your own SMTP server ([email.md](email.md)).
 7. **Your product.** Build it under `src/app/dashboard/` — the shell, auth
    checks, billing state and design system are ready ([architecture.md](architecture.md)).
 8. **Ship it.** [deployment.md](deployment.md#choose-where-it-runs) — a VPS

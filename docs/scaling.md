@@ -12,8 +12,12 @@ limit that quietly doubles, an image that exists on one machine only.
 one server
   app       Node, one process (the Next.js standalone server)
   postgres  one database, DATABASE_POOL_MAX connections per app process (default 10)
-  volumes   postgres_data, uploads (local disk)
+  volumes   postgres_data, uploads (local disk; or an S3-compatible bucket instead)
 ```
+
+Background jobs and usage counters need nothing more: the job runner is part
+of the app process and its queue is a Postgres table ([jobs.md](jobs.md)), and
+usage is events in Postgres ([usage.md](usage.md)).
 
 Every public page is rendered on request: a handful of indexed Postgres reads
 (the editable content in one query, then the posts the page shows) and React
@@ -62,10 +66,13 @@ host can mount the same named volume, and nothing changes. Two instances on
 **two** hosts can’t: an image uploaded through one is a 404 from the other,
 permanently, for half the requests.
 
-Fix before the second **host**, not after: move the bytes to object storage
-(any S3-compatible service, self-hosted MinIO or Garage, or Cloudflare R2), keep
-storing only URLs in the database, and serve them from the bucket or a CDN.
-It also takes image bytes off the app and out of the nightly volume archive.
+Fix before the second **host**, not after: move the bytes to object storage.
+Set `S3_BUCKET` (and its `S3_*` keys) and uploads go to any S3-compatible
+store (self-hosted MinIO or Garage, Cloudflare R2, AWS S3); the database still
+stores only URLs, and the app still serves them from `/uploads/…`, so every
+instance sees every image ([content.md](content.md#media-library), which also
+says how to move an existing library). It also takes image bytes out of the
+nightly volume archive, so back the bucket up yourself.
 
 ### 3. Anything you add that caches in memory
 
@@ -90,6 +97,17 @@ Usually not throughput but one query: an unindexed filter added to a list, a
 buying hardware. Keep the total of `DATABASE_POOL_MAX` × instances under
 Postgres’s `max_connections`.
 
+## What a second instance doesn't break
+
+- **Background jobs.** Every process runs the job runner, and runners claim
+  jobs with `FOR UPDATE SKIP LOCKED` under a lease, so two instances never run
+  the same job at once. `JOBS_RUNNER=off` keeps a replica to serving requests,
+  as long as one process still runs jobs ([jobs.md](jobs.md#running-it)).
+- **Usage limits.** Usage is recorded in Postgres, and `consumeUsage` takes a
+  database lock, so a limit holds across instances as it does in one
+  ([usage.md](usage.md#two-kinds-of-limit)). Both hold a connection while they
+  work, so count them in the pool.
+
 ## The signals
 
 - **Time to first byte on `/blog` at the origin.** No body rendering, so it
@@ -99,7 +117,8 @@ Postgres’s `max_connections`.
   rate limiter at 10,000 keys) precisely so they can’t be the leak.
 - **Pool timeouts in the log.** Find the query holding a connection before you
   raise the pool.
-- **`/api/health` flapping.** It answers 503 when the database doesn’t; the
+- **`/api/health` flapping.** It answers 503 when the database doesn’t (or its
+  migrations are behind the code); the
   container’s healthcheck uses it, so repeated restarts mean the database, not
   the app.
 - **Deploys getting slower.** The migrator runs before the new app starts; a
@@ -119,8 +138,8 @@ Postgres’s `max_connections`.
    keys on a value an attacker picks.
 3. **A bigger server before more servers.** A vertical step keeps every
    in-process assumption true; a second instance breaks two of them.
-4. **Uploads to object storage** — required before a second host, useful
-   before that.
+4. **Uploads to object storage** (`S3_BUCKET`) — required before a second
+   host, useful before that.
 5. **A shared rate-limit store, then a second instance** behind a load
    balancer, in that order.
 6. **Postgres last**, by query, not by hardware. A read replica is a large step

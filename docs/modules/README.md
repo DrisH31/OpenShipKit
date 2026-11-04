@@ -24,11 +24,14 @@ README, next to its code.
   and a Postgres adapter and one test suite for both; plain SQL applied as a
   Drizzle custom migration; sessions from `@/server/session`; env read lazily.
 - **Enabled by adding, disabled by deleting.** Route files under
-  `src/app/api/` re-export the module’s handlers. Delete them and the module
-  is inert; its tables stay until a migration of yours drops them.
+  `src/app/api/` re-export the module’s handlers; each is listed in `ROUTES`
+  in `tests/authz.test.ts` and in `ENDPOINTS` in `src/server/api-reference.ts`
+  (then `npm run docs:api`), or the tests fail. Delete them (and those
+  entries) and the module is inert; its tables stay until a migration of
+  yours drops them.
 - **Checked while unused.** `npm run check` typechecks, lints and tests
-  `modules/` and `tests/modules/`; `npx tsc --noEmit -p tsconfig.modules.json`
-  checks just the modules.
+  `modules/` and `tests/modules/`; `npm run typecheck:modules`
+  (`tsconfig.modules.json`) checks just the modules and the example apps.
 
 ## Order
 

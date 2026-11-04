@@ -9,9 +9,9 @@ Each prompt says what the agent must not do. First comes why this works with thi
 OpenShipKit is built to be read by agents as well as by people:
 
 - **The rules are written down.** [AGENTS.md](../AGENTS.md) has the commands, the folder rules and the invariants, and the agents above load it on their own. Claude Code loads it through [CLAUDE.md](../CLAUDE.md), and GitHub Copilot through `.github/copilot-instructions.md`. [SPEC.md](../SPEC.md) is the contract behind it.
-- **Every step can check itself.** `npm run check` covers types, lint and tests. `npm run smoke -- <url>` reads a running site the way a crawler does, and `npm run e2e` drives sign-up, the admin, publishing and MCP end to end. In production the app refuses to start with a missing or weak secret. An agent doesn’t have to guess whether a step worked.
+- **Every step can check itself.** `npm run check` covers types, lint and tests. `npm run smoke -- <url>` reads a running site the way a crawler does, and `npm run e2e` drives sign-up, the admin, publishing and MCP end to end. In production the app refuses to start with a missing or weak secret, or with a payment or email provider chosen but its keys missing, and the log line names what’s missing. An agent doesn’t have to guess whether a step worked.
 - **The site runs its own MCP server.** Once the site is running, the agent edits its copy, posts and plans through `/api/mcp` ([mcp.md](mcp.md)), the same validated and audited path the admin uses. Every change shows up in `/admin/audit` under the key’s name and can be undone.
-- **The setup steps are scripted.** `npm run setup` writes the env file with generated secrets, and the deploy guides are copy-paste sequences an agent can follow line by line.
+- **The setup steps are scripted.** `npm run setup` writes the env file with generated secrets (flags such as `--billing`, `--email` and `--tenancy` record your choices; it never takes a key), and the deploy guides are copy-paste sequences an agent can follow line by line.
 
 ## What to install first
 
@@ -22,11 +22,11 @@ OpenShipKit is built to be read by agents as well as by people:
 | An SSH key that logs in to your server | Step 5 | Every deploy option needs one, even with Dokploy or Coolify, for backups |
 | A domain whose DNS you can edit | Steps 3–5 | |
 | A VPS with 2 GB of RAM, or a server already running Dokploy or Coolify | Step 5 | [deployment.md](deployment.md) helps you choose |
-| A Resend account | Step 3 | Free to start. Production needs it before the first sign-up |
-| A Polar account | Step 6 | Only if you charge. Do everything in the sandbox first |
+| A Resend account, or an SMTP server you may send from | Step 3 | Resend is free to start. Production needs one of them before the first sign-up |
+| A Polar, Stripe or Razorpay account | Step 6 | Only if you charge. One provider at a time. Do everything in its sandbox or test mode first |
 | The GitHub CLI (`gh`) | Optional | Lets the agent create your repository and watch CI |
 
-Before you start, write down the answers the agent will need: the product’s name, one sentence on what it does and for whom, your admin email, the domain and, if you charge, the plans and prices. The agent asks for anything that’s missing. It must never invent a fact such as a price, a product id, a testimonial or a domain (AGENTS.md, invariant 7).
+Before you start, write down the answers the agent will need: the product’s name, one sentence on what it does and for whom, your admin email, the domain, whether accounts are one person each or teams, and, if you charge, the plans, the prices and the payment provider. The agent asks for anything that’s missing. It must never invent a fact such as a price, a product id, a testimonial or a domain (AGENTS.md, invariant 7).
 
 ## How to use the prompts
 
@@ -35,7 +35,7 @@ Before you start, write down the answers the agent will need: the product’s na
 3. Each prompt ends with a report. Read it, and answer anything the agent asked, before you paste the next prompt.
 4. **Secrets never go in the chat.** When a step needs an API key, the agent stops and tells you which file or settings field to put it in, and you put it there yourself. That way the key never lands in the agent’s transcript, a commit or your shell history.
 
-Steps 3 to 7 change things outside your laptop: DNS records, a server, Polar, a backup bucket. Those prompts tell the agent to show you its plan and wait for your “yes” before each change. Keep it that way, even if your agent can run without asking.
+Steps 3 to 7 change things outside your laptop: DNS records, a server, the payment provider, a backup bucket. Those prompts tell the agent to show you its plan and wait for your “yes” before each change. Keep it that way, even if your agent can run without asking.
 
 ### Step 0: rules for the whole session (optional)
 
@@ -46,7 +46,7 @@ For this whole session, while we set up my OpenShipKit site:
 - Read AGENTS.md before changing code, and follow it. SPEC.md is the contract.
 - Never invent facts: names, prices, product ids, domains, testimonials, numbers. If you need one, ask me.
 - Never put a secret (API key, token, password, BETTER_AUTH_SECRET, an agent key) in a tracked file, a commit, the chat, or a command line. Env files (.env, .env.local, .env.*) are git-ignored; keep it that way. When a secret is needed, tell me which file or field to put it in and wait.
-- Ask me before: pushing to any git remote, creating repositories, changing DNS, running anything on a server, deploying, changing anything at Polar, Resend or another provider.
+- Ask me before: pushing to any git remote, creating repositories, changing DNS, running anything on a server, deploying, changing anything at Polar, Stripe, Razorpay, Resend or another provider.
 - Never run destructive commands without my explicit yes: `docker compose down -v`, `rm -rf` outside .data/, `restore.sh --replace`, dropping databases, deleting DNS records.
 - After every step, report what you did, what you verified (with the command output that proves it), and what is left for me.
 ```
@@ -63,7 +63,7 @@ Set up a local copy of OpenShipKit (https://github.com/DrisH31/openshipkit) in a
 1. Check prerequisites: `node -v` (24 LTS; 22.18+ works), `npm -v`, `git --version`. If Node is missing or too old, tell me how to install Node 24 on my OS and stop.
 2. Get the files from the newest release tag: `git ls-remote --tags https://github.com/DrisH31/openshipkit.git`. Pick the highest vX.Y.Z and run `npx degit DrisH31/openshipkit#<tag> <my-saas>`. If there are no tags yet, use `npx degit DrisH31/openshipkit <my-saas>` (main) and tell me so. Then in <my-saas>: `git init && git add -A && git commit -m "Start from OpenShipKit <tag or main>"`.
 3. Read AGENTS.md, SPEC.md sections 1–3 and docs/getting-started.md before anything else.
-4. `npm install`, then `npm run setup -- --admin-email <you@example.com>` (it writes .env.local with generated secrets and an MCP_DEV_KEY).
+4. `npm install`, then `npm run setup -- --admin-email <you@example.com>` (it writes .env.local with generated secrets and an MCP_DEV_KEY). If I want teams (organisations with members), add `--tenancy org` (docs/teams.md). Don't pass `--billing` or `--email` yet: steps 3 and 6 set those up, and setting the key picks the provider.
 5. Start the dev server in the background with its output in .data/dev.log (`mkdir -p .data && npm run dev > .data/dev.log 2>&1 &`) and wait until `curl -s http://localhost:3000/api/health` returns "ok":true. With no DATABASE_URL it runs on an embedded Postgres in .data/pglite. That is expected.
 6. Verify, in this order, and keep each command's summary lines:
    - `npm run check` (typecheck, modules, lint, tests)
@@ -105,14 +105,14 @@ My product:
 
 1. Call the `guide` tool, then `site_overview` and `content_list`. Read docs/content.md and docs/customization.md.
 2. Content goes through MCP only. Don't edit src/content/defaults.ts: stored content overrides it. Use `content_get` then `content_update` (mode "merge") for `site` (name, tagline, SEO description: the claim first, under 155 characters, contactEmail), then `hero`, `features`, `steps`, `faq`, `cta`, `navigation` and `announcement`. Write from my brief in plain words. Anything you would have to invent stays disabled or empty and goes on a TODO list for me: `stats`, `testimonials`, `logos`, numbers, customer names. Renaming `site` hides the OpenShipKit showcase sections on the landing page. That is expected.
-3. Plans: `plans_list`, then `plan_update` / `plan_upsert` to match my plans. Leave every `polarProductId` empty: Polar comes in a later step. Deactivate plans I don't sell (`active: false`) instead of deleting them. If I said "no billing", stop and tell me about `npm run setup -- --profile site` (docs/site-profile.md) instead.
+3. Plans: `plans_list`, then `plan_update` / `plan_upsert` to match my plans. Leave every provider id (`polarProductId`, `stripePriceId`, `razorpayPlanId`) empty: payments come in a later step. Deactivate plans I don't sell (`active: false`) instead of deleting them. If I said "no billing", stop and tell me about `npm run setup -- --profile site` (docs/site-profile.md) instead.
 4. Legal pages: find the `privacy` and `terms` pages (`posts_list` with kind "page"). Fill in the [bracketed placeholders] you can fill from my brief, and leave the rest bracketed. Tell me that both pages need a qualified review.
 5. Brand colour, if I gave one (this one is a code change): follow AGENTS.md → "Change the brand colour". Edit src/styles/brand.css for both schemes, and the BRAND values in src/components/seo/brand-mark.tsx. Text on the accent needs 4.5:1 contrast, and the accent against the page needs 3:1 (DESIGN.md shows the check). Then run `npm test`.
 6. Verify: `npm run smoke` and `npm run check`. Look at / and /pricing (fetch them, or ask me to look). Show me `audit_list` of everything you changed.
 7. Show me the code diff (`git diff`), then commit it locally with a clear message. Only commit after I've seen it.
 
 Do not:
-- invent testimonials, stats, logos, prices, Polar product ids, or anything else I didn't give you;
+- invent testimonials, stats, logos, prices, provider product or price ids, or anything else I didn't give you;
 - create or publish blog posts (drafts only, and only if I ask);
 - edit synced design-system files (src/styles/{tokens,theme,base,motion,overlays}.css, src/components/ui/**);
 - commit .env.local or push anything.
@@ -123,6 +123,8 @@ Report: what changed (with the audit log), the TODO list for me, and the commit.
 ### 3. Email with Resend
 
 In production, email has to work before the first sign-up, yours included. Production requires a verified address, and your admin rights only apply once yours is verified ([email.md](email.md)).
+
+Sending through your own SMTP server or a provider’s SMTP endpoint instead of Resend? Skip this prompt and follow [email.md](email.md#send-over-smtp): you put `SMTP_URL` and `EMAIL_FROM` in the env file yourself, and the domain still needs the SPF, DKIM and DMARC records your mail server gives you. Steps 2–4 and 7 of the prompt (look before you change DNS, one change list, your “yes”, the test) apply unchanged.
 
 ```text
 Set up transactional email with Resend for <example.com>. Read docs/email.md first. My DNS is managed at <DNS provider>.
@@ -185,9 +187,9 @@ Deploy this site to my VPS with docker compose + Caddy, following deploy/vps/REA
 
 1. Work through the guide one section at a time (1 first login → 7 check). Before each section, show me the exact commands you'll run on the server and wait for my OK. If a section is already done (user, firewall, Docker), show me the evidence and skip it.
 2. Write .env on the server with the guide's `docker run … node scripts/setup.mts --compose --domain <example.com> --admin-email <you@example.com>` command, then `chmod 600 .env`. Never print .env.
-3. Then STOP and ask me to add RESEND_API_KEY and EMAIL_FROM to /opt/openshipkit/.env myself, over SSH with an editor. Remind me to save a copy of .env in my password manager: losing BETTER_AUTH_SECRET signs everyone out and breaks 2FA.
+3. Then STOP and ask me to add RESEND_API_KEY (or SMTP_URL) and EMAIL_FROM to /opt/openshipkit/.env myself, over SSH with an editor. Remind me to save a copy of .env in my password manager: losing BETTER_AUTH_SECRET signs everyone out and breaks 2FA.
 4. Start with `docker compose --profile https up -d --build`. Watch `docker compose logs -f migrate app caddy` until migrate has finished and Caddy logs "certificate obtained successfully".
-5. Verify from this machine: `curl -sI https://<example.com>` (200 over HTTPS), `curl -s https://<example.com>/api/health` ("ok":true), and `npm run smoke -- https://<example.com>`.
+5. Verify from this machine: `curl -sI https://<example.com>` (200 over HTTPS), `curl -s https://<example.com>/api/health` ("ok":true; a 503 with "schema" "behind" means the migrations didn't run), and `npm run smoke -- https://<example.com>`.
 6. Tell me to sign up at https://<example.com>/sign-up with the admin address, open the verification email, then open /admin.
 
 Do not:
@@ -215,7 +217,7 @@ Deploy this site on my Dokploy server, following deploy/dokploy.md exactly. Read
 1. Plan: a project "<my-saas>", a Compose service (type Docker Compose, not Stack) from my repository, compose path ./docker-compose.yml. Show me the plan and wait for my yes before creating anything.
 2. Environment: generate it on this machine into a git-ignored file that the dev server never reads:
    `npm run setup -- --compose --file .env.deploy --site-url https://<example.com> --admin-email <you@example.com>`
-   Tell me to paste its contents into the service's Environment tab myself, and to add RESEND_API_KEY and EMAIL_FROM there too. Then delete .env.deploy. Leave DATABASE_URL and DOMAIN empty: compose builds the URL, and Dokploy's Traefik handles the domain.
+   Tell me to paste its contents into the service's Environment tab myself, and to add RESEND_API_KEY (or SMTP_URL) and EMAIL_FROM there too. Then delete .env.deploy. Leave DATABASE_URL and DOMAIN empty: compose builds the URL, and Dokploy's Traefik handles the domain.
    If another stack on the server already uses ports 3000 or 5433, set APP_PORT and POSTGRES_HOST_PORT to free ones.
 3. Domain: service `app`, host <example.com>, path /, container port 3000, HTTPS on with Let's Encrypt. If I wanted www, add it as a redirect.
 4. Deploy, and read the deployment log: Postgres healthy → migrate "applied …" or "Up to date" → the app starts.
@@ -246,7 +248,7 @@ Deploy this site on my Coolify server, following deploy/coolify.md exactly. Read
 1. Plan: a new resource from my repository with Build Pack "Docker Compose" and compose file /docker-compose.yml. Show me the plan and wait for my yes.
 2. Environment: generate a complete set on this machine with
    `npm run setup -- --compose --file .env.deploy --site-url https://<example.com> --admin-email <you@example.com>`
-   Tell me to enter the values in Coolify myself, and to add RESEND_API_KEY and EMAIL_FROM. I should mark BETTER_AUTH_SECRET, POSTGRES_PASSWORD, RESEND_API_KEY and any POLAR_* values as secrets, not build variables. Then delete .env.deploy. Leave DATABASE_URL and DOMAIN empty.
+   Tell me to enter the values in Coolify myself, and to add RESEND_API_KEY (or SMTP_URL) and EMAIL_FROM. I should mark BETTER_AUTH_SECRET, POSTGRES_PASSWORD, RESEND_API_KEY, SMTP_URL and any POLAR_*, STRIPE_*, RAZORPAY_* or S3_SECRET_ACCESS_KEY values as secrets, not build variables. Then delete .env.deploy. Leave DATABASE_URL and DOMAIN empty.
 3. Domain: on the `app` service only, set https://<example.com>:3000. The :3000 is the container port; the public URL stays https://<example.com>.
 4. Deploy, and read the log: Postgres healthy → migrate → the app starts.
 5. Verify from this machine: `curl -s https://<example.com>/api/health` and `npm run smoke -- https://<example.com>`.
@@ -262,9 +264,11 @@ Report: what was created, the deploy log summary, and the smoke output.
 
 No Docker at all? [deploy/node/](../deploy/node/README.md) runs `node server.js` under systemd. Adapt prompt 5a to that guide.
 
-### 6. Payments with Polar
+### 6. Payments: Polar, Stripe or Razorpay
 
-Skip this step if you don’t charge. Run the whole flow in Polar’s **sandbox** first, on the deployed site, before anyone else has signed up. Polar’s webhook has to reach a public URL, so the deployed site is the easiest place to test.
+Skip this step if you don’t charge. OpenShipKit takes one payment provider at a time ([billing.md](billing.md)): **Polar** (the default, and merchant of record: it handles VAT and sales tax for you), **Stripe** (you turn on Stripe Tax yourself), or **Razorpay** (for India: UPI, cards, netbanking). Run the whole flow in the provider’s **sandbox** or test mode first, on the deployed site, before anyone else has signed up. The webhook has to reach a public URL, so the deployed site is the easiest place to test.
+
+The prompt below is for Polar. For Stripe or Razorpay, use the second one.
 
 ```text
 Connect payments with Polar, sandbox first, following docs/billing.md exactly. Read it first. The site is live at https://<example.com>, with no real users yet.
@@ -274,8 +278,8 @@ Connect payments with Polar, sandbox first, following docs/billing.md exactly. R
 3. Access token: tell me to create a sandbox organization token (Settings → Developers → New token) with scopes for checkouts, customer sessions, subscriptions and orders, and to add these lines to the server's environment myself:
    POLAR_ACCESS_TOKEN=…
    POLAR_SERVER=sandbox
-4. Webhook: tell me to add an endpoint in Polar (Settings → Webhooks) with URL https://<example.com>/api/billing/webhook, format Raw, API version 2026-10, and these events: every subscription.* event, order.paid, order.updated, order.refunded, refund.created and refund.updated. I add its secret as POLAR_WEBHOOK_SECRET myself. Then restart the app (compose: `docker compose --profile https up -d`; Dokploy or Coolify: redeploy).
-5. Test with me: I sign in, choose a paid plan on /pricing, and pay with 4242 4242 4242 4242 (any future date, any CVC). /dashboard/billing should show the plan as active within seconds. Then "Manage billing" → cancel in Polar's portal, and the dashboard follows. Check that Polar's webhook deliveries are all 2xx. If they aren't, read the app log.
+4. Webhook: tell me to add an endpoint in Polar (Settings → Webhooks) with URL https://<example.com>/api/billing/webhook, format Raw, API version 2026-10, and these events: every subscription.* event, order.paid, order.updated, order.refunded, refund.created and refund.updated. I add its secret as POLAR_WEBHOOK_SECRET myself. Then restart the app (compose: `docker compose --profile https up -d`; Dokploy or Coolify: redeploy). The app refuses to start with the token but no webhook secret; if it does, the log names the missing variable.
+5. Test with me: I sign in, choose a paid plan on /pricing, and pay with 4242 4242 4242 4242 (any future date, any CVC). /dashboard/billing should show the plan as active within seconds. Then "Manage billing" → cancel in Polar's portal, and the dashboard follows. Check that Polar's webhook deliveries are all 2xx. If they aren't, read the app log. Then open /admin/plans/<key> for each paid plan: it lists any price that differs from Polar's.
 6. Going live, when I say so: the same steps in production Polar (products, token, webhook, product ids in /admin/plans), with POLAR_SERVER=production or unset.
 
 Do not:
@@ -287,6 +291,34 @@ Do not:
 
 Report: the products and ids, the webhook deliveries, and the test result.
 ```
+
+For Stripe or Razorpay:
+
+```text
+Connect payments with <Stripe | Razorpay>, test mode first, following docs/billing.md exactly: the "Stripe instead" or "Razorpay instead (India)" section, and "The rule". Read them first. The site is live at https://<example.com>, with no real users yet.
+
+1. Prices at the provider, in test mode: Stripe, a product per plan with a price per interval (or a one-time price); Razorpay, a plan per recurring price (a one-time price needs nothing there). If the provider's MCP server or CLI is connected, show me the list (name, amount, interval, currency) and wait for my yes before creating anything. Otherwise tell me the clicks. The amounts must equal the plans on /pricing.
+2. Plan mapping: each price's id goes into the plan (`stripePriceId`, price_…, or `razorpayPlanId`, plan_…). Setting it needs an admin key. Either tell me to paste the ids in /admin/plans, or ask me to mint a temporary ADMIN agent key in /admin/agents, named "Billing setup", for you to use with `plan_update`, and remind me to revoke it afterwards.
+3. Webhook: tell me to add the endpoint https://<example.com>/api/billing/webhook with exactly the events docs/billing.md lists for this provider (Razorpay: with a secret I choose).
+4. Keys: tell me to add these to the server's environment myself, with BILLING_PROVIDER=<stripe | razorpay>:
+   Stripe: STRIPE_SECRET_KEY=sk_test_… and STRIPE_WEBHOOK_SECRET=whsec_…
+   Razorpay: RAZORPAY_KEY_ID=rzp_test_…, RAZORPAY_KEY_SECRET=… and RAZORPAY_WEBHOOK_SECRET=…
+   Then restart the app (compose: `docker compose --profile https up -d`; Dokploy or Coolify: redeploy). If it refuses to start, the log names the missing variable.
+5. Stripe only: tell me to turn on the customer portal (Settings → Billing → Customer portal) with cancelling, payment-method updates and plan switching for each plan's products, and Stripe Tax and receipts if I want them.
+6. Test with me: I sign in, choose a paid plan on /pricing and pay with the provider's test card or method. /dashboard/billing should show the plan as active within seconds. Then cancel (Stripe: "Manage billing"; Razorpay: "Cancel at period end" on the billing page), and the dashboard follows. Check that the webhook deliveries are all 2xx. If they aren't, read the app log. Then open /admin/plans/<key> for each paid plan: it lists any price that differs from the provider's.
+7. Going live, when I say so: the same steps in live mode (prices, webhook, sk_live_… or rzp_live_… keys, the live ids in /admin/plans).
+
+Do not:
+- grant or change anyone's plan in the database by hand: access comes only from verified webhooks;
+- hard-code price or plan ids or prices in code;
+- change prices at the provider or on the site without my explicit yes;
+- ask for keys or secrets in the chat;
+- create anything in live mode before the test-mode run has passed and I've said go.
+
+Report: the prices and ids, the webhook deliveries, and the test result.
+```
+
+Charging for usage too (metered prices on Polar or Stripe)? That is `BILLING_METERED_METRICS` plus a meter at the provider for each metric: [usage.md](usage.md#charging-for-usage-metered-prices).
 
 ### 7. Backups and a restore rehearsal
 
@@ -300,6 +332,7 @@ Set up backups for the live site, following deploy/backups/README.md exactly. Re
 3. Off-site copy: ask me where (S3-compatible storage: Cloudflare R2, Backblaze B2, or MinIO or Garage on another machine). Tell me to create a bucket and an access key limited to that ONE bucket, and to run `rclone config` on the server myself to create the remote. Then write /etc/openshipkit/backup.env with RCLONE_REMOTE=<remote>:<bucket> (no credentials in it). Run backup.sh again and list the bucket with rclone to prove both files arrived.
 4. Rehearse: `./deploy/backups/restore.sh --rehearse <the newest .dump>`. Then rehearse again from the off-site copy, as the guide shows. Compare the counts with the live site: users and posts in /admin, and the uploads file count.
 5. Write the date and the counts in your report so I can keep them.
+6. If uploads go to an S3 bucket (S3_BUCKET or MEDIA_STORAGE=s3 is set), backup.sh doesn't take them: ask me how that bucket is backed up (provider versioning or replication, or a scheduled `rclone sync`; docs/content.md → "Media library") and include it in the rehearsal.
 
 Do not:
 - run `restore.sh --replace` (a rehearsal never touches the live site);
@@ -319,10 +352,10 @@ Check, with evidence:
 1. `npm run smoke -- https://<example.com>` passes. Then run it again with an agent key: ask me to mint a READ key named "smoke" in /admin/agents and add it to .env.local myself as SMOKE_MCP_KEY=… (smoke reads it from there, and the file is git-ignored). Afterwards I remove that line and revoke the key; otherwise local smoke runs would send it to localhost. Add `--indexnow-key <key>` if INDEXNOW_KEY is set (that key is public by design).
 2. `npm run e2e` passes against a NON-production copy: a staging deploy with sandbox keys, or locally with `npm run build && npm start`. It writes data and reads verification links from a server log, so it never runs against the live site once anyone real has signed up.
 3. Ask me to do the human journey on the live site with a second email address: sign up, the verification email arrives, sign in, password reset, turn 2FA on, the contact form shows up in /admin/feedback, and a sandbox checkout if billing is on.
-4. Environment: NEXT_PUBLIC_SITE_URL is exactly https://<example.com>. The app log has no "[openshipkit]" boot warnings. EMAIL_CONSOLE_PRINT_BODIES is not set. Polar is on production keys, or off if I don't charge yet.
+4. Environment: NEXT_PUBLIC_SITE_URL is exactly https://<example.com>. The app log has no "[openshipkit]" boot warnings. EMAIL_CONSOLE_PRINT_BODIES is not set. The payment provider is on live keys (POLAR_SERVER=production or unset; sk_live_…; rzp_live_…), or off if I don't charge yet.
 5. Server: deploy/hardening.md, item by item (SSH keys only, firewall, only 80/443 public, unattended upgrades, Docker log limits).
 6. Content: no OpenShipKit sample copy left where I need my own, legal pages filled and reviewed by me, no invented stats or testimonials, the OG image and favicon look right.
-7. Operations: last night's backup exists off-site and the rehearsal is written down. An uptime monitor watches https://<example.com>/api/health. My admin account has 2FA on. Unused agent keys are revoked.
+7. Operations: last night's backup exists off-site and the rehearsal is written down. An uptime monitor watches https://<example.com>/api/health (readiness; a restart policy, if my host has one, uses /api/health/live instead: docs/observability.md → "Health"). /admin/jobs shows no failed jobs. My admin account has 2FA on. Unused agent keys are revoked.
 8. Search: tell me how to add the site in Google Search Console and Bing Webmaster Tools and submit /sitemap.xml (I do the verification).
 
 Do not: run e2e against the live site, make changes during the checklist, or mark something passed without evidence.
@@ -363,8 +396,8 @@ Monthly maintenance:
 
 ```text
 Monthly maintenance for my OpenShipKit site. Read docs/upgrading.md and SECURITY.md first.
-1. Check for a Next.js security release and for template releases newer than the version my first commit names (CHANGELOG.md on github.com/DrisH31/openshipkit).
-2. Update on a branch, then run `npm run check` and `npm run build` with no env set. Smoke-test locally.
+1. Check for a Next.js security release and for template releases newer than the version my first commit names (CHANGELOG.md on github.com/DrisH31/openshipkit). With the template as a git remote (docs/upgrading.md), `npm run upgrade` reports what the newest release involves and changes nothing.
+2. Update on a branch (`npm run upgrade -- --merge` makes one and merges without committing), then run `npm run check` and `npm run build` with no env set. Smoke-test locally.
 3. Show me the diff and the changelog notes (new variables, migrations). Deploy only after my yes, using my host's update steps (deploy/vps/README.md → "Updating", or a redeploy on Dokploy or Coolify). Take a backup first if there is a migration.
 4. Confirm last night's backup reached the off-site bucket.
 Do not: push to main or deploy without my yes, or skip a failing check.
@@ -421,9 +454,9 @@ Run `/mcp` inside Claude Code to see which servers are connected and to finish a
 
 Agents that can change DNS, deploy and take payments are fast, and fast at mistakes too. Before you hand them keys:
 
-- **Least privilege, per key.** An OpenShipKit `write` key for daily work. `admin` only for a one-off job such as mapping Polar product ids, and revoke it afterwards. A Cloudflare token limited to one zone’s DNS, or one R2 bucket. A Coolify token with read access until you need deploys. A GitHub token for one repository. The Polar sandbox server while you build.
+- **Least privilege, per key.** An OpenShipKit `write` key for daily work. `admin` only for a one-off job such as mapping the payment provider’s product or price ids, and revoke it afterwards. A Cloudflare token limited to one zone’s DNS, or one R2 bucket. A Coolify token with read access until you need deploys. A GitHub token for one repository. The Polar sandbox server while you build.
 - **Production writes behind a confirmation.** Keep your agent’s approval prompts on for anything that writes: tools marked destructive, deploys, DNS, payments. Claude Code’s [permission settings](https://code.claude.com/docs/en/permissions) let you allow read-only tools and keep asking for the rest. Don’t run an agent in a mode that skips approvals against production.
-- **Sandbox before production.** Polar’s sandbox, a staging deploy or the local dev site come first. Production keys come last, and you enter them yourself.
+- **Sandbox before production.** Polar’s sandbox or Stripe’s and Razorpay’s test mode, a staging deploy or the local dev site come first. Production keys come last, and you enter them yourself.
 - **Secrets stay out of the conversation.** Keys go into env files, your platform’s environment tab, or your agent’s own MCP config. Never into the chat, a commit or the repository’s `.mcp.json`. Revoke any key that leaked.
 - **One key per agent, named.** The audit log in `/admin/audit` shows which key did what. Review it after long sessions, and undo with `audit_restore` or from the admin.
 - **Public text is data, not instructions.** Feedback and contact messages come from strangers. An agent reading them can be talked into things. That’s why `read` and `write` keys can’t see personal data, change prices or redirect the contact address ([mcp.md](mcp.md#security-model)).

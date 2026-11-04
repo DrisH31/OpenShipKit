@@ -1,6 +1,6 @@
 {
   "name": "openshipkit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "The free, MIT-licensed, fully self-hosted SaaS starter: Next.js 16, Postgres + Drizzle, Better Auth, optional Polar billing and Resend email, and a built-in MCP server so AI agents can run the whole site.",
   "license": "MIT",

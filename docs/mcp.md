@@ -57,14 +57,14 @@ An agent key looks like `osk_` followed by 43 characters. It is shown **once**, 
 |---|---|
 | `read` | Read everything that isn’t a secret or personal data: content, posts (drafts too), plans, feedback, the audit log. |
 | `write` | `read`, plus edit and publish content and posts, edit plans’ copy and presentation, triage feedback, and restore from the audit log. |
-| `admin` | `write`, plus plan prices, Polar product ids, trials and plan deletion; the site’s `contactEmail`; users (roles, bans), the email list, agent keys and personal data. |
+| `admin` | `write`, plus plan prices, provider price ids, trials, limits, which plan is the free plan, and plan deletion; the site’s `contactEmail`; users (roles, bans), the email list, agent keys and personal data. |
 
 Give each agent the smallest scope that does the job. A writing assistant needs `write`; almost nothing needs `admin`.
 
 Three lines are drawn inside the tools, not just between them:
 
 - **Personal data is admin-only.** Below `admin`, `feedback_list` leaves out the sender’s email and name (`hasEmail` / `hasName` say whether there is one), `audit_list` shows before/after only for `content`, `post`, `plan`, `feedback` and `seed` entries and withholds the rest (`user`, `subscriber`, `subscription`, `purchase`, `billing_customer`, `agent_key`, and any entity added later), and a person who made a change shows as `user:<id>` rather than their email. The same applies to `site_overview`’s recent changes.
-- **What customers are charged is admin-only.** A `write` key can change a plan’s name, description, features, `highlighted`, `contactSales`, `ctaLabel`, `active` and `sortOrder`. Setting or changing `prices` (amounts, intervals, currencies, `polarProductId`) or `trialDays`, deleting a plan, or an `audit_restore` that would do either, needs `admin`. Entitlements come from matching a webhook’s product id against plan prices, so remapping a product id is remapping who gets paid access.
+- **What customers are charged is admin-only.** A `write` key can change a plan’s name, description, features, `highlighted`, `contactSales`, `ctaLabel`, `active` and `sortOrder`. Setting or changing `prices` (amounts, intervals, currencies, the provider ids `polarProductId`, `stripePriceId`, `razorpayPlanId`), `trialDays` or `limits`, changing which plan is the free plan (whose limits everyone without a paid plan gets: a priceless plan’s `active`, `sortOrder` or `contactSales`, or a new or deleted priceless plan), deleting a plan, or an `audit_restore` that would do any of these, needs `admin`. Entitlements come from matching a webhook’s product or price id against plan prices, so remapping an id is remapping who gets paid access.
 - **Where contact-form messages go is admin-only.** Every contact-form submission, with the sender’s name and email, is emailed to the `site` section’s `contactEmail`. A `content_update`, `content_reset` or `audit_restore` that would change that address needs `admin`, so an agent fooled by a hostile feedback message can’t redirect your visitors’ messages to itself.
 
 **Create a key** in the admin at **/admin/agents** (the page shows ready-to-paste client config), or from a terminal:
@@ -256,6 +256,8 @@ The editable site is one JSON document per key: `site`, `navigation`, `announcem
 
 **Published and listed are different questions.** `status` decides whether a post is live at all; `listed` (default `true`) decides whether it is promoted on `/blog`, tag pages, the changelog list, related posts, the home page and `llms.txt`. An unlisted published post still answers 200 at its URL and stays in the sitemap, the RSS feed and `llms-full.txt`. Use it for a post that has outlived its reason to be advertised, instead of unpublishing it (which would drop it from search and break links).
 
+With the blog switched off (`OPENSHIPKIT_WITHOUT=blog`, [site-profile.md](site-profile.md#switching-features-off)), creating or publishing a blog post (`kind: "post"`) is refused; existing ones can still be edited, unpublished or deleted, and changelog entries and pages are unaffected.
+
 There is no scheduling: a published post is live at once, whatever its `publishedAt`. So `post_create`, `post_update` and `post_publish` refuse a published post dated more than a few minutes in the future (`invalid`, on `publishedAt`). To publish later, keep the draft and publish on the day.
 
 ### Media (images)
@@ -273,11 +275,11 @@ There is deliberately no tool that fetches an image from a URL (the server would
 |---|---|---|
 | `plans_list` | read | Every plan in display order (`activeOnly?`). |
 | `plan_get` | read | One plan by `key`. |
-| `plan_upsert` | write | Creates or replaces a whole plan. Omitted fields take defaults, not old values. Setting or changing `prices` or `trialDays` needs `admin`. |
-| `plan_update` | write | Changes some fields of a plan by `key`. Top-level fields replace whole (send the full `prices` or `features`). Changing `prices` or `trialDays` needs `admin`. |
+| `plan_upsert` | write | Creates or replaces a whole plan. Omitted fields take defaults, not old values. Setting or changing `prices`, `trialDays` or `limits`, or which plan is the free plan, needs `admin`. |
+| `plan_update` | write | Changes some fields of a plan by `key`. Top-level fields replace whole (send the full `prices` or `features`). Changing `prices`, `trialDays` or `limits`, or which plan is the free plan, needs `admin`. |
 | `plan_delete` | admin | Deletes a plan. *Destructive* (restorable). Prefer `plan_update {active: false}`. |
 
-`amountCents` is what `/pricing` shows. What a customer is charged is the Polar product in `polarProductId`; changing a price here never changes Polar, and the tools say so in their reply. Agents are told never to invent a product id.
+`amountCents` is what `/pricing` shows. What a customer is charged is set at the billing provider, on the object in the price’s field for it (`polarProductId`, `stripePriceId` or `razorpayPlanId`; [billing.md](billing.md)); changing a price here never changes the provider, and the tools say so in their reply. Agents are told never to invent an id. `limits` are what the plan allows by metric ([usage.md](usage.md)).
 
 Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five plan tools are not offered: `tools/list` leaves them out, calling one answers “Unknown tool”, `guide` explains why under `topic: "plans"`, and `site_overview` reports the profile in `stack.profile`. The plans stay in the database, and switching back to `saas` brings the tools back.
 
@@ -288,7 +290,7 @@ Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five p
 | `feedback_list` | read | The inbox: bug reports, feature requests, notes and contact-form messages. Filters: `status`, `kind`. Paged. The sender’s email and name only with `admin`. |
 | `feedback_update` | write | Sets `status` and/or the private `adminNote`. Nothing is emailed. |
 | `audit_list` | read | Recorded changes, newest first: who, what, which entity, restorable or not. Filters: `entity`, `entityId`; `includeValues: true` adds before/after (withheld for personal-data entities below `admin`). |
-| `audit_restore` | write | Puts back an entry’s *before* value: the undo for content, posts and plans. Restoring a create removes it; restoring a delete recreates it (a post keeps its original id, slug and creation date; refused if another post now has that slug). The restore is itself recorded, so it can be undone too. Its `live` says whether the result is public now (false for a draft, an inactive plan, or something the restore removed). A plan restore that changes prices or the trial, or removes the plan, and a `site` restore that changes `contactEmail`, need `admin`. |
+| `audit_restore` | write | Puts back an entry’s *before* value: the undo for content, posts and plans. Restoring a create removes it; restoring a delete recreates it (a post keeps its original id, slug and creation date; refused if another post now has that slug). The restore is itself recorded, so it can be undone too. Its `live` says whether the result is public now (false for a draft, an inactive plan, or something the restore removed). A plan restore that changes prices, provider ids, the trial or limits, changes which plan is the free plan, or removes the plan, and a `site` restore that changes `contactEmail`, need `admin`. |
 
 ### Admin
 
@@ -308,7 +310,7 @@ Under `OPENSHIPKIT_PROFILE=site` ([site-profile.md](site-profile.md)) the five p
 | `org_get` | admin | One organisation: members and roles, open invitations, seats, subscriptions. Read-only. |
 | `usage_get` | admin | One user's (or, with teams on, organisation's) usage this period against their plan's limits ([usage.md](usage.md)). |
 
-**Deliberately missing:** there is no tool that mints a key, deletes a user, sends an email, changes billing at Polar or reads a secret. Those stay with a person in /admin or at the provider.
+**Deliberately missing:** there is no tool that mints a key, deletes a user, sends an email, changes billing at the billing provider or reads a secret. Those stay with a person in /admin or at the provider.
 
 ### Replies and errors
 
@@ -332,16 +334,17 @@ A successful call returns the result as `structuredContent` and the same JSON as
 
 **The door itself.**
 
+- Off entirely with `OPENSHIPKIT_WITHOUT=mcp`: every method answers `404` ([site-profile.md](site-profile.md#switching-features-off)).
 - `POST` only; `GET` and `DELETE` are `405` (no streams, no sessions).
 - **Origin check against DNS rebinding:** a request carrying an `Origin` header must come from the site’s own origin (`NEXT_PUBLIC_SITE_URL`) or one listed in `MCP_ALLOWED_ORIGINS` (comma-separated), else `403`. Desktop and CLI clients send no `Origin`.
 - 120 calls a minute per key, a 1 MB body cap, JSON only, one message per request (no batches), `Cache-Control: no-store` on every reply.
 - No secrets in replies: keys are shown only as a six-character hint, and unexpected errors are logged, never returned.
 
-**Prompt injection.** Feedback messages and form submissions come from the public. The tool descriptions tell agents to treat that text as data, but an agent can still be fooled: give agents that read feedback a `read` or `write` key rather than `admin`, and review the audit log after long sessions. That is why `read` and `write` keys see no personal data, can’t change what customers are charged and can’t move the contact address: a fooled agent with one can’t repeat your users’ emails into a published post, point a cheap Polar product at your Pro plan, or have every future contact message sent to itself.
+**Prompt injection.** Feedback messages and form submissions come from the public. The tool descriptions tell agents to treat that text as data, but an agent can still be fooled: give agents that read feedback a `read` or `write` key rather than `admin`, and review the audit log after long sessions. That is why `read` and `write` keys see no personal data, can’t change what customers are charged and can’t move the contact address: a fooled agent with one can’t repeat your users’ emails into a published post, point a cheap product at your Pro plan, or have every future contact message sent to itself.
 
 **Good habits.** One key per agent, named after it. Drafts first, publish after review. Keep `admin` keys rare. An agent key is a password: it belongs in your client’s config or environment, never in a repository or a browser. Revoke keys you no longer use.
 
-`/api/health` is the one other machine-facing route: it reports `{ ok, data, stack, version }` (200, or 503 when the database doesn’t answer) and nothing secret. `stack.profile` (`saas` or `site`) is how `npm run smoke` knows whether `/pricing` should exist.
+`/api/health` is the one other machine-facing route: it reports `{ ok, data, schema, jobs, stack, version, time }` (200, or 503 when the database doesn’t answer or its migrations are behind the code) and nothing secret. `stack.profile` (`saas` or `site`) is how `npm run smoke` knows whether `/pricing` should exist.
 
 ---
 
@@ -375,7 +378,7 @@ and the landing page shows the new title on the next request.
 
 > **You:** Make Pro $29 a month.
 
-With an `admin` key: `plan_get {key: "pro"}`, then `plan_update {key: "pro", prices: [<the full prices array with the month amount set to 2900>]}`. The reply reminds the agent, and it reminds you, that the Polar product behind the price must be changed to match at Polar. A `write` key is refused (`forbidden`) and the agent should say the change needs you, in /admin/plans.
+With an `admin` key: `plan_get {key: "pro"}`, then `plan_update {key: "pro", prices: [<the full prices array with the month amount set to 2900>]}`. The reply reminds the agent, and it reminds you, that the price behind it must be changed to match at the billing provider in use. A `write` key is refused (`forbidden`) and the agent should say the change needs you, in /admin/plans.
 
 ### Triage the inbox
 
@@ -425,3 +428,4 @@ curl -s $MCP "${H[@]}" -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params
 1. Add the service function first (`src/server/services/*`): validation and audit belong there, not in the tool.
 2. Define the tool in the matching `src/server/mcp/tools/*.ts` file with `defineTool`: a snake_case `name`, a `title`, a `description` written for an agent (what it does, when to use it, what it returns), the least `scope`, `annotations` (`READ_ONLY`, `WRITE_IDEMPOTENT`, `WRITE_ADDITIVE` or `DESTRUCTIVE`), a `z.strictObject` input and a `run` that calls the service.
 3. Add it to that file’s exported list (it is picked up by `src/server/mcp/tools/index.ts`) and to the tables above. `tests/mcp.test.ts` fails if a registered tool isn’t named in this file.
+4. Run `npm run docs:api` to regenerate [api.md](api.md), which lists every tool with its input (`tests/api-reference.test.ts` fails until it matches).

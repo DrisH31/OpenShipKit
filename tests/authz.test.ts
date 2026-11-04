@@ -51,7 +51,7 @@ const ROUTES: Record<string, { guard: Guard; why?: string }> = {
   "src/app/api/admin/media/route.ts": { guard: "admin" },
   "src/app/api/billing/checkout/route.ts": { guard: "user" },
   "src/app/api/billing/portal/route.ts": { guard: "user" },
-  "src/app/api/billing/webhook/route.ts": { guard: "public", why: "Polar signs it; the billing adapter verifies the signature and re-fetches the object (invariant 4)" },
+  "src/app/api/billing/webhook/route.ts": { guard: "public", why: "the billing provider signs it; the billing adapter verifies the signature and re-fetches the object (invariant 4)" },
   "src/app/api/mcp/route.ts": { guard: "public", why: "an agent key, not a session: authenticateMcp() checks the bearer key and its scope" },
   "src/app/api/auth/[...auth]/route.ts": { guard: "public", why: "Better Auth's own endpoints: sign-in, callbacks, verification links" },
   "src/app/api/demo/route.ts": { guard: "public", why: "signs a visitor in as the read-only demo admin; off unless DEMO_ADMIN_EMAIL is set" },

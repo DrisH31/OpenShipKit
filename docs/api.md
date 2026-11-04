@@ -608,7 +608,7 @@ Render a Markdown body exactly as a post page will (GitHub-flavoured, sanitised)
 
 ### site_overview
 
-Start here. Returns the site's URL and admin URL, what it runs on (profile: saas, or site for a landing page + blog with no pricing, billing or plans; data: postgres, or embedded-postgres in a local demo; billing: polar or none; email: resend or console), database health, headline counts (users, admins, subscribers, active subscriptions, purchases, published and draft posts, open feedback) and the ten most recent changes from the audit log. Takes no arguments.
+Start here. Returns the site's URL and admin URL, what it runs on (profile: saas, or site for a landing page + blog with no pricing, billing or plans; data: postgres, or embedded-postgres in a local demo; billing: polar, stripe, razorpay or none; email: resend, smtp or console), database health, headline counts (users, admins, subscribers, active subscriptions, purchases, published and draft posts, open feedback) and the ten most recent changes from the audit log. Takes no arguments.
 
 **Scope:** read. **Kind:** read-only.
 

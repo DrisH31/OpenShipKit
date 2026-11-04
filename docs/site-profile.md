@@ -30,7 +30,8 @@ With `OPENSHIPKIT_PROFILE=site`:
   SaaS-only page (`/pricing`, the dashboard’s Billing, the admin’s Plans),
   whether it is a default or one you saved.
 - **No billing.** No checkout or customer portal (`/api/billing/*` answer
-  404), billing is off whatever Polar keys are set, and the dashboard has no
+  404), billing is off whatever billing keys (Polar, Stripe or Razorpay) are
+  set, and the dashboard has no
   Billing page or link.
 - **No plans in the admin**: no Plans page or link in `/admin`, and no plan
   tools over MCP.
@@ -93,7 +94,7 @@ profile's are listed.
 
 Only if you want the code gone, and accept that template updates will
 conflict. Do it on a branch, in this order, and let the type checker find the
-stragglers. (This list was checked on a copy of the template: after steps 1–4,
+stragglers. (This list was checked on a copy of the template: after steps 1–2,
 `npx tsc --noEmit` passes.)
 
 **1. Delete the SaaS routes and components:**
@@ -105,13 +106,18 @@ rm -r "src/app/(marketing)/pricing" src/app/api/billing src/app/dashboard/billin
       src/server/mcp/tools/plans.ts tests/billing.test.ts
 ```
 
-**2. Fix the three imports the type checker now names** (`npx tsc --noEmit`):
+**2. Fix the imports the type checker now names** (`npx tsc --noEmit`):
 
 - `src/app/(marketing)/page.tsx` — remove the `Pricing` import and `<Pricing />`.
 - `src/server/mcp/tools/index.ts` — remove the `PLAN_TOOLS` import and its
-  spread in `TOOLS`.
+  spread in `TOOLS`, and make `SAAS_ONLY_TOOLS` an empty set
+  (`new Set<string>()`).
 - `src/components/sections/sections.test.ts` — remove the `pricing-plans`
   import and the `describe` blocks that use `PricingPlans` or `isCurrentPlan`.
+- `tests/profile.test.ts` — remove the tests that import what’s gone: the
+  `/pricing`, `/dashboard/billing` + `/admin/plans` and `/api/billing/*` route
+  tests, “the home page has no pricing section”, and “the registry offers no
+  plan tools”.
 
 **3. Remove the links to what’s gone.** The type checker can’t see a URL in a
 string. Find them all:
@@ -133,10 +139,19 @@ pricing lines in `src/components/seo/llms.ts` and the `Offer` nodes in
 those posts anyway.
 
 **4. Tests and docs:** in `tests/mcp.test.ts` remove the `plans` tests, the
-plan tool names from “covers the whole site”, and the plan calls in the
-refusal test; in `docs/mcp.md` remove the plan tools (no test needs them
-there any more). Remove the pricing parts of `docs/` you no longer need.
-`npm test` then passes.
+plan tool names from “covers the whole site”, the plan calls in the
+refusal test and the free-plan test under “admin tools”; in
+`tests/profile.test.ts` remove “tools/list leaves them out and tools/call
+doesn't know them”. The deleted route handlers are listed where a file that’s
+gone fails a test: remove their `ROUTES` entries in `tests/authz.test.ts` (whose
+self-tests also use the checkout and portal paths as their signed-in examples:
+remove or rewrite those), their `ENDPOINTS` entries and the
+`checkoutInputSchema` import in `src/server/api-reference.ts`, and the
+`/api/billing/checkout` assertion in `tests/api-reference.test.ts`; then
+`npm run docs:api` regenerates `docs/api.md`. In `tests/provider-copy.test.ts`, remove the `ALLOWED` entries
+for `src/components/billing/` files. In `docs/mcp.md` remove the plan tools
+(no test needs them there any more). Remove the pricing parts of `docs/` you
+no longer need. `npm test` then passes.
 
 **5. Content:** in `/admin/content`, turn off or reset the `pricing` section,
 and remove Pricing from `navigation` if you saved it.

@@ -172,6 +172,10 @@ session to that row (creating it on first sign-in).
   is suspended.
 - **The last admin** who isn’t banned can’t be demoted, banned or deleted, and
   an `ADMIN_EMAILS` address can’t be demoted until it’s removed there.
+- **Organisation roles are separate.** With teams on
+  (`OPENSHIPKIT_TENANCY=org`), member, admin and owner are roles inside one
+  organisation, kept by the app, not Better Auth; the site admin role grants
+  nothing there ([teams.md](teams.md)).
 - **Agent keys follow their admin.** An MCP key minted in `/admin/agents`
   belongs to the admin who minted it; demoting, banning or deleting that admin
   revokes their keys, and each revoke is in the audit log ([mcp.md](mcp.md)).
@@ -260,11 +264,18 @@ const user = await requireUser("/dashboard/reports"); // redirects to sign-in, t
 it is a convenience, never the check. Server actions skip layouts, so every
 action calls `requireUser()`/`requireAdmin()` itself.
 
+`tests/authz.test.ts` checks this: it fails when an admin or dashboard page or
+action doesn't call its guard before anything else, and when a route handler
+isn't in its `ROUTES` map with the guard it needs (or, if public, the reason).
+A new route handler goes there, and in `src/server/api-reference.ts` for the
+[API reference](api.md) (`npm run docs:api`).
+
 For plan-gated features see [billing.md](billing.md#gating-features).
 
 ## Adding a Better Auth plugin
 
-Better Auth has plugins for passkeys, organizations and more. To add one:
+Better Auth has plugins for passkeys and more. (Organisations are built in,
+without its plugin: [teams.md](teams.md).) To add one:
 
 1. Register it in `src/adapters/auth/better-auth/instance.ts` (and its client
    counterpart if it has UI).

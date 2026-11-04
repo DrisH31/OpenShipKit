@@ -25,12 +25,15 @@ git clone https://github.com/DrisH31/openshipkit.git my-saas
 cd my-saas && npm install && npm run dev     # no env, no accounts, no database server
 ```
 
+<p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/landing-dark.webp">
-  <img src="docs/images/landing-light.webp" width="1440" height="900" alt="The OpenShipKit landing page: “Your SaaS, on your server”, with Get the code and Read the docs buttons and the git clone command above a preview of the admin overview.">
+  <img src="docs/images/landing-light.webp" width="720" alt="The OpenShipKit landing page: “Your SaaS, on your server”, with Get the code and Read the docs buttons and the git clone command above a preview of the admin overview.">
 </picture>
+</p>
 
-<!-- TODO(screenshots): add /admin and /dashboard (light + dark), captured
+<!-- TODO(screenshots): recapture the landing page (its banner still says 1.0), and
+     add /admin and /dashboard (light + dark), captured
      from a fresh `npm run dev` database (no test accounts in the lists), at
      1440 px as WebP under docs/images/. Real captures only, no mock-ups. -->
 
@@ -304,7 +307,7 @@ Starting a real site? Start from a release tag rather than `main`, and write
 down which one:
 
 ```bash
-npx degit DrisH31/openshipkit#v1.0.0 my-site      # files at that release, no history
+npx degit DrisH31/openshipkit#v1.1.0 my-site      # files at that release, no history
 ```
 
 [docs/releasing.md](docs/releasing.md) explains the versions and how to pull

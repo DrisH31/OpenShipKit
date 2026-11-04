@@ -3,7 +3,7 @@
 Two small, complete features on top of OpenShipKit, written the way the kit
 writes its own (services, a store contract with memory and Postgres adapters,
 SQL migrations, audited writes). They are typechecked and tested by
-`npm run check` (`tsconfig.modules.json`, `tests/examples/`), so they stay
+`npm run check` (`npm run typecheck:modules`, `tests/examples/`), so they stay
 true to the current code, and the app imports neither until you enable one.
 
 | Example | What it shows |

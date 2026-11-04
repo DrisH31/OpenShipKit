@@ -69,13 +69,31 @@ And one folder: **`UPLOADS_DIR`** on persistent storage — uploaded images
 live there, the database stores only their URLs. Compose mounts the `uploads`
 volume at `/app/uploads` (and pins the variable); on plain Node use a folder
 outside the checkout. Back it up with the database
-([deploy/backups](../deploy/backups/README.md)).
+([deploy/backups](../deploy/backups/README.md)). Or keep uploads in an
+S3-compatible bucket (`S3_*`, `MEDIA_STORAGE=s3`): then `backup.sh` doesn’t
+cover them, and you back the bucket up yourself
+([content.md](content.md#media-library)).
 
-Strongly recommended before real users: `RESEND_API_KEY` + `EMAIL_FROM`
-(production requires email verification). Optional: `POLAR_*`,
-`GITHUB_*`/`GOOGLE_*`, `AUTH_MAGIC_LINK`, `INDEXNOW_KEY`
-([seo.md](seo.md#getting-crawled)), `OPENSHIPKIT_PROFILE=site`
-([site-profile.md](site-profile.md)). All of them: [.env.example](../.env.example).
+Strongly recommended before real users: `RESEND_API_KEY` + `EMAIL_FROM`, or
+`SMTP_URL` + `EMAIL_FROM` for your own mail server (production requires email
+verification; [email.md](email.md)). Optional:
+
+| Variable | For |
+|---|---|
+| `POLAR_*`, `STRIPE_*` or `RAZORPAY_*` (and `BILLING_PROVIDER`) | Charging, one provider at a time ([billing.md](billing.md)) |
+| `BILLING_METERED_METRICS` | Reporting usage to Polar or Stripe meters ([usage.md](usage.md)) |
+| `OPENSHIPKIT_TENANCY=org` | Teams ([teams.md](teams.md)) |
+| `OPENSHIPKIT_PROFILE=site`, `OPENSHIPKIT_WITHOUT` | A content site, or the blog or MCP switched off ([site-profile.md](site-profile.md)) |
+| `ERROR_TRACKING_DSN` | Errors sent to GlitchTip or Sentry ([observability.md](observability.md)) |
+| `JOBS_RUNNER=off` | Processes that shouldn’t run background jobs ([jobs.md](jobs.md#running-it)) |
+| `GITHUB_*`/`GOOGLE_*`, `AUTH_MAGIC_LINK` | More ways to sign in ([auth.md](auth.md)) |
+| `INDEXNOW_KEY` | Faster recrawls ([seo.md](seo.md#getting-crawled)) |
+
+All of them: [.env.example](../.env.example). A choice set without what it
+needs stops the app at start, with a line that names the missing variable: a
+billing provider without its key and webhook secret, `EMAIL_PROVIDER=smtp`
+without `SMTP_URL` or `EMAIL_FROM`, `MEDIA_STORAGE=s3` without its `S3_*`
+values ([troubleshooting.md](troubleshooting.md#production)).
 
 A reverse proxy you run yourself must accept request bodies of at least
 **6 MB** on `POST /api/admin/media` (an image of up to 5 MB plus the form’s
@@ -91,7 +109,7 @@ path. Caddy has no limit by default.
 
 | Target | Runs | Notes |
 |---|---|---|
-| `runner` (default) | `node server.js` (Next.js standalone) as user `node` | `HEALTHCHECK` on `/api/health`; port 3000; `/app/uploads` created owned by `node`, `UPLOADS_DIR=/app/uploads` |
+| `runner` (default) | `node server.js` (Next.js standalone) as user `node` | `HEALTHCHECK` on `/api/health` (readiness); port 3000; `/app/uploads` created owned by `node`, `UPLOADS_DIR=/app/uploads` |
 | `migrator` | `npm run db:migrate && npm run db:seed`, then exits | full `node_modules` (drizzle, tsx) |
 
 The build needs no build args and reads no env: the same image runs in every
@@ -122,15 +140,24 @@ docker compose --profile https up -d
 On Dokploy and Coolify a redeploy is a single `up`, with the same short
 downtime while `migrate` runs; that’s fine for additive migrations.
 
+A deploy that skips the migrations shows up in `/api/health`: it answers 503
+with `"schema":{"ok":false,"state":"behind"}` until `npm run db:migrate` has run.
+
 Migrations are written to be additive (new nullable columns, new tables), so
 the old app keeps working while they run. A destructive change gets its own
 release, after the code stops using the column.
 
 ## Health and checks
 
-- `GET /api/health` → `200 {"ok":true,…}` when the database answers, `503`
-  otherwise. Safe to expose; it reveals no secrets or counts. Use it for
-  uptime monitors and load balancers.
+- `GET /api/health` → `200 {"ok":true,…}` when the database answers and has
+  every migration the code expects, `503` otherwise. This is **readiness**: use
+  it for uptime monitors and load balancers. It also reports whether background
+  jobs keep up (`"jobs":{"ok":…}`), which doesn’t change the status code. Safe
+  to expose; it reveals no secrets or counts.
+- `GET /api/health/live` → `200` whenever the process answers, without
+  touching the database. This is **liveness**: point restart policies here, so
+  a database blip doesn’t restart a healthy app.
+  [observability.md](observability.md#health) has what each field means.
 - `npm run smoke -- https://example.com` after every deploy: pages (with their
   canonicals and robots tags), feeds, sitemap, robots, llms.txt, JSON-LD,
   signed-out redirects, security headers, that `/uploads/` 404s a made-up
@@ -179,8 +206,11 @@ external calls. Before you add a second instance, know that:
 
 - the in-app rate limiter for forms and MCP is per process (Better Auth’s own
   limits are stored in Postgres and are shared);
-- uploads are on one machine’s disk: a second **host** needs object storage
-  first;
+- uploads are on one machine’s disk: a second **host** needs them in a
+  bucket first (`MEDIA_STORAGE=s3`, [content.md](content.md#media-library));
+- every process runs the background job runner; that’s safe (jobs are claimed
+  with a lock), and `JOBS_RUNNER=off` keeps one from running them
+  ([jobs.md](jobs.md#running-it));
 - `DATABASE_POOL_MAX` (default 10) is per process — keep the total under
   Postgres’s `max_connections`;
 - the embedded database is never for production.

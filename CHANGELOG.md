@@ -7,8 +7,12 @@ separate: it shows the entries you publish in `/admin/posts`.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-11-04
+
 The roadmap's five phases (ROADMAP.md): production hardening, teams, more
-providers, usage and limits, and developer experience.
+providers, usage and limits, and developer experience. 1.1.0 includes
+everything in 1.0.0, which was never tagged on its own: it is the first
+version to tag.
 
 ### Upgrade notes
 
@@ -47,20 +51,20 @@ providers, usage and limits, and developer experience.
   `npm run docs:api`); two example apps ([examples/](examples/README.md));
   `npm run upgrade` for guided template merges.
 
-## [1.0.0] — not yet released
+## [1.0.0] — never tagged (shipped in 1.1.0)
 
 The first release of **OpenShipKit**: the self-hosted sibling of
 [GetShipKit](https://github.com/DrisH31/GetShipKit), a ground-up rewrite of the same idea that runs
 entirely on your own server. GetShipKit stays a maintained starter on hosted services; nothing
 carries over between them ([docs/upgrading.md](docs/upgrading.md#coming-from-getshipkit)).
 
-1.0.0 has not been tagged yet. Everything below, including the work listed under "Before the
-first tag", ships in it.
+1.0.0 was never tagged; everything below, including the work listed under "Before the first
+tag", ships in 1.1.0.
 
 
 ### Before the first tag
 
-Work done after the first draft (some of it was briefly numbered 1.1.0, never released):
+Work done after the first draft (an early draft briefly numbered some of it 1.1.0; that number now names the roadmap release above):
 
 #### Security
 

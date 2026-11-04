@@ -13,7 +13,8 @@ for someone self-hosting it, and does it keep the codebase easy to understand?
 
 What we won’t merge: a dependency on a hosted auth, database, analytics or
 backend service; tracking; anything that makes `npm run dev` need an account or
-`next build` need a secret. Payments (Polar) and email (Resend) stay optional.
+`next build` need a secret. Payments (Polar, Stripe or Razorpay) and email
+(Resend or SMTP) stay optional.
 
 ## Set up
 
@@ -25,6 +26,9 @@ npm run dev        # embedded Postgres, no env needed
 
 Node.js 24 LTS. `npm run setup` writes a `.env.local` with secrets and an
 `MCP_DEV_KEY` if you want the admin (`--admin-email you@example.com`) or MCP.
+Run in a terminal with no options, it asks (profile, billing, email, teams);
+`--billing`, `--email`, `--tenancy` and `--without` answer as flags, which is
+how you try a provider or teams locally.
 
 ## The rules
 
@@ -34,6 +38,12 @@ contract. The ones reviews check most:
 - Every write goes through `src/server/services/*` — validated, then audited.
 - SDKs and drivers are imported only in `src/adapters/*`.
 - Env is read lazily through `src/server/env.ts`; the build needs nothing.
+- Every page, action and route handler calls its guard (`requireUser()`,
+  `requireAdmin()`) before anything else. A new route handler goes in `ROUTES`
+  in `tests/authz.test.ts` (its guard, or why it's public) and in
+  `src/server/api-reference.ts`; then `npm run docs:api` regenerates
+  `docs/api.md`. A new MCP tool is named in `docs/mcp.md` and needs
+  `npm run docs:api` too.
 - Public pages are server-rendered with their content in the HTML; forms work
   without JavaScript.
 - Accessible in light and dark: labels, focus, keyboard, contrast, 44 px targets.
@@ -49,6 +59,7 @@ npm run check                  # typecheck (app + modules) + lint + unit tests
 npm run build                  # with no env vars — this must pass
 npm run smoke                  # with `npm run dev` running (read-only)
 npm run e2e                    # with `npm run dev` running: signs up, publishes, cleans up
+npm run docs:api               # after changing a route handler or an MCP tool
 ```
 
 **Postgres tests.** The data-contract tests also run on a real Postgres when
@@ -71,7 +82,9 @@ docker rm -f ol-test
 ```
 
 CI runs all of this on every pull request (`.github/workflows/ci.yml`),
-including a production build started against Postgres and smoke-tested.
+including a production build started against Postgres and smoke-tested, and
+the security checks (`.github/workflows/security.yml`): CodeQL, an npm audit
+of production dependencies, a secret scan and dependency review.
 
 **Schema changes**: edit `src/adapters/data/postgres/schema.ts`, run
 `npm run db:generate -- --name <change>`, commit the generated SQL, update the
@@ -84,7 +97,7 @@ memory adapter and the contract tests.
   for a release, never by a direct commit.
 - **Tags `vX.Y.Z`** on `main` are the releases, each with its
   [CHANGELOG.md](CHANGELOG.md) entry. Sites start from a tag
-  (`npx degit DrisH31/openshipkit#v1.0.0 my-site`), never from a branch.
+  (`npx degit DrisH31/openshipkit#v1.1.0 my-site`), never from a branch.
 
 [docs/releasing.md](docs/releasing.md) has the details: what a patch, minor
 and major version mean for a site, and how a release is cut.

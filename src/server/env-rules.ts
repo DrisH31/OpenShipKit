@@ -70,12 +70,6 @@ export function resolveTenancy(env: EnvRecord): Tenancy {
   return oneOf(env, "OPENSHIPKIT_TENANCY", ["personal", "org"] as const, "personal");
 }
 
-/**
- * BILLING_PROVIDER: polar | none — polar when POLAR_ACCESS_TOKEN is set, else
- * none. Always none under OPENSHIPKIT_PROFILE=site, whatever Polar keys are set:
- * a content site sells nothing (the boot check warns when keys are set anyway).
- * A malformed BILLING_PROVIDER still throws, so a typo can't hide behind it.
- */
 /** The key that turns each paid provider on, and its webhook secret: one place for the boot check and setup. */
 export const BILLING_KEYS = {
   polar: { key: "POLAR_ACCESS_TOKEN", webhookSecret: "POLAR_WEBHOOK_SECRET" },
@@ -85,7 +79,9 @@ export const BILLING_KEYS = {
 
 /**
  * BILLING_PROVIDER: polar | stripe | razorpay | none. Unset: the first whose key is set (Polar,
- * then Stripe, then Razorpay), else none. One provider at a time. The site profile is always none.
+ * then Stripe, then Razorpay), else none. One provider at a time. The site profile is always none:
+ * a content site sells nothing (the boot check warns when keys are set anyway). A malformed
+ * BILLING_PROVIDER still throws, so a typo can't hide behind it.
  */
 export function resolveBillingProvider(env: EnvRecord): BillingProviderId {
   const fallback = readEnv(env, "POLAR_ACCESS_TOKEN") ? "polar" : readEnv(env, "STRIPE_SECRET_KEY") ? "stripe" : readEnv(env, "RAZORPAY_KEY_ID") ? "razorpay" : "none";
