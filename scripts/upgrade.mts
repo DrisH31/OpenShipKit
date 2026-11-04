@@ -90,7 +90,7 @@ const compare = (a: string, b: string) => {
 };
 
 /** The CHANGELOG's "## [x.y.z]" sections, newest first, each with its body. */
-export function changelogSections(text: string): { version: string; body: string }[] {
+function changelogSections(text: string): { version: string; body: string }[] {
   const out: { version: string; body: string }[] = [];
   const parts = text.split(/^## \[/m).slice(1);
   for (const part of parts) {
@@ -101,7 +101,7 @@ export function changelogSections(text: string): { version: string; body: string
 }
 
 /** The "### Upgrade notes" subsection of a CHANGELOG section, if it has one. */
-export function upgradeNotes(body: string): string | null {
+function upgradeNotes(body: string): string | null {
   const m = /^### Upgrade notes\s*\n([\s\S]*?)(?=^### |\s*$(?![\s\S]))/m.exec(body);
   return m ? m[1].trim() : null;
 }

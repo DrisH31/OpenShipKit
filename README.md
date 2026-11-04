@@ -2,8 +2,9 @@
 
 **The free, open-source SaaS starter you run on your own server.**
 Next.js 16, Postgres, Better Auth — no auth company, no database company, no
-lock-in. Landing page, blog, admin, billing and a built-in MCP server so AI
-agents can run the whole site. MIT licensed.
+lock-in. Landing page, blog, admin, teams, billing (Polar, Stripe or Razorpay),
+plan limits and usage metering, and a built-in MCP server so AI agents can run
+the whole site. MIT licensed.
 
 **[Docs](docs/README.md)** ·
 **[Set it up with an AI agent](docs/ai-setup.md)** ·
@@ -50,7 +51,8 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 
 - **Independent.** Your Postgres, your auth (Better Auth, in the app, tables in
   your database), your server. Email goes through **Resend** or any **SMTP**
-  server, your own included, and **Polar** takes payments (optional). The app
+  server, your own included, and **Polar**, **Stripe** or **Razorpay** takes
+  payments (optional, one at a time, behind one adapter contract). The app
   starts without email (it goes to the server log), but in production nobody can
   verify an address or reset a password until one is set, so treat it as needed
   for launch.
@@ -66,8 +68,13 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
   through the same validated, audited write path as the admin.
 - **SEO-first.** Every public page is server-rendered with its content in the
   first byte, JSON-LD, sitemap, RSS, `robots.txt` and `llms.txt`.
+- **Production-minded.** Security scanning in CI, an authorization test that
+  fails closed, a Postgres job queue, structured logs, a health check that knows
+  when migrations are behind, and contract tests that run on memory, embedded
+  Postgres and a real Postgres server.
 - **Readable.** A short [SPEC](SPEC.md), one write path, one stack. Built to be
-  understood by people and by coding agents ([AGENTS.md](AGENTS.md)).
+  understood by people and by coding agents ([AGENTS.md](AGENTS.md)), with a
+  generated [API reference](docs/api.md) and two [example apps](examples/README.md).
 
 ## Features
 
@@ -78,12 +85,15 @@ Each has its own dashboard, pricing page and outage. OpenShipKit is one app:
 | **Auth** | Better Auth: email + password, email verification, password reset, magic links, two-factor (TOTP + backup codes), session management, optional GitHub / Google |
 | **Dashboard** | Home (with a setup checklist for admins), billing, profile, password, 2FA, sessions, delete account, feedback; optional teams (organisations, owner/admin/member roles, email invitations) |
 | **Admin** | Overview, users (roles, bans), content editor, posts, media library (image uploads on your own disk), plans, feedback inbox, subscribers (CSV export), agent keys, audit log (one-click restore for content, posts and plans) |
-| **Billing (optional)** | Polar (merchant of record), Stripe, or Razorpay for India: checkout, customer portal (or in-app cancel on Razorpay), signature-verified idempotent webhooks, one shared adapter contract; access granted only from webhooks |
+| **Billing (optional)** | Polar (merchant of record), Stripe, or Razorpay for India: checkout, customer portal (or in-app cancel on Razorpay), signature-verified webhooks that re-fetch before writing, one shared adapter contract; chargebacks, failed refunds, a provider price check in the admin; access granted only from webhooks |
+| **Teams (optional)** | `OPENSHIPKIT_TENANCY=org`: organisations, owner / admin / member roles, email invitations, per-seat billing by the organisation ([docs/teams.md](docs/teams.md)) |
+| **Usage and limits** | Limits per plan (`projects: 3`, `api_calls: 10000`, `seats: 5`), usage metering with an atomic consume, metered prices reported to Polar or Stripe meters through an outbox, a Usage card on the billing page ([docs/usage.md](docs/usage.md)) |
 | **Email** | Resend or any SMTP server (your own included) in production; in development every email prints to the terminal |
 | **MCP server** | 30+ tools over Streamable HTTP, scoped agent keys (read / write / admin), every write audited (reads update the key’s last-used time) |
 | **SEO** | Server-rendered pages, canonical URLs, JSON-LD, sitemap, RSS, `robots.txt` open to search and AI crawlers, `llms.txt` + `llms-full.txt`, generated OG images, optional IndexNow pings |
 | **Design system** | Tailwind 4 tokens, shadcn/ui on Base UI, CSS motion that honours `prefers-reduced-motion`; light + dark; WCAG 2.2 AA; one brand colour to change |
 | **Ops** | Uploads on your disk or any S3-compatible bucket (Garage, MinIO, R2, S3), Dockerfile, docker compose with Caddy, health and liveness checks, background jobs in Postgres with retries (no Redis), JSON logs, optional error tracking (GlitchTip or any Sentry DSN, no SDK), smoke and end-to-end tests, backups of the database and uploads with restore rehearsal, CI with a real Postgres |
+| **Developer experience** | `npm run setup` asks what you need (or takes flags), `--without blog,mcp` switches features off everywhere, a generated API reference, `npm run upgrade` for guided template merges, two example apps ([examples/](examples/README.md)) |
 | **Opt-in modules** | AI chat and images behind spend controls, per-person document search (RAG on pgvector), Redis for more than one replica — tested, off until you enable one ([modules/](modules/README.md)) |
 
 ## How it works, in diagrams
@@ -177,15 +187,15 @@ sequenceDiagram
     autonumber
     actor U as Signed-in user
     participant A as OpenShipKit
-    participant P as Polar
+    participant P as Billing provider<br/>(Polar, Stripe or Razorpay)
     participant W as /api/billing/webhook
     participant D as Your Postgres
     U->>A: POST /api/billing/checkout {planKey, interval}
     A->>P: create checkout for this user
-    P-->>U: Polar's checkout page
+    P-->>U: the provider's checkout page
     U->>P: pays
     P-->>U: back to /dashboard/billing (grants nothing)
-    P->>W: subscription.* / order.paid (signed)
+    P->>W: a subscription or payment event (signed)
     W->>W: verify the signature
     W->>P: re-fetch the object
     W->>D: upsert subscription or purchase, audit it
@@ -213,11 +223,20 @@ flowchart TB
         bc["billing_customers"] --- su
         we["webhook_events<br/>each event once"]
     end
+    subgraph TEAMS["Teams (optional)"]
+        og["orgs"] --- om["org_members<br/>roles"] & oi["org_invitations"]
+    end
+    subgraph USAGE["Usage"]
+        ue["usage_events<br/>metered, with an outbox"]
+    end
     subgraph OPS["Operations"]
         ak["agent_keys<br/>MCP scopes"] --- al["audit_log<br/>before / after"]
+        jb["jobs<br/>background queue"]
     end
     au -. "same person" .- us
     us -. "pays" .- su
+    us -. "member of" .- om
+    og -. "pays for" .- su
 ```
 
 ### Running it in production
@@ -412,10 +431,11 @@ tests/                Vitest (contract tests run on memory and, with TEST_DATABA
 | `npm run build` | Production build (`.next/standalone`) — needs no environment |
 | `npm start` | Serve the production build: copies static assets into `.next/standalone` and runs its `server.js` with `.env`/`.env.local` loaded (what the Docker image runs) |
 | `npm run upgrade` | A guided merge of a new template release: the changelog and upgrade notes in between, new migrations, then `-- --merge` on a new branch, not committed ([docs/upgrading.md](docs/upgrading.md)) |
-| `npm run setup` | Write `.env.local` (or `.env` with `--compose`) with generated secrets; never overwrites a set value. In a terminal with no options it asks (profile, billing, teams, email, admin); `--billing`, `--email`, `--tenancy` and `--profile site` answer up front ([docs/getting-started.md](docs/getting-started.md)) |
+| `npm run setup` | Write `.env.local` (or `.env` with `--compose`) with generated secrets; never overwrites a set value. In a terminal with no options it asks (profile, billing, teams, email, admin); `--billing`, `--email`, `--tenancy`, `--without blog,mcp` and `--profile site` answer up front ([docs/getting-started.md](docs/getting-started.md)) |
 | `npm run check` | `typecheck` + `typecheck:modules` + `lint` + `test` — run before every commit |
+| `npm run docs:api` | Regenerate the API reference ([docs/api.md](docs/api.md)) from the route handlers and MCP tools' schemas |
 | `npm run typecheck` | `tsc --noEmit` |
-| `npm run typecheck:modules` | Typecheck the opt-in modules on their own (`tsconfig.modules.json`) |
+| `npm run typecheck:modules` | Typecheck the opt-in modules and the example apps on their own (`tsconfig.modules.json`) |
 | `npm run lint` | ESLint (Next.js core-web-vitals + TypeScript rules) |
 | `npm test` | Vitest |
 | `npm run db:generate -- --name <change>` | Write a new SQL migration from `schema.ts` (drizzle-kit) |
@@ -516,6 +536,7 @@ Honest limits, so you know what you'd add:
 | More than one language | Every word is English; there's no locale switch |
 | SSO | Teams are in (`OPENSHIPKIT_TENANCY=org`: organisations, roles, invitations, per-seat billing), but there's no single sign-on (SAML/OIDC) |
 | More than one app replica out of the box | Turn on the Redis module first ([modules/](modules/README.md)) |
+| Live provider testing done for you | Stripe, Razorpay, Polar meters and S3 pass contract tests with the providers' real signatures and documented responses, not live accounts: run each provider's sandbox once before launch ([docs/billing.md](docs/billing.md)) |
 | Someone to look after the server | Updates, backups and restore rehearsals are yours ([deploy/](deploy/README.md)) |
 
 Want the hosted version instead? See [GetShipKit](https://github.com/DrisH31/GetShipKit).
