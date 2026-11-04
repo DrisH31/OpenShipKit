@@ -25,6 +25,8 @@ git clone https://github.com/DrisH31/openshipkit.git my-saas
 cd my-saas && npm install && npm run dev     # no env, no accounts, no database server
 ```
 
+<a href="https://pages.razorpay.com/drishlabs"><img src="https://img.shields.io/badge/%E2%99%A5%20Back%20this%20project-C2410C?style=for-the-badge" alt="Back this project" height="28"></a>
+
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/landing-dark.webp">
@@ -44,7 +46,7 @@ cd my-saas && npm install && npm run dev     # no env, no accounts, no database 
 - [Why OpenShipKit](#why-openshipkit) · [Features](#features) · [How it works, in diagrams](#how-it-works-in-diagrams)
 - [The 60-second demo](#the-60-second-demo) · [Set it up with an AI agent](#set-it-up-with-an-ai-agent) · [Production in 5 minutes](#production-in-5-minutes) · [MCP in 30 seconds](#mcp-in-30-seconds)
 - [Project structure](#project-structure) · [Scripts](#scripts) · [Deployment](#deployment) · [Documentation](#documentation)
-- [OpenShipKit or GetShipKit?](#openshipkit-or-getshipkit) · [What OpenShipKit doesn't do (yet)](#what-openshipkit-doesnt-do-yet) · [Contributing](#contributing) · [License](#license)
+- [OpenShipKit or GetShipKit?](#openshipkit-or-getshipkit) · [What OpenShipKit doesn't do (yet)](#what-openshipkit-doesnt-do-yet) · [Contributing](#contributing) · [Back this project](#back-this-project) · [License](#license)
 
 ## Why OpenShipKit
 
@@ -550,6 +552,15 @@ Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
 (setup, the rules, how to run the Postgres tests) and the
 [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: please report privately
 ([SECURITY.md](SECURITY.md)).
+
+## Back this project
+
+OpenShipKit is free and MIT licensed, built and maintained by one developer. If it saved
+you time, you can back the work: ₹79, ₹199, ₹999 or an amount of your own, on a Razorpay
+page that takes UPI, netbanking and cards, Indian or international (charged in rupees).
+Paying unlocks nothing: everything is already in the repo.
+
+<a href="https://pages.razorpay.com/drishlabs"><img src="https://img.shields.io/badge/%E2%99%A5%20Back%20this%20project-C2410C?style=for-the-badge" alt="Back this project" height="28"></a>
 
 ## License
 
